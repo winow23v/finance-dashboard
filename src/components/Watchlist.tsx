@@ -12,6 +12,7 @@ type Props = {
   onToggle: (symbol: MarketSymbol) => void
   units: SettingsState['units']
   market?: EquityMarket
+  catalogUnavailable: boolean
 }
 
 function FavoriteButton({ name, active, onClick }: { name: string; active: boolean; onClick: () => void }) {
@@ -39,7 +40,7 @@ function StockTable({ rows, saved, onToggle, units, label }: {
   </table>
 }
 
-export function Watchlist({ stocks, selected, onToggle, units, market }: Props) {
+export function Watchlist({ stocks, selected, onToggle, units, market, catalogUnavailable }: Props) {
   const [query, setQuery] = useState('')
   const editor = useRef<HTMLDialogElement>(null)
   const input = useRef<HTMLInputElement>(null)
@@ -57,6 +58,7 @@ export function Watchlist({ stocks, selected, onToggle, units, market }: Props) 
     editor.current?.showModal()
     input.current?.focus()
   }
+  const unavailable = '현재 API는 개별 주식·ETF 시세를 제공하지 않습니다.'
   const tableProps = { saved, onToggle, units }
 
   return <div className="watch-sections">
@@ -66,18 +68,18 @@ export function Watchlist({ stocks, selected, onToggle, units, market }: Props) 
         <button type="button" className="button" onClick={openEditor}><Plus size={16} aria-hidden="true" /> {rows.length ? '종목 편집' : '종목 추가'}</button>
       </div>
       {rows.length ? <StockTable rows={rows} label={title} {...tableProps} /> :
-        <p className="state">등록된 관심종목이 없습니다. 별표를 눌러 추가할 수 있습니다.</p>}
+        <p className="state">{catalogUnavailable ? '등록된 관심종목이 없습니다.' : '등록된 관심종목이 없습니다. 별표를 눌러 추가할 수 있습니다.'}</p>}
     </section>
     {market && <section className="panel catalog-panel">
       <div className="panel-heading"><h2>{market === 'KR' ? '국내' : '해외'} 주식 · ETF</h2></div>
       {catalog.length ? <StockTable rows={catalog} label="주식 및 ETF 목록" {...tableProps} /> :
-        <p className="state">표시할 종목이 없습니다.</p>}
+        <p className="state">{catalogUnavailable ? unavailable : '표시할 종목이 없습니다.'}</p>}
     </section>}
     <dialog ref={editor} aria-label="관심종목 편집">
       <div className="panel-heading"><h2>관심종목 편집</h2><button type="button" className="icon-button" aria-label="닫기" onClick={() => editor.current?.close()}><X size={20} /></button></div>
       <label className="search"><Search size={18} aria-hidden="true" /><input ref={input} value={query} onChange={event => setQuery(event.target.value)} placeholder="종목명 또는 티커 검색" aria-label="종목명 또는 티커 검색" /></label>
       {matches.length ? <StockTable rows={matches} label="관심종목 검색 결과" {...tableProps} /> :
-        <p className="state" role="status">검색 결과가 없습니다.</p>}
+        <p className="state" role="status">{catalogUnavailable ? unavailable : '검색 결과가 없습니다.'}</p>}
     </dialog>
   </div>
 }

@@ -28,6 +28,6 @@ The LAN IP can change when Wi-Fi or DHCP changes.
 
 ## Current limitations
 
-The UI still uses src/mocks/mockFinance.ts through financeService.ts.
-API health/snapshot/history routes are deployed, but the UI is not wired to them.
+The Vite development server can proxy snapshot and index history requests through the SSH tunnel. Run `VITE_DATA_MODE=api npm run dev` from the frontend project.
+GitHub Pages builds in Mock mode. See [README.md](README.md) for the API build settings.
 All financial data is DEMO. Supabase login/sync is not implemented.

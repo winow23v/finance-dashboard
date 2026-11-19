@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Activity, BarChart3, ChevronDown, CircleHelp, Globe2, Home, Landmark, Moon, RefreshCw, Settings, Sun, TrendingUp } from 'lucide-react'
-import { financeService } from './services/financeService'
+import { dataMode, financeService } from './services/financeService'
 import { Watchlist } from './components/Watchlist'
 import { Change, marketNames, price } from './components/QuoteDisplay'
 import { guestStorage, type SettingsState } from './storage/guestStorage'
@@ -8,6 +8,7 @@ import { marketSymbolKey, type EquityMarket, type MarketSymbol } from './types/m
 import type { EquityQuote, FinanceSnapshot, Indicator, Quote } from './types/finance'
 
 const HistoryChart = lazy(() => import('./components/HistoryChart'))
+const isApi = dataMode === 'api'
 
 const tabs = [
   { id: 'overview', label: '개요', icon: Home },
@@ -35,7 +36,7 @@ function QuoteCard({ quote, units }: { quote: Quote; units: SettingsState['units
 function Economics({ indicators, detailed = false }: { indicators: Indicator[]; detailed?: boolean }) {
   return <section className="panel economy-panel">
     <div className="panel-heading"><div><h2><Landmark size={17} aria-hidden="true" /> 주요 경제지표</h2><p>미국 거시경제 지표</p></div></div>
-    {indicators.length === 0 ? <p className="state">표시할 경제지표가 없습니다.</p> :
+    {indicators.length === 0 ? <p className="state">{isApi ? '현재 API는 경제지표를 제공하지 않습니다.' : '표시할 경제지표가 없습니다.'}</p> :
       <ul className={detailed ? 'indicator-list indicator-detail' : 'indicator-list'}>{indicators.map(item => <li key={item.id}>
         <div><h3>{item.name}</h3><small>{item.observationDate} 기준</small></div>
         <strong>{numeral.format(item.value)}{item.unit}</strong>
@@ -105,7 +106,10 @@ export function App() {
   const indices = snapshot?.quotes.filter(quote => quote.kind === 'index' && (!market || quote.market === market)) ?? []
   const fx = snapshot?.quotes.find(quote => quote.kind === 'fx')
   const stocks = snapshot?.quotes.filter((quote): quote is EquityQuote => quote.kind === 'stock' || quote.kind === 'etf') ?? []
-  const watchlistProps = { stocks, selected: watchlist, onToggle: toggle, units: settings.units }
+  const watchlistProps = {
+    stocks, selected: watchlist, onToggle: toggle, units: settings.units,
+    catalogUnavailable: isApi && !!snapshot && stocks.length === 0,
+  }
   const isMarket = tab === 'overview' || market !== undefined
   const navigation = <nav aria-label="주 메뉴">
     {tabs.map(({ id, label, icon: Icon, ...item }) => <a key={id} href={'#' + id} aria-current={id === tab ? 'page' : undefined}>
@@ -135,10 +139,10 @@ export function App() {
           <div><h1>{tab === 'overview' ? '시장 개요' : current.label}</h1></div>
           {snapshot && <span className="badge">{snapshot.source.label}{snapshot.source.simulated && ' · 샘플 데이터'}</span>}
         </div>
-        {snapshot?.source.simulated && <div className="notice"><CircleHelp size={16} aria-hidden="true" /><span>API 미연결 · 모든 표시 수치는 샘플입니다.</span></div>}
+        {snapshot?.source.simulated && <div className="notice"><CircleHelp size={16} aria-hidden="true" /><span>{isApi ? 'API에서 제공하는 DEMO 데이터입니다.' : 'API 미연결 · 모든 표시 수치는 샘플입니다.'}</span></div>}
         {(storageFailures.favorites || storageFailures.settings) && <p className="notice" role="status">브라우저에 변경사항을 저장하지 못했습니다. 현재 화면에서만 유지됩니다.</p>}
         {pending && <p className={snapshot ? 'refresh-status' : 'panel state'} role="status">데이터를 불러오는 중입니다.</p>}
-        {error && <div className="panel state"><p role="alert">데이터 갱신에 실패했습니다.</p><button className="button" onClick={refresh}>다시 시도</button></div>}
+        {error && <div className="panel state"><p role="alert">{isApi ? 'API 데이터를 불러오지 못했습니다.' : '데이터 갱신에 실패했습니다.'}</p><button className="button" onClick={refresh}>다시 시도</button></div>}
         <Suspense fallback={<p className="panel state" role="status">차트를 준비하는 중입니다.</p>}>
         {snapshot && isMarket && <>
           <section aria-label="핵심 지표">
@@ -166,7 +170,9 @@ export function App() {
           {tab === 'overview' && <Economics indicators={snapshot.indicators} />}
         </>}
         {snapshot && tab === 'economy' && <Economics indicators={snapshot.indicators} detailed />}
-        {snapshot && tab === 'trends' && <HistoryChart keyword items={snapshot.trendTopics.map(name => ({ id: name, name }))} revision={revision} />}
+        {snapshot && tab === 'trends' && (isApi
+          ? <p className="panel state" role="status">현재 API는 키워드 트렌드를 지원하지 않습니다.</p>
+          : <HistoryChart keyword items={snapshot.trendTopics.map(name => ({ id: name, name }))} revision={revision} />)}
         </Suspense>
         {tab === 'settings' && <>
           <section className="panel settings-panel">
@@ -180,14 +186,14 @@ export function App() {
             <SettingSelect label="기본 표시 시장" description="대시보드를 처음 열 때 표시" value={settings.market} options={{ overview: '개요', domestic: '국내시장', global: '해외시장' }} onChange={market => setSettings({ ...settings, market })} />
             <SettingSelect label="데이터 표시 단위" description="큰 종목 가격의 표시 방식" value={settings.units} options={{ full: '전체 숫자', compact: '간략 단위' }} onChange={units => setSettings({ ...settings, units })} />
             <SettingSelect label="상승·하락 색상" description="등락 방향별 색상" value={settings.colors} options={{ green: '상승 초록 · 하락 빨강', red: '상승 빨강 · 하락 파랑' }} onChange={colors => setSettings({ ...settings, colors })} />
-            <div className="setting"><strong>데이터 연결</strong><span>{snapshot ? (snapshot.source.simulated ? 'Mock 사용 중 · API 미연결' : snapshot.source.label) : '데이터 소스 확인 중'}</span></div>
+            <div className="setting"><strong>데이터 연결</strong><span>{!isApi ? 'Mock 사용 중 · API 미연결' : error ? 'API 조회 실패' : pending ? 'API 조회 중' : `API 연결 · ${snapshot?.source.label}`}</span></div>
           </section>
           <section className="panel settings-panel">
             <div className="panel-heading"><h2>관심종목 및 설정 저장</h2></div>
             <div className="setting"><strong>게스트 · 이 브라우저</strong><span>계정 로그인 및 기기 간 동기화 준비 중</span></div>
             <p className="storage-note">공유 기기에서는 같은 브라우저 프로필의 사용자가 저장된 목록을 볼 수 있습니다. 사이트 데이터를 지우면 저장값이 삭제됩니다.</p>
           </section>
-          {snapshot && <Watchlist {...watchlistProps} />}
+          <Watchlist {...watchlistProps} />
         </>}
         <footer>Finance Dashboard{snapshot?.source.simulated && ' · 샘플 데이터'}</footer>
       </main>

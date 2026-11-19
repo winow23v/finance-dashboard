@@ -11,7 +11,7 @@ npm ci
 npm run dev
 ```
 
-기본 주소는 `http://localhost:5173/finance-dashboard/`입니다. 포트 충돌 시 Vite가 터미널에 표시하는 주소를 사용하세요. 데이터 조회에 API 키나 백엔드가 필요 없습니다. 관심종목과 표시 설정은 현재 브라우저의 localStorage에 저장됩니다.
+기본 주소는 `http://localhost:5173/finance-dashboard/`입니다. 포트 충돌 시 Vite가 터미널에 표시하는 주소를 사용하세요. 기본 Mock 모드는 API 키와 백엔드 없이 실행됩니다. 관심종목과 표시 설정은 현재 브라우저의 localStorage에 저장됩니다.
 
 ```sh
 npm run typecheck
@@ -30,15 +30,26 @@ npm run preview
 | `src/storage/` | 게스트 저장소, 관심종목 병합 및 클라우드 저장소 계약 |
 | `src/types/finance.ts` | 시세, 시장 상태, 경제지표, 시계열 계약 |
 | `src/services/financeService.ts` | 모든 금융 데이터 조회의 진입점 |
+| `src/services/apiFinanceService.ts` | Fastify 요청과 응답 검증 |
 | `src/mocks/mockFinance.ts` | 샘플 스냅샷과 시계열 생성 |
 | `src/styles.css` | Tailwind CSS 및 반응형 테마 |
 | `.github/workflows/pages.yml` | 검증, 빌드, GitHub Pages 배포 |
 
 ## Fastify API 연결
 
-`FinanceService`의 `getSnapshot`, `getPriceHistory`, `getKeywordTrend` 구현을 Fastify API 호출로 교체하세요. API 응답을 `src/types/finance.ts`의 계약으로 변환하고 실패는 Promise 거부, 빈 시계열은 빈 배열로 전달합니다. 실제 응답에는 데이터 소스 이름과 `simulated: false`를 설정하면 샘플 표시가 숨겨집니다. API 주소가 별도 도메인이라면 Fastify에서 GitHub Pages 출처에 CORS를 허용하세요.
+`VITE_DATA_MODE=mock`은 샘플 공급자를 선택하며 값을 생략해도 동일합니다. Oracle API를 개발 환경에서 확인하려면 SSH 터널을 열고 다음 명령을 실행합니다.
 
-샘플 어댑터를 완전히 교체한 뒤 `src/mocks/`와 서비스의 샘플 import를 삭제할 수 있습니다. 관심종목은 시세의 내부 `id`와 독립적인 `MarketSymbol`로 저장됩니다. 실제 API에서도 시장 코드, 거래소 MIC, 종목코드를 동일하게 정규화하세요. 시세 기준 시각과 경제지표 수집 시각은 시간대가 포함된 ISO 문자열로 전달하고 관측일과 발표일은 날짜 문자열로 유지합니다.
+```sh
+VITE_DATA_MODE=api npm run dev
+```
+
+앱은 `/finance-dashboard/`에서 열고, 브라우저의 `/api/` 요청은 Vite 개발 서버가 `http://192.168.0.68:8088`로 전달합니다. 터널 재연결 방법은 [DEPLOYMENT.md](DEPLOYMENT.md)에 있습니다.
+
+API 모드는 시장 스냅샷과 지수 히스토리를 조회합니다. 현재 Oracle 응답의 `source.simulated: true`를 사용해 DEMO 표시를 유지합니다. 개별 주식·ETF 시세, 경제지표, 키워드 트렌드의 제공 여부는 화면에 표시되며, 저장된 관심종목은 시세 없이도 확인하거나 삭제할 수 있습니다. API 오류는 화면에서 재시도할 수 있습니다.
+
+GitHub Pages는 `VITE_DATA_MODE=mock`으로 빌드합니다. 향후 공개 API를 사용할 때는 빌드 환경에 `VITE_DATA_MODE=api`와 `VITE_API_BASE_URL=https://api.example.com`을 설정하고 API에서 GitHub Pages 출처(`https://winow23v.github.io`)를 CORS로 허용합니다. `VITE_*` 값은 빌드에 포함되므로 공개 설정만 넣고 API 비밀키는 서버에 보관합니다. 환경변수를 바꾼 뒤에는 개발 서버를 재시작하거나 운영 번들을 재빌드하고 배포해야 합니다.
+
+공급자 선택은 `financeService.ts`에 모여 있습니다. API 전환을 완료하면 이 파일에서 Mock import와 선택 분기를 제거하고 `src/mocks/`를 삭제할 수 있습니다. 관심종목은 시세의 내부 `id`와 독립적인 `MarketSymbol`로 저장됩니다. 실제 API에서도 시장 코드, 거래소 MIC, 종목코드를 동일하게 정규화하세요. 시세 기준 시각과 경제지표 수집 시각은 시간대가 포함된 ISO 문자열로 전달하고 관측일과 발표일은 날짜 문자열로 유지합니다.
 
 ## 비로그인 저장
 

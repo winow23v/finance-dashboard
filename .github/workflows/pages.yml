@@ -31,6 +31,7 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
         env:
+          VITE_DATA_MODE: mock
           PAGES_BASE_PATH: ${{ steps.pages.outputs.base_path }}/
       - uses: actions/upload-pages-artifact@v4
         with:
