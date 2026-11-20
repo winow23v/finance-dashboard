@@ -21,6 +21,8 @@ test('existing response contracts and fixed DEMO timestamps', async t => {
   const market = await app.inject(snapshot)
   assert.equal(market.statusCode, 200)
   assert.equal(market.headers['access-control-allow-origin'], undefined)
+  assert.equal(market.headers['cache-control'], 'no-store')
+  assert.equal(market.headers['x-content-type-options'], 'nosniff')
   assert.deepEqual(market.json().source, { label: 'DEMO', simulated: true })
   assert.equal(market.json().updatedAt, asOf)
   assert.equal(market.json().quotes[0].price, 2658.41)
@@ -56,6 +58,7 @@ test('shares the market IP quota, isolates health, and ignores untrusted forward
   const limited = await viaProxy(snapshot, '198.51.100.80, 203.0.113.5')
   assert.equal(limited.statusCode, 429)
   assert.ok(Number(limited.headers['retry-after']) > 0)
+  assert.equal(limited.headers['cache-control'], 'no-store')
   assert.equal((await viaProxy(snapshot, '203.0.113.6')).statusCode, 200)
   for (let i = 0; i < 120; i++) {
     assert.equal((await viaProxy('/health', '203.0.113.5', i % 2 ? 'HEAD' : 'GET')).statusCode, 200)

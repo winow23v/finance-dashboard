@@ -8,9 +8,10 @@ const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
 const date = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric' })
 const time = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 
-export default function HistoryChart({ items, keyword = false, revision }: {
+export default function HistoryChart({ items, keyword = false, simulated, revision }: {
   items: { id: string; name: string }[]
   keyword?: boolean
+  simulated: boolean
   revision: number
 }) {
   const [selection, setSelection] = useState('')
@@ -41,8 +42,8 @@ export default function HistoryChart({ items, keyword = false, revision }: {
   return <section className={keyword ? 'panel chart-panel trend-chart' : 'panel chart-panel'} aria-label={keyword ? '키워드 추이' : '지수 추이'}>
     <div className="panel-heading">
       <div>
-        <h2>{keyword ? '검색 관심도 추이' : '지수 추이'}</h2>
-        <p>{keyword ? '네이버 키워드 트렌드 · 상대 검색량 (0–100)' : '주요 시장 지수의 기간별 움직임'}</p>
+        <h2>{keyword ? '검색 관심도 추이' : '지수 추이'}{simulated && ' · DEMO'}</h2>
+        <p>{keyword ? '키워드 상대 검색량 (0–100)' : '주요 시장 지수의 기간별 움직임'}</p>
       </div>
       {id && <div className="chart-selects">
         <select aria-label={keyword ? '기준 키워드' : '지수 선택'} value={id} onChange={event => {

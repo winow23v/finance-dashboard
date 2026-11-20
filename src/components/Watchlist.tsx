@@ -13,6 +13,7 @@ type Props = {
   units: SettingsState['units']
   market?: EquityMarket
   catalogUnavailable: boolean
+  simulated: boolean
 }
 
 function FavoriteButton({ name, active, onClick }: { name: string; active: boolean; onClick: () => void }) {
@@ -22,11 +23,11 @@ function FavoriteButton({ name, active, onClick }: { name: string; active: boole
   </button>
 }
 
-function StockTable({ rows, saved, onToggle, units, label }: {
-  rows: Row[]; saved: Set<string>; onToggle: Props['onToggle']; units: Props['units']; label: string
+function StockTable({ rows, saved, onToggle, units, label, simulated }: {
+  rows: Row[]; saved: Set<string>; onToggle: Props['onToggle']; units: Props['units']; label: string; simulated: boolean
 }) {
   return <table className="watch-table" aria-label={label}>
-    <thead><tr><th scope="col">종목</th><th scope="col">가격</th><th scope="col">등락률</th><th scope="col" className="star-col"><span className="sr-only">관심종목</span></th></tr></thead>
+    <thead><tr><th scope="col">종목</th><th scope="col">{simulated ? '샘플 가격' : '가격'}</th><th scope="col">등락률</th><th scope="col" className="star-col"><span className="sr-only">관심종목</span></th></tr></thead>
     <tbody>{rows.map(({ listing, quote }) => {
       const key = marketSymbolKey(listing)
       const name = quote?.name ?? listing.symbol
@@ -40,7 +41,7 @@ function StockTable({ rows, saved, onToggle, units, label }: {
   </table>
 }
 
-export function Watchlist({ stocks, selected, onToggle, units, market, catalogUnavailable }: Props) {
+export function Watchlist({ stocks, selected, onToggle, units, market, catalogUnavailable, simulated }: Props) {
   const [query, setQuery] = useState('')
   const editor = useRef<HTMLDialogElement>(null)
   const input = useRef<HTMLInputElement>(null)
@@ -59,7 +60,7 @@ export function Watchlist({ stocks, selected, onToggle, units, market, catalogUn
     input.current?.focus()
   }
   const unavailable = '현재 API는 개별 주식·ETF 시세를 제공하지 않습니다.'
-  const tableProps = { saved, onToggle, units }
+  const tableProps = { saved, onToggle, units, simulated }
 
   return <div className="watch-sections">
     <section className="panel watch-panel">

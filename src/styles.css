@@ -55,7 +55,7 @@ small { display: block; color: var(--muted); font-size: .75rem; }
 .updated { display: none; }
 .icon-button { display: inline-grid; place-items: center; flex: none; width: 44px; height: 44px; border: 1px solid var(--line); border-radius: 9px; }
 .icon-button:hover, .button:hover { background: var(--control); }
-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; width: 100%; max-width: 1440px; margin: auto; padding: 14px 14px 78px; }
+main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; width: 100%; max-width: 1440px; margin: auto; padding: 14px 14px calc(78px + env(safe-area-inset-bottom)); }
 .page-heading, .section-heading, .panel-heading, .quote-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .page-heading { flex-wrap: wrap; }
 h1 { font-size: clamp(1.6rem, 3.3vw, 2.25rem); font-weight: 760; letter-spacing: -.045em; }
@@ -179,3 +179,9 @@ nav a[aria-current], nav a:hover { background: var(--accent-bg); color: var(--ac
 @media (min-width: 768px) {
   .trend-chart .chart-body { height: 230px; }
 }
+
+.site-information { padding: 18px; line-height: 1.65; overflow-wrap: anywhere; }
+.site-information p + p { margin-top: 12px; }
+.site-information a, .footer-links a { color: var(--accent); text-decoration: underline; }
+.footer-links { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; }
+.footer-links a { display: inline-flex; align-items: center; min-height: 32px; }

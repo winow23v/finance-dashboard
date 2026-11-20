@@ -1,3 +1,5 @@
+import { performance } from 'node:perf_hooks'
+
 const board = 'Board of Governors of the Federal Reserve System (US)'
 const bls = 'U.S. Bureau of Labor Statistics'
 const series = [
@@ -86,17 +88,30 @@ function normalize(definition, metadata, observations, collectedAt) {
   }
   const result = [indicator(id, name, cpi ? 'index' : '%', value)]
   if (cpi) {
-    const yearAgo = observationDate && `${Number(observationDate.slice(0, 4)) - 1}${observationDate.slice(4)}`
-    const previous = values.get(yearAgo)
-    const change = value !== null && previous != null ? (value / previous - 1) * 100 : null
-    result.push(indicator('CPIAUCSL_YOY', '미국 소비자물가 상승률 (전년 동월 대비, 계절조정)', '%',
-      Number.isFinite(change) ? change : null))
+    const comparisonPeriod = observationDate === null ? null :
+      `${String(Number(observationDate.slice(0, 4)) - 1).padStart(4, '0')}${observationDate.slice(4)}`
+    const previous = values.get(comparisonPeriod)
+    const change = value !== null && previous != null ? ((value - previous) / previous) * 100 : null
+    result.push({
+      ...indicator('CPIAUCSL_YOY', '미국 소비자물가 상승률 (전년 동월 대비, 계절조정)', '%',
+        Number.isFinite(change) ? change : null),
+      comparisonPeriod,
+      missingReason: value === null ? 'CURRENT_MISSING' : previous == null ? 'COMPARISON_MISSING' : null,
+    })
   }
   return result
 }
 
-export function createFredProvider({ fetchImpl = fetch, now = () => new Date(), timeoutMs = 5000 } = {}) {
+export function createFredProvider({
+  fetchImpl = fetch,
+  now = () => new Date(),
+  timeoutMs = 5000,
+  clock = () => performance.now(),
+  maxBatchesPerMinute = 8,
+} = {}) {
   let pending
+  let draining = false
+  const started = []
 
   async function load(apiKey) {
     const controller = new AbortController()
@@ -115,11 +130,13 @@ export function createFredProvider({ fetchImpl = fetch, now = () => new Date(), 
           controller.abort()
         }, timeoutMs)
       })
-      const requests = series.map(async ({ id }) => Promise.all([
+      const requests = series.map(({ id }) => [
         request('/fred/series', id),
         request('/fred/series/observations', id, { sort_order: 'desc', limit: id === 'CPIAUCSL' ? '24' : '14' }),
-      ]))
-      const data = await Promise.race([timeout, Promise.all(requests)])
+      ])
+      draining = true
+      void Promise.allSettled(requests.flat()).then(() => { draining = false })
+      const data = await Promise.race([timeout, Promise.all(requests.map(pair => Promise.all(pair)))])
       const collectedAt = now().toISOString()
       return {
         source: { label: 'FRED', simulated: false },
@@ -137,8 +154,12 @@ export function createFredProvider({ fetchImpl = fetch, now = () => new Date(), 
   return function getIndicators() {
     const apiKey = process.env.FRED_API_KEY?.trim()
     if (!apiKey) throw new FredError(503)
-    // Share only a request currently being fetched. No result survives completion.
-    pending ??= load(apiKey).finally(() => { pending = undefined })
+    if (pending) return pending
+    const time = clock()
+    while (started.length && time - started[0] >= 60_000) started.shift()
+    if (draining || started.length >= maxBatchesPerMinute) throw new FredError(503)
+    started.push(time)
+    pending = load(apiKey).finally(() => { pending = undefined })
     return pending
   }
 }

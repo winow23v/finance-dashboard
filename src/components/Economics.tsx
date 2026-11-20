@@ -53,12 +53,16 @@ export function Economics({ api, demo, detailed, revision }: {
             {'stale' in item && item.stale && ' · 오래된 관측값'}
           </small>
         </div>
-        <strong>{item.value === null ? '미발표 / 관측값 없음' : item.unit === 'index'
+        <strong>{item.value === null
+          ? (item.id === 'CPIAUCSL_YOY' && (!('missingReason' in item) || item.missingReason !== 'CURRENT_MISSING')
+            ? '전년 동월 관측값 없음' : '미발표 / 관측값 없음') : item.unit === 'index'
           ? `${indexValue.format(item.value)} (1982–84=100)` : `${percent.format(item.value)}%`}</strong>
         {'source' in item && <div className="indicator-source"><small>
           출처 <a href={item.source.url}>FRED · {item.source.agency}</a>
         </small></div>}
         {detailed && <dl>
+          {'comparisonPeriod' in item && item.comparisonPeriod && <div><dt>전년 동월 기준</dt>
+            <dd><time dateTime={item.comparisonPeriod}>{item.comparisonPeriod.slice(0, 7)}</time></dd></div>}
           <div><dt>발표일</dt><dd>{item.releaseDate ?? '미확인'}</dd></div>
           <div><dt>수집 시각 (KST)</dt><dd><time dateTime={item.collectedAt}>{timestamp.format(new Date(item.collectedAt))}</time></dd></div>
         </dl>}

@@ -4,3 +4,9 @@ dist/
 .agents/
 .codex/
 .aws/
+.env
+.env.*
+!.env.example
+
+# Local documentation only
+*.md

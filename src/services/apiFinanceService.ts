@@ -39,6 +39,9 @@ function isFredIndicator(value: unknown): value is FredIndicator {
     || value.releaseDate !== null || !isDate(value.collectedAt) || !isRecord(value.source)
     || value.source.name !== 'FRED' || !isText(value.source.agency)
     || value.source.url !== `https://fred.stlouisfed.org/series/${value.seriesId}`) return false
+  if (value.comparisonPeriod != null && !isDate(value.comparisonPeriod)) return false
+  if (value.missingReason != null && value.missingReason !== 'CURRENT_MISSING'
+    && value.missingReason !== 'COMPARISON_MISSING') return false
 
   const validDate = isDate(value.observationDate)
   return value.value === null

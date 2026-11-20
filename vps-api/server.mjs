@@ -1,5 +1,6 @@
 import { pathToFileURL } from 'node:url'
 import { STATUS_CODES } from 'node:http'
+import { timingSafeEqual } from 'node:crypto'
 import Fastify, { LogController } from 'fastify'
 import rateLimit from '@fastify/rate-limit'
 import { createFredProvider, FredError } from './fred-provider.mjs'
@@ -57,7 +58,12 @@ export async function buildApp({
   cache = createMarketCache(),
   logger = true,
   getEconomyIndicators,
+  privateAccessToken,
 } = {}) {
+  if (getEconomyIndicators && !/^[a-f0-9]{64}$/.test(privateAccessToken ?? '')) {
+    throw new Error('Private FRED access token is missing or invalid')
+  }
+  const privateAuthorization = getEconomyIndicators ? Buffer.from(`Bearer ${privateAccessToken}`) : null
   const app = Fastify({
     logger,
     logController: new LogController({ disableRequestLogging: true }),
@@ -72,6 +78,11 @@ export async function buildApp({
     const label = STATUS_CODES[status] ?? 'Request Failed'
     const message = error instanceof MarketError || error instanceof FredError ? error.message : label
     reply.code(status).send({ statusCode: status, error: label, message })
+  })
+
+  app.addHook('onRequest', async (_request, reply) => {
+    reply.header('cache-control', 'no-store')
+    reply.header('x-content-type-options', 'nosniff')
   })
 
   await app.register(rateLimit, {
@@ -101,10 +112,16 @@ export async function buildApp({
   app.get('/api/v1/economy/indicators', {
     exposeHeadRoute: false,
     schema: { querystring: noQuery },
-  }, async (_request, reply) => {
-    reply.header('cache-control', 'no-store')
+  }, async (request, reply) => {
     if (!getEconomyIndicators) {
       return reply.code(503).send({ code: 'FRED_DISABLED', error: 'FRED integration is disabled' })
+    }
+    const forwarded = Object.keys(request.headers).some(name =>
+      name === 'forwarded' || name === 'x-real-ip' || name.startsWith('x-forwarded-'))
+    const authorization = Buffer.from(request.headers.authorization ?? '')
+    if (request.raw.socket.remoteAddress !== '127.0.0.1' || request.headers.host !== '127.0.0.1:3001' || forwarded ||
+      authorization.length !== privateAuthorization.length || !timingSafeEqual(authorization, privateAuthorization)) {
+      return reply.code(404).send({ error: 'Not Found' })
     }
     return getEconomyIndicators()
   })
@@ -141,7 +158,10 @@ export async function buildApp({
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const privateFred = process.env.FRED_PRIVATE_MODE === '1'
-    const app = await buildApp({ getEconomyIndicators: privateFred ? createFredProvider() : undefined })
+    const app = await buildApp({
+      getEconomyIndicators: privateFred ? createFredProvider() : undefined,
+      privateAccessToken: privateFred ? process.env.FINANCE_PRIVATE_API_TOKEN : undefined,
+    })
     await app.listen({ host: '127.0.0.1', port: privateFred ? 3001 : 3000 })
   } catch {
     console.error('Finance API startup failed')

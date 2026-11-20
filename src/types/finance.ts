@@ -50,6 +50,8 @@ export interface FredIndicator {
   collectedAt: string
   source: { name: 'FRED'; agency: string; url: string }
   stale: boolean | null
+  comparisonPeriod?: string | null
+  missingReason?: 'CURRENT_MISSING' | 'COMPARISON_MISSING' | null
 }
 
 export interface EconomyIndicators {
