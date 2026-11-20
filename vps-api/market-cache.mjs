@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks'
+import { ProviderError } from './public-provider.mjs'
 
 export class MarketError extends Error {
   constructor(statusCode, message) {
@@ -37,7 +38,8 @@ export function createMarketCache({
       })
       const { data, asOf } = await Promise.race([
         timeout,
-        Promise.resolve().then(() => load(controller.signal)).catch(() => {
+        Promise.resolve().then(() => load(controller.signal)).catch(error => {
+          if (error instanceof ProviderError) throw error
           throw new MarketError(502, 'Market provider failed')
         }),
       ])
@@ -58,7 +60,7 @@ export function createMarketCache({
       }
       return entry
     } catch (error) {
-      if (error instanceof MarketError) throw error
+      if (error instanceof MarketError || error instanceof ProviderError) throw error
       throw new MarketError(502, 'Market provider failed')
     } finally {
       clearTimeout(timer)

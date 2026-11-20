@@ -1,7 +1,7 @@
 import type { EconomyIndicators, FinanceSnapshot, FredIndicator, Indicator, Period, Quote, SeriesPoint } from '../types/finance'
 import type { FinanceService } from './financeService'
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
@@ -9,7 +9,7 @@ function isText(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0
 }
 
-function isNumber(value: unknown): value is number {
+export function isNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
@@ -94,16 +94,22 @@ function requestUrl(path: string): string {
   return base.href.replace(/\/+$/, '') + path
 }
 
-async function getJson(path: string, allowMissingIndex = false): Promise<unknown> {
+export class FinanceApiError extends Error {
+  constructor(status: number, readonly code?: string) {
+    super(`Finance API request failed: ${status}`)
+  }
+}
+
+export async function getJson(path: string, allowMissingIndex = false, signal?: AbortSignal, timeoutMs = 15_000): Promise<unknown> {
   const response = await fetch(requestUrl(path), {
     headers: { Accept: 'application/json' },
-    signal: AbortSignal.timeout(15_000),
+    signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]),
   })
-  if (allowMissingIndex && response.status === 404) {
-    const body: unknown = await response.json()
-    if (isRecord(body) && body.error === 'Index not found') return []
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => null)
+    if (allowMissingIndex && response.status === 404 && isRecord(body) && body.error === 'Index not found') return []
+    throw new FinanceApiError(response.status, isRecord(body) && typeof body.code === 'string' ? body.code : undefined)
   }
-  if (!response.ok) throw new Error(`Finance API request failed: ${response.status}`)
   return response.json()
 }
 

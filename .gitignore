@@ -6,7 +6,12 @@ dist/
 .aws/
 .env
 .env.*
-!.env.example
+*.pem
+*.key
+id_ed25519
+id_rsa
+oracle_steamdeck
+oracle_finance_deploy
 
 # Local documentation only
 *.md

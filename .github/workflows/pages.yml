@@ -2,40 +2,60 @@ name: GitHub Pages
 on:
   push:
     branches: [main, master]
+  pull_request:
+    branches: [main, master]
   workflow_dispatch:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: ${{ github.event_name == 'pull_request' && format('pages-pr-{0}', github.event.number) || 'pages' }}
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: read
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v6
         with:
           node-version: '26'
           cache: npm
-      - id: pages
-        uses: actions/configure-pages@v5
+          cache-dependency-path: |
+            package-lock.json
+            vps-api/package-lock.json
       - run: npm ci
+      - run: npm ci --prefix vps-api
+      - run: npm test
       - run: npm run typecheck
+      - id: pages
+        if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v5
       - run: npm run build
         env:
           VITE_DATA_MODE: api
           VITE_API_BASE_URL: https://winow.duckdns.org
-          PAGES_BASE_PATH: ${{ steps.pages.outputs.base_path }}/
+          PAGES_BASE_PATH: ${{ github.event_name == 'pull_request' && '/finance-dashboard/' || format('{0}/', steps.pages.outputs.base_path) }}
       - uses: actions/upload-pages-artifact@v4
+        if: github.event_name != 'pull_request'
         with:
           path: dist
+  deploy:
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
       - id: deployment
         uses: actions/deploy-pages@v4

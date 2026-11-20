@@ -1,0 +1,61 @@
+name: Oracle VPS API
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Validate the release on Oracle, or deploy it to production
+        type: choice
+        options:
+          - validate
+          - deploy
+        default: validate
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oracle-vps-api
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: oracle-production
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '26'
+          cache: npm
+          cache-dependency-path: vps-api/package-lock.json
+      - run: npm ci --prefix vps-api
+      - run: npm test
+      - name: Send tracked API release to Oracle
+        env:
+          ORACLE_SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}
+          ORACLE_SSH_KNOWN_HOSTS: ${{ secrets.ORACLE_SSH_KNOWN_HOSTS }}
+          RELEASE_MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          : "${ORACLE_SSH_PRIVATE_KEY:?Add the Oracle deployment key to oracle-production}"
+          : "${ORACLE_SSH_KNOWN_HOSTS:?Add the verified Oracle host key to oracle-production}"
+          umask 077
+          ssh_dir=$(mktemp -d)
+          trap 'rm -rf -- "$ssh_dir"' EXIT
+          printf '%s\n' "$ORACLE_SSH_PRIVATE_KEY" > "$ssh_dir/key"
+          printf '%s\n' "$ORACLE_SSH_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          unset ORACLE_SSH_PRIVATE_KEY ORACLE_SSH_KNOWN_HOSTS
+          git ls-files -z -- 'vps-api/*.mjs' vps-api/package.json vps-api/package-lock.json |
+            tar --null --transform='s|^vps-api/||' -cf "$ssh_dir/release.tar" -T -
+          { printf '%s\n' "$RELEASE_MODE"; cat "$ssh_dir/release.tar"; } |
+            ssh -F /dev/null -T -i "$ssh_dir/key" \
+              -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none \
+              -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$ssh_dir/known_hosts" \
+              -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=15 \
+              -o ServerAliveInterval=15 -o ServerAliveCountMax=3 \
+              finance-deploy@168.107.15.106 finance-dashboard-release

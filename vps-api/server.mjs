@@ -6,6 +6,12 @@ import rateLimit from '@fastify/rate-limit'
 import { createFredProvider, FredError } from './fred-provider.mjs'
 import { createMarketCache, MarketError } from './market-cache.mjs'
 
+import { createFxProvider, fxPeriods, pairs } from './fx-provider.mjs'
+import { createEcosProvider } from './ecos-provider.mjs'
+import { createDartProvider, dartPeriods } from './dart-provider.mjs'
+import { createSecProvider } from './sec-provider.mjs'
+import { ProviderError } from './public-provider.mjs'
+
 const asOf = '2026-11-18T21:00:00Z'
 const periods = { '1D': 0.27, '1W': 7, '1M': 30, '3M': 90, '1Y': 365 }
 
@@ -59,6 +65,10 @@ export async function buildApp({
   logger = true,
   getEconomyIndicators,
   privateAccessToken,
+  fx = createFxProvider(),
+  ecos = createEcosProvider(),
+  dart = createDartProvider(),
+  sec = createSecProvider(),
 } = {}) {
   if (getEconomyIndicators && !/^[a-f0-9]{64}$/.test(privateAccessToken ?? '')) {
     throw new Error('Private FRED access token is missing or invalid')
@@ -77,7 +87,9 @@ export async function buildApp({
     if (status >= 500) request.log.warn({ statusCode: status }, 'Request failed')
     const label = STATUS_CODES[status] ?? 'Request Failed'
     const message = error instanceof MarketError || error instanceof FredError ? error.message : label
-    reply.code(status).send({ statusCode: status, error: label, message })
+    reply.code(status).send({ statusCode: status, error: label, message,
+      ...(error instanceof ProviderError && { code: error.code }),
+    })
   })
 
   app.addHook('onRequest', async (_request, reply) => {
@@ -125,6 +137,55 @@ export async function buildApp({
     }
     return getEconomyIndicators()
   })
+
+  app.get('/api/v1/fx/latest', { schema: { querystring: noQuery } }, () => fx.latest())
+
+  app.get('/api/v1/fx/history', {
+    schema: {
+      querystring: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['base', 'quote'],
+        properties: {
+          base: { type: 'string', enum: ['USD', 'EUR'] },
+          quote: { type: 'string', enum: ['KRW', 'JPY'] },
+          period: { type: 'string', enum: fxPeriods, default: '1M' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { base, quote, period } = request.query
+    const pair = `${base}/${quote}`
+    if (!pairs.includes(pair)) return reply.code(400).send({ code: 'UNSUPPORTED_CURRENCY_PAIR' })
+    return fx.history(pair, period)
+  })
+
+  app.get('/api/v1/economy/korea', { schema: { querystring: noQuery } }, () => ecos())
+
+  const searchTerm = { type: 'string', minLength: 1, maxLength: 64, pattern: '^[^\\s].*$' }
+  app.get('/api/v1/disclosures/kr', {
+    schema: { querystring: {
+      type: 'object', additionalProperties: false,
+      oneOf: [
+        { required: ['q'], not: { anyOf: [{ required: ['corpCode'] }, { required: ['year'] }, { required: ['period'] }] } },
+        { required: ['corpCode'], not: { required: ['q'] }, dependencies: { period: ['year'], year: ['period'] } },
+      ],
+      properties: {
+        q: searchTerm,
+        corpCode: { type: 'string', pattern: '^[0-9]{8}$' },
+        year: { type: 'string', pattern: '^(201[5-9]|20[2-9][0-9])$' },
+        period: { type: 'string', enum: Object.keys(dartPeriods) },
+      },
+    } },
+  }, request => dart(request.query))
+
+  app.get('/api/v1/disclosures/us', {
+    schema: { querystring: {
+      type: 'object', additionalProperties: false,
+      oneOf: [{ required: ['q'] }, { required: ['cik'] }],
+      properties: { q: searchTerm, cik: { type: 'string', pattern: '^0*[1-9][0-9]*$', maxLength: 10 } },
+    } },
+  }, request => sec(request.query))
 
   app.get('/api/v1/market/snapshot', {
     schema: { querystring: noQuery },

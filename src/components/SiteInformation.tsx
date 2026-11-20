@@ -10,11 +10,13 @@ export type InformationPage = keyof typeof informationPages
 export function SiteInformation({ page }: { page: InformationPage }) {
   return <section className="panel site-information">
     {page === 'about' && <>
-      <p>Finance Dashboard는 국내외 증시와 환율, 미국 경제지표를 한 화면에서 살펴보는 공개 대시보드입니다. 누구나 로그인 없이 이용할 수 있습니다.</p>
+      <p>Finance Dashboard는 국내외 증시와 환율, 경제지표, 기업 공시를 한 화면에서 살펴보는 공개 대시보드입니다. 누구나 로그인 없이 이용할 수 있습니다.</p>
       <p>관심종목을 저장하고 지수의 기간별 흐름을 살펴볼 수 있습니다. DEMO로 표시된 수치는 화면과 기능을 보여 주는 예시입니다.</p>
     </>}
     {page === 'sources' && <>
       <p>공개 시장 데이터의 DEMO 표시는 모의 가격과 차트를 뜻합니다. 화면에 표시된 기준 시각은 해당 데이터의 기준 시각입니다.</p>
+      <p>환율은 Frankfurter v2를 통해 수집한 유럽중앙은행(ECB) 일별 기준환율입니다. USD/KRW와 USD/JPY는 같은 관측일의 ECB 기준환율로 계산한 교차환율입니다.</p>
+      <p>경제지표는 한국은행 ECOS에서 수집합니다. 기준금리는 한국은행, 소비자물가지수와 실업률은 국가데이터처가 발표합니다. 기업 공시와 재무정보는 금융감독원 OPEN DART와 미국 SEC EDGAR에서 수집합니다.</p>
       <p>개인 검증 환경의 FRED 실데이터에는 원 제공기관과 실제 관측일이 함께 표시됩니다.</p>
     </>}
     {page === 'privacy' && <>

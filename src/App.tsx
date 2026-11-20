@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Activity, BarChart3, ChevronDown, CircleHelp, Globe2, Home, Landmark, Moon, RefreshCw, Settings, Sun, TrendingUp } from 'lucide-react'
 import { dataMode, financeService } from './services/financeService'
+import { Disclosures } from './components/Disclosures'
+import { KoreaEconomy } from './components/KoreaEconomy'
 import { Economics } from './components/Economics'
 import { informationPages, SiteInformation, type InformationPage } from './components/SiteInformation'
 import { Watchlist } from './components/Watchlist'
@@ -9,6 +11,7 @@ import { guestStorage, type SettingsState } from './storage/guestStorage'
 import { marketSymbolKey, type EquityMarket, type MarketSymbol } from './types/marketSymbol'
 import type { EquityQuote, FinanceSnapshot, Quote } from './types/finance'
 
+const FxDashboard = lazy(() => import('./components/FxDashboard'))
 const HistoryChart = lazy(() => import('./components/HistoryChart'))
 const isApi = dataMode === 'api'
 
@@ -152,7 +155,7 @@ export function App() {
             {indices.length ? <div className={market ? 'quote-grid' : 'quote-grid overview-quotes'}>
               {indices.map(quote => <QuoteCard key={quote.id} quote={quote} simulated={simulated} units={settings.units} />)}
             </div> : <p className="panel state">표시할 지수가 없습니다.</p>}
-            {tab === 'overview' && <section className="panel fx-summary" aria-label="환율">
+            {tab === 'overview' && !isApi && <section className="panel fx-summary" aria-label="환율">
               <h2><Globe2 size={16} aria-hidden="true" /> USD/KRW{simulated && ' · DEMO'}</h2>
               {fx ? <><strong>{price(fx, settings.units)}</strong><Change quote={fx} detailed />
                 <time dateTime={fx.asOf} title="환율 기준 시각 (KST)">{timestamp.format(new Date(fx.asOf))}{fx.delayed && ' · 지연'}</time></>
@@ -164,6 +167,9 @@ export function App() {
             <Watchlist key={'watchlist:' + tab} {...watchlistProps} market={market} />
           </div>
         </>}
+        {isApi && tab === 'overview' && <FxDashboard revision={request} />}
+        {isApi && market && <Disclosures key={market} market={market} revision={request} />}
+        {isApi && (tab === 'overview' || tab === 'economy') && <KoreaEconomy revision={request} />}
         {(tab === 'overview' || tab === 'economy') && (isApi || snapshot) &&
           <Economics api={isApi} demo={snapshot?.indicators} detailed={tab === 'economy'} revision={request} />}
         {snapshot && tab === 'trends' && (isApi
