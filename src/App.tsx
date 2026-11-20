@@ -1,11 +1,12 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Activity, BarChart3, ChevronDown, CircleHelp, Globe2, Home, Landmark, Moon, RefreshCw, Settings, Sun, TrendingUp } from 'lucide-react'
 import { dataMode, financeService } from './services/financeService'
+import { Economics } from './components/Economics'
 import { Watchlist } from './components/Watchlist'
 import { Change, marketNames, price } from './components/QuoteDisplay'
 import { guestStorage, type SettingsState } from './storage/guestStorage'
 import { marketSymbolKey, type EquityMarket, type MarketSymbol } from './types/marketSymbol'
-import type { EquityQuote, FinanceSnapshot, Indicator, Quote } from './types/finance'
+import type { EquityQuote, FinanceSnapshot, Quote } from './types/finance'
 
 const HistoryChart = lazy(() => import('./components/HistoryChart'))
 const isApi = dataMode === 'api'
@@ -21,7 +22,6 @@ const tabs = [
 type Tab = typeof tabs[number]['id']
 
 const timestamp = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
-const numeral = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 function hashTab(): Tab | undefined {
   return tabs.find(item => '#' + item.id === location.hash)?.id
 }
@@ -31,18 +31,6 @@ function QuoteCard({ quote, units }: { quote: Quote; units: SettingsState['units
     <strong>{price(quote, units)}</strong>
     <Change quote={quote} detailed />
   </article>
-}
-
-function Economics({ indicators, detailed = false }: { indicators: Indicator[]; detailed?: boolean }) {
-  return <section className="panel economy-panel">
-    <div className="panel-heading"><div><h2><Landmark size={17} aria-hidden="true" /> 주요 경제지표</h2><p>미국 거시경제 지표</p></div></div>
-    {indicators.length === 0 ? <p className="state">{isApi ? '현재 API는 경제지표를 제공하지 않습니다.' : '표시할 경제지표가 없습니다.'}</p> :
-      <ul className={detailed ? 'indicator-list indicator-detail' : 'indicator-list'}>{indicators.map(item => <li key={item.id}>
-        <div><h3>{item.name}</h3><small>{item.observationDate} 기준</small></div>
-        <strong>{numeral.format(item.value)}{item.unit}</strong>
-        {detailed && <dl><div><dt>발표일</dt><dd>{item.releaseDate}</dd></div><div><dt>수집 시각 (KST)</dt><dd>{timestamp.format(new Date(item.collectedAt))}</dd></div></dl>}
-      </li>)}</ul>}
-  </section>
 }
 
 export function App() {
@@ -128,7 +116,7 @@ export function App() {
         <a className="compact-brand" href="#overview"><Activity size={20} aria-hidden="true" /> Finance Dashboard</a>
         <span className="breadcrumb">Finance Dashboard <span>/</span> {current.label}</span>
         <div className="top-actions">
-          {snapshot && <span className="updated">데이터 기준 (KST) <time dateTime={snapshot.updatedAt}>{timestamp.format(new Date(snapshot.updatedAt))}</time>{refreshedAt && <span className="refresh-time"> · 조회 <time dateTime={refreshedAt}>{timestamp.format(new Date(refreshedAt))}</time></span>}</span>}
+          {snapshot && tab !== 'economy' && <span className="updated">데이터 기준 (KST) <time dateTime={snapshot.updatedAt}>{timestamp.format(new Date(snapshot.updatedAt))}</time>{refreshedAt && <span className="refresh-time"> · 조회 <time dateTime={refreshedAt}>{timestamp.format(new Date(refreshedAt))}</time></span>}</span>}
           <button className="icon-button" onClick={refresh} disabled={pending} aria-label="데이터 새로고침" title="데이터 새로고침"><RefreshCw size={17} /></button>
           <a className="icon-button" href="#settings" aria-label="설정" title="설정"><Settings size={18} /></a>
         </div>
@@ -137,12 +125,12 @@ export function App() {
       <main>
         <div className="page-heading">
           <div><h1>{tab === 'overview' ? '시장 개요' : current.label}</h1></div>
-          {snapshot && <span className="badge">{snapshot.source.label}{snapshot.source.simulated && ' · 샘플 데이터'}</span>}
+          {snapshot && tab !== 'economy' && <span className="badge">{snapshot.source.label}{snapshot.source.simulated && ' · 샘플 데이터'}</span>}
         </div>
-        {snapshot?.source.simulated && <div className="notice"><CircleHelp size={16} aria-hidden="true" /><span>{isApi ? 'API에서 제공하는 DEMO 데이터입니다.' : 'API 미연결 · 모든 표시 수치는 샘플입니다.'}</span></div>}
+        {snapshot?.source.simulated && tab !== 'economy' && <div className="notice"><CircleHelp size={16} aria-hidden="true" /><span>{isApi ? '시장 데이터는 API에서 제공하는 DEMO입니다.' : 'API 미연결 · 모든 표시 수치는 샘플입니다.'}</span></div>}
         {(storageFailures.favorites || storageFailures.settings) && <p className="notice" role="status">브라우저에 변경사항을 저장하지 못했습니다. 현재 화면에서만 유지됩니다.</p>}
-        {pending && <p className={snapshot ? 'refresh-status' : 'panel state'} role="status">데이터를 불러오는 중입니다.</p>}
-        {error && <div className="panel state"><p role="alert">{isApi ? 'API 데이터를 불러오지 못했습니다.' : '데이터 갱신에 실패했습니다.'}</p><button className="button" onClick={refresh}>다시 시도</button></div>}
+        {pending && (!isApi || tab !== 'economy') && <p className={snapshot ? 'refresh-status' : 'panel state'} role="status">데이터를 불러오는 중입니다.</p>}
+        {error && (!isApi || tab !== 'economy') && <div className="panel state"><p role="alert">{isApi ? 'API 데이터를 불러오지 못했습니다.' : '데이터 갱신에 실패했습니다.'}</p><button className="button" onClick={refresh}>다시 시도</button></div>}
         <Suspense fallback={<p className="panel state" role="status">차트를 준비하는 중입니다.</p>}>
         {snapshot && isMarket && <>
           <section aria-label="핵심 지표">
@@ -167,9 +155,9 @@ export function App() {
             <HistoryChart key={'chart:' + tab} items={indices} revision={revision} />
             <Watchlist key={'watchlist:' + tab} {...watchlistProps} market={market} />
           </div>
-          {tab === 'overview' && <Economics indicators={snapshot.indicators} />}
         </>}
-        {snapshot && tab === 'economy' && <Economics indicators={snapshot.indicators} detailed />}
+        {(tab === 'overview' || tab === 'economy') && (isApi || snapshot) &&
+          <Economics api={isApi} demo={snapshot?.indicators} detailed={tab === 'economy'} revision={request} />}
         {snapshot && tab === 'trends' && (isApi
           ? <p className="panel state" role="status">현재 API는 키워드 트렌드를 지원하지 않습니다.</p>
           : <HistoryChart keyword items={snapshot.trendTopics.map(name => ({ id: name, name }))} revision={revision} />)}
@@ -195,7 +183,7 @@ export function App() {
           </section>
           <Watchlist {...watchlistProps} />
         </>}
-        <footer>Finance Dashboard{snapshot?.source.simulated && ' · 샘플 데이터'}</footer>
+        <footer>Finance Dashboard{snapshot?.source.simulated && tab !== 'economy' && ' · 샘플 데이터'}</footer>
       </main>
     </div>
   </div>

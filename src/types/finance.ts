@@ -38,3 +38,21 @@ export interface FinanceSnapshot {
   marketStatus: Record<'KR' | 'US', 'open' | 'closed'>
   trendTopics: string[]
 }
+
+export interface FredIndicator {
+  id: string
+  seriesId: string
+  name: string
+  value: number | null
+  unit: '%' | 'index'
+  observationDate: string | null
+  releaseDate: null
+  collectedAt: string
+  source: { name: 'FRED'; agency: string; url: string }
+  stale: boolean | null
+}
+
+export interface EconomyIndicators {
+  source: { label: 'FRED'; simulated: false }
+  indicators: FredIndicator[]
+}

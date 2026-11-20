@@ -1,4 +1,4 @@
-import type { FinanceSnapshot, Indicator, Period, Quote, SeriesPoint } from '../types/finance'
+import type { EconomyIndicators, FinanceSnapshot, FredIndicator, Indicator, Period, Quote, SeriesPoint } from '../types/finance'
 import type { FinanceService } from './financeService'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -31,6 +31,19 @@ function isQuote(value: unknown): value is Quote {
 function isIndicator(value: unknown): value is Indicator {
   return isRecord(value) && isText(value.id) && isText(value.name) && isNumber(value.value)
     && value.unit === '%' && isDate(value.observationDate) && isDate(value.releaseDate) && isDate(value.collectedAt)
+}
+
+function isFredIndicator(value: unknown): value is FredIndicator {
+  if (!isRecord(value) || !isText(value.seriesId) || !/^[A-Z0-9]+$/.test(value.seriesId)
+    || !isText(value.id) || !isText(value.name) || (value.unit !== '%' && value.unit !== 'index')
+    || value.releaseDate !== null || !isDate(value.collectedAt) || !isRecord(value.source)
+    || value.source.name !== 'FRED' || !isText(value.source.agency)
+    || value.source.url !== `https://fred.stlouisfed.org/series/${value.seriesId}`) return false
+
+  const validDate = isDate(value.observationDate)
+  return value.value === null
+    ? (value.observationDate === null || validDate) && value.stale === null
+    : validDate && isNumber(value.value) && typeof value.stale === 'boolean'
 }
 
 function isPoint(value: unknown): value is SeriesPoint {
@@ -89,6 +102,27 @@ async function getJson(path: string, allowMissingIndex = false): Promise<unknown
   }
   if (!response.ok) throw new Error(`Finance API request failed: ${response.status}`)
   return response.json()
+}
+
+export async function getEconomyIndicators(signal: AbortSignal): Promise<EconomyIndicators | null> {
+  const response = await fetch(requestUrl('/api/v1/economy/indicators'), {
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+    cache: 'no-store',
+  })
+  if (response.status === 503) {
+    const body: unknown = await response.json()
+    if (isRecord(body) && body.code === 'FRED_DISABLED') return null
+  }
+  if (!response.ok) throw new Error(`Economy API request failed: ${response.status}`)
+  const value: unknown = await response.json()
+  if (!isRecord(value) || !isRecord(value.source) || value.source.label !== 'FRED'
+    || value.source.simulated !== false || !Array.isArray(value.indicators)
+    || value.indicators.length !== 5 || !value.indicators.every(isFredIndicator)
+    || new Set(value.indicators.map(indicator => indicator.id)).size !== 5) {
+    throw new Error('Invalid economy API response')
+  }
+  return { source: { label: 'FRED', simulated: false }, indicators: value.indicators }
 }
 
 export const apiFinanceService: FinanceService = {

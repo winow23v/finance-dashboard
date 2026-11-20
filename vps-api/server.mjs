@@ -2,6 +2,7 @@ import { pathToFileURL } from 'node:url'
 import { STATUS_CODES } from 'node:http'
 import Fastify, { LogController } from 'fastify'
 import rateLimit from '@fastify/rate-limit'
+import { createFredProvider, FredError } from './fred-provider.mjs'
 import { createMarketCache, MarketError } from './market-cache.mjs'
 
 const asOf = '2026-11-18T21:00:00Z'
@@ -55,6 +56,7 @@ export async function buildApp({
   provider = demoProvider,
   cache = createMarketCache(),
   logger = true,
+  getEconomyIndicators,
 } = {}) {
   const app = Fastify({
     logger,
@@ -68,7 +70,7 @@ export async function buildApp({
     const status = error.statusCode >= 400 && error.statusCode <= 599 ? error.statusCode : 500
     if (status >= 500) request.log.warn({ statusCode: status }, 'Request failed')
     const label = STATUS_CODES[status] ?? 'Request Failed'
-    const message = error instanceof MarketError ? error.message : label
+    const message = error instanceof MarketError || error instanceof FredError ? error.message : label
     reply.code(status).send({ statusCode: status, error: label, message })
   })
 
@@ -95,6 +97,17 @@ export async function buildApp({
     config: { healthCheck: true },
     schema: { querystring: noQuery },
   }, async () => ({ status: 'ok' }))
+
+  app.get('/api/v1/economy/indicators', {
+    exposeHeadRoute: false,
+    schema: { querystring: noQuery },
+  }, async (_request, reply) => {
+    reply.header('cache-control', 'no-store')
+    if (!getEconomyIndicators) {
+      return reply.code(503).send({ code: 'FRED_DISABLED', error: 'FRED integration is disabled' })
+    }
+    return getEconomyIndicators()
+  })
 
   app.get('/api/v1/market/snapshot', {
     schema: { querystring: noQuery },
@@ -127,8 +140,9 @@ export async function buildApp({
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
-    const app = await buildApp()
-    await app.listen({ host: '127.0.0.1', port: 3000 })
+    const privateFred = process.env.FRED_PRIVATE_MODE === '1'
+    const app = await buildApp({ getEconomyIndicators: privateFred ? createFredProvider() : undefined })
+    await app.listen({ host: '127.0.0.1', port: privateFred ? 3001 : 3000 })
   } catch {
     console.error('Finance API startup failed')
     process.exitCode = 1

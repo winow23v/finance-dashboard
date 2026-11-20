@@ -108,6 +108,10 @@ select { border: 1px solid var(--line); border-radius: 8px; background: var(--co
 .indicator-list dl { display: flex; flex-wrap: wrap; gap: 4px 18px; width: 100%; font-size: .8125rem; color: var(--muted); }
 .indicator-list dl div { display: flex; gap: 6px; }
 .indicator-list dd { color: var(--text); }
+.indicator-source { width: 100%; overflow-wrap: anywhere; }
+.indicator-source a, .indicator-notice a { text-decoration: underline; }
+.indicator-notice { padding: 10px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: .8125rem; }
+.economy-panel .panel-heading { flex-wrap: wrap; gap: 6px; }
 .setting { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 12px; border-top: 1px solid var(--line); font-size: .875rem; }
 .select-wrap { display: inline-flex; position: relative; }
 .select-wrap select { appearance: none; padding-right: 30px; }
