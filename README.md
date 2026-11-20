@@ -47,9 +47,9 @@ VITE_DATA_MODE=api npm run dev
 
 API 모드는 시장 스냅샷과 지수 히스토리를 조회합니다. 현재 Oracle 응답의 `source.simulated: true`를 사용해 DEMO 표시를 유지합니다. 개별 주식·ETF 시세, 경제지표, 키워드 트렌드의 제공 여부는 화면에 표시되며, 저장된 관심종목은 시세 없이도 확인하거나 삭제할 수 있습니다. API 오류는 화면에서 재시도할 수 있습니다.
 
-GitHub Pages는 `VITE_DATA_MODE=mock`으로 빌드합니다. 향후 공개 API를 사용할 때는 빌드 환경에 `VITE_DATA_MODE=api`와 `VITE_API_BASE_URL=https://api.example.com`을 설정하고 API에서 GitHub Pages 출처(`https://winow23v.github.io`)를 CORS로 허용합니다. `VITE_*` 값은 빌드에 포함되므로 공개 설정만 넣고 API 비밀키는 서버에 보관합니다. 환경변수를 바꾼 뒤에는 개발 서버를 재시작하거나 운영 번들을 재빌드하고 배포해야 합니다.
+GitHub Actions는 GitHub Pages용 빌드에 `VITE_DATA_MODE=api`와 `VITE_API_BASE_URL=https://winow.duckdns.org`를 설정합니다. 브라우저는 Oracle HTTPS API에 직접 요청하며, Snapshot과 History 응답에는 GitHub Pages 출처(`https://winow23v.github.io`)를 허용하는 CORS 헤더가 필요합니다. Oracle은 현재 DEMO 데이터를 제공하며, API 요청에 실패하면 화면에 오류가 표시됩니다. `VITE_*` 값은 빌드에 포함되므로 공개 설정만 넣고 API 비밀키는 서버에 보관합니다.
 
-공급자 선택은 `financeService.ts`에 모여 있습니다. API 전환을 완료하면 이 파일에서 Mock import와 선택 분기를 제거하고 `src/mocks/`를 삭제할 수 있습니다. 관심종목은 시세의 내부 `id`와 독립적인 `MarketSymbol`로 저장됩니다. 실제 API에서도 시장 코드, 거래소 MIC, 종목코드를 동일하게 정규화하세요. 시세 기준 시각과 경제지표 수집 시각은 시간대가 포함된 ISO 문자열로 전달하고 관측일과 발표일은 날짜 문자열로 유지합니다.
+공급자 선택은 `financeService.ts`에 모여 있습니다. 관심종목은 시세의 내부 `id`와 독립적인 `MarketSymbol`로 저장됩니다. 실제 API에서도 시장 코드, 거래소 MIC, 종목코드를 동일하게 정규화하세요. 시세 기준 시각과 경제지표 수집 시각은 시간대가 포함된 ISO 문자열로 전달하고 관측일과 발표일은 날짜 문자열로 유지합니다. 인증과 호출 제한은 실제 금융 API 연동 전에 서버에서 별도로 구현합니다.
 
 ## 비로그인 저장
 
