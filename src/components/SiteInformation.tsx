@@ -29,10 +29,10 @@ function DataSources() {
         <p><a href="https://ecos.bok.or.kr/">한국은행 ECOS</a> · <a href="https://www.bok.or.kr/portal/singl/baseRate/list.do?menuNo=200656">한국은행 기준금리</a> · <a href="https://kosis.kr/">국가통계포털 KOSIS</a></p>
       </section>
       <section>
-        <h2>기업 공시·재무 · OPEN DART와 SEC EDGAR</h2>
-        <p><strong>공시 접수 기준</strong> · 금융감독원의 국내 기업 공시·재무정보와 미국 증권거래위원회의 EDGAR 자료를 기업 조회 시 요청합니다. 새 자료와 정정 내역은 각 기관의 공개 시점을 따릅니다.</p>
-        <p>공시일과 회계기간을 구분해 읽고, 재무 수치와 정정 내용은 원문을 확인하세요. SEC 접근 제한은 조회 화면에 표시됩니다.</p>
-        <p><a href="https://opendart.fss.or.kr/">금융감독원 OPEN DART</a> · <a href="https://www.sec.gov/search-filings">미국 SEC EDGAR</a></p>
+        <h2>기업 공시·재무 · OPEN DART</h2>
+        <p><strong>공시 접수 기준</strong> · 금융감독원의 국내 기업 공시·재무정보를 기업 조회 시 요청합니다. 새 자료와 정정 내역은 금융감독원의 공개 시점을 따릅니다.</p>
+        <p>공시일과 회계기간을 구분해 읽고, 재무 수치와 정정 내용은 원문을 확인하세요.</p>
+        <p><a href="https://opendart.fss.or.kr/">금융감독원 OPEN DART</a></p>
       </section>
       <section>
         <h2>시장 가격과 등락</h2>
@@ -41,7 +41,7 @@ function DataSources() {
       </section>
       <section>
         <h2>미국 거시경제 지표 · FRED</h2>
-        <p><strong>비공개 검증용</strong> · 세인트루이스 연방준비은행 FRED를 통해 원 제공기관의 지표를 확인하는 기능입니다. 지표별 공표 주기가 다르며 공개 대시보드에서는 실데이터를 제공하지 않습니다.</p>
+        <p><strong>승인 회원 전용</strong> · 세인트루이스 연방준비은행 FRED를 통해 제공하는 지표는 원 제공기관과 FRED를 함께 표시합니다. 지표별 갱신 주기가 다릅니다.</p>
         <p><a href="https://fred.stlouisfed.org/">FRED</a> · <a href="https://fred.stlouisfed.org/legal/">FRED 이용약관과 출처 안내</a></p>
       </section>
     </div>
@@ -51,12 +51,13 @@ function DataSources() {
 export function SiteInformation({ page }: { page: InformationPage }) {
   return <section className="panel site-information">
     {page === 'about' && <>
-      <p>Finance Dashboard는 국내외 증시와 환율, 경제지표, 기업 공시를 한 화면에서 살펴보는 공개 대시보드입니다. 누구나 로그인 없이 이용할 수 있습니다.</p>
+      <p>Finance Dashboard는 국내외 증시와 환율, 경제지표, 기업 공시를 한 화면에서 살펴보는 금융 대시보드입니다. 금융 데이터는 Google 로그인 후 관리자의 승인을 받은 회원에게 제공됩니다.</p>
       <p>종목을 검색해 관심종목에 저장하고 상세 화면에서 시세 연결 상태를 확인할 수 있습니다.</p>
     </>}
     {page === 'sources' && <DataSources />}
     {page === 'privacy' && <>
-      <p>서비스는 계정을 만들거나 로그인을 요구하지 않습니다. 관심종목과 화면 설정은 브라우저의 localStorage에 저장됩니다. 해당 사이트의 브라우저 데이터를 지우면 삭제됩니다.</p>
+      <p>회원 인증은 Google과 Supabase Auth를 사용합니다. 가입 및 접근 권한 관리를 위해 계정 식별자, 이메일, 승인 상태와 처리 기록을 Supabase에 저장합니다. 관리자는 승인 처리를 위해 계정 목록을 볼 수 있습니다.</p>
+      <p>관심종목, 화면 설정과 로그인 세션은 브라우저에 저장됩니다. 브라우저 데이터를 지우면 로컬 저장값이 삭제됩니다. 계정 관련 문의는 문의 페이지를 이용해 주세요.</p>
       <p>API는 과도한 요청을 제한하기 위해 요청 IP를 메모리의 요청 카운터에 사용합니다. API 접속 정보는 서버 접근 로그에 기록될 수 있습니다.</p>
       <p>페이지는 GitHub Pages에서 제공됩니다. GitHub에서 처리하는 접속 정보는 <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub 개인정보처리방침</a>에서 확인할 수 있습니다.</p>
       <p>서비스에 현재 광고 스크립트가 연결되어 있지 않습니다.</p>

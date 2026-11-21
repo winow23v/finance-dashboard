@@ -43,9 +43,9 @@ export function createMarketCache({
           throw new MarketError(502, 'Market provider failed')
         }),
       ])
-      const marketTime = typeof asOf === 'string' ? Date.parse(asOf) : NaN
+      const marketTime = asOf === null ? null : typeof asOf === 'string' ? Date.parse(asOf) : NaN
       const json = JSON.stringify(data)
-      if (!Number.isFinite(marketTime) || !json || Buffer.byteLength(json) > maxResponseBytes) {
+      if ((marketTime !== null && !Number.isFinite(marketTime)) || !json || Buffer.byteLength(json) > maxResponseBytes) {
         throw new MarketError(502, 'Invalid market provider response')
       }
 
@@ -92,8 +92,8 @@ export function createMarketCache({
       return {
         body: entry.body,
         storedAt: new Date(entry.storedAt).toISOString(),
-        asOf: new Date(entry.marketTime).toISOString(),
-        stale: wallClock() - entry.marketTime >= staleAfterMs,
+        asOf: entry.marketTime === null ? null : new Date(entry.marketTime).toISOString(),
+        stale: entry.marketTime === null ? null : wallClock() - entry.marketTime >= staleAfterMs,
       }
     },
   }

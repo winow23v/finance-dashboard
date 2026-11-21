@@ -1,0 +1,91 @@
+import { useEffect, useState } from 'react'
+import { Star } from 'lucide-react'
+import { FinanceApiError, getKrxStocks } from '../services/apiFinanceService'
+import { stockHref } from '../services/marketListings'
+import type { KrxMarket, KrxReason, KrxStocks as StockResults } from '../types/finance'
+import { marketSymbolKey, type MarketSymbol } from '../types/marketSymbol'
+import { Change } from './QuoteDisplay'
+
+const number = new Intl.NumberFormat('ko-KR')
+const time = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
+
+export const krxStateLabels: Record<KrxReason, string> = {
+  'provider-not-configured': 'KRX 공급자 미연결',
+  'provider-error': 'KRX 조회 실패',
+  'not-published': '기준일 자료 미확인',
+  weekend: '주말 휴장',
+  'before-collection': '당일 수집 대기',
+}
+
+export function KrxStocks({ selected, onToggle, symbol }: {
+  selected: MarketSymbol[]
+  onToggle: (listing: MarketSymbol) => void
+  symbol?: string
+}) {
+  const [market, setMarket] = useState<KrxMarket>('KOSPI')
+  const [input, setInput] = useState('')
+  const [query, setQuery] = useState('')
+  const [revision, setRevision] = useState(0)
+  const [result, setResult] = useState<{ market: KrxMarket; query: string; revision: number; data: StockResults[] | null; unconfigured?: boolean }>()
+  const current = result?.market === market && result.query === query && result.revision === revision ? result : undefined
+
+  useEffect(() => {
+    if (!symbol && !query) return
+    const controller = new AbortController()
+    const markets: KrxMarket[] = symbol ? ['KOSPI', 'KOSDAQ'] : [market]
+    const filters = symbol ? { symbol } : query ? { q: query } : {}
+    void Promise.allSettled(markets.map(value => getKrxStocks(value, filters, controller.signal))).then(outcomes => {
+      if (controller.signal.aborted) return
+      const data = outcomes.flatMap(outcome => outcome.status === 'fulfilled' ? [outcome.value] : [])
+      const failure = outcomes.find(outcome => outcome.status === 'rejected')
+      setResult({ market, query, revision, data: data.length ? data : null,
+        unconfigured: failure?.reason instanceof FinanceApiError && failure.reason.code === 'KRX_LOCAL_PROVIDER_DISABLED' })
+    })
+    return () => controller.abort()
+  }, [market, query, revision, symbol])
+
+  return <section className="panel watch-panel" aria-label="국내 종목 시세">
+    <div className="panel-heading"><h2>국내 종목 시세</h2></div>
+    {!symbol && <form className="disclosure-controls" onSubmit={event => {
+      event.preventDefault()
+      setQuery(input.trim())
+      setRevision(value => value + 1)
+    }}>
+      <label>시장 <select value={market} onChange={event => setMarket(event.target.value as KrxMarket)}>
+        <option>KOSPI</option><option>KOSDAQ</option>
+      </select></label>
+      <label>종목명 또는 단축코드 <input type="search" value={input} maxLength={64} onChange={event => setInput(event.target.value)} /></label>
+      <button type="submit" className="button">검색</button>
+    </form>}
+    {!symbol && !query ? null : !current ? <p className="state" role="status">국내 종목을 불러오는 중입니다.</p> : current.data === null
+      ? <p className="state" role="status">{current.unconfigured ? 'KRX 공급자 미연결' : '국내 종목 조회 실패'}</p>
+      : current.data.map(dataset => {
+        const details = [...new Set([dataset.listings.reason, dataset.trades.reason].filter(reason => reason !== null))]
+        return <div key={dataset.market}>
+          <p className="state">{dataset.market} · {dataset.listings.source}
+            {dataset.listingDate && ' · 종목 기준 ' + dataset.listingDate}
+            {dataset.trades.collectedAt && <> · 시세 수집 <time dateTime={dataset.trades.collectedAt}>{time.format(new Date(dataset.trades.collectedAt))}</time> (KST)</>}
+            {details.map(reason => ' · ' + krxStateLabels[reason])}
+          </p>
+          {dataset.items.length ? <ul className="stock-list">
+            {dataset.items.map(item => {
+              const listing = { market: 'KR', exchange: 'XKRX', symbol: item.symbol } as const
+              const saved = selected.some(entry => marketSymbolKey(entry) === marketSymbolKey(listing))
+              const quote = item.quote
+              return <li key={item.symbol}>
+                <div>
+                  <a className="stock-detail-link" href={stockHref(listing)}>{item.name}</a>
+                  <small>{item.symbol} · {item.market}{item.shareClass && ' · ' + item.shareClass}</small>
+                  <small>{quote ? <>{quote.tradingDate} 종가 {number.format(quote.price)}원
+                    {quote.change !== null && quote.changePercent !== null && <> · <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed /></>}
+                    {' · 거래량 '}{quote.volume === null ? '미확인' : number.format(quote.volume)}</> : '유효한 시세 없음'}</small>
+                </div>
+                <button type="button" className="favorite-button" aria-pressed={saved} aria-label={item.name + ' 관심종목'}
+                  onClick={() => onToggle(listing)}><Star size={19} fill={saved ? 'currentColor' : 'none'} aria-hidden="true" /></button>
+              </li>
+            })}
+          </ul> : <p className="state">{dataset.listings.status === 'unavailable' ? '종목 목록 미확인' : '검색 결과 없음'}</p>}
+        </div>
+      })}
+  </section>
+}

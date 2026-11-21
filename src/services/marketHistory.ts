@@ -1,4 +1,5 @@
 import type { Period, SeriesPoint } from '../types/finance'
+import { memberDataEpoch } from './memberTransport'
 import { financeService } from './financeService'
 import { createRequestCache } from './requestCache'
 
@@ -7,7 +8,7 @@ export const defaultHistoryPeriod = '1M'
 const cache = createRequestCache<SeriesPoint[]>(40, 5 * 60_000)
 
 export function marketHistory(id: string, period: Period, keyword: boolean, revision: number) {
-  const key = JSON.stringify([id, period, keyword, revision])
+  const key = JSON.stringify([memberDataEpoch(), id, period, keyword, revision])
   return {
     read: () => cache.read(key),
     load: () => cache.load(key, () => keyword

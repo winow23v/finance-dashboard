@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useRef, useId, useState } from 'react'
 import { Info, X } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { isNumber, isRecord } from '../services/apiFinanceService'
@@ -112,7 +112,13 @@ function latestRate(latest: ReturnType<typeof parseLatest> | null | undefined, b
   }
 }
 
-export default function FxDashboard({ revision }: { revision: number }) {
+export default function FxDashboard({ revision, detailed, showSettings, onRefreshReady }: {
+  revision: number; detailed: boolean; showSettings: boolean; onRefreshReady: (ready: boolean) => void
+}) {
+  const settings = useRef<HTMLDetailsElement>(null)
+  useEffect(() => {
+    if (showSettings && settings.current) settings.current.open = true
+  }, [showSettings])
   const [preferences, setPreferences] = useState(loadPreferences)
   const { reference, selected, yen100 } = preferences
   const [selection, setPair] = useState(pairs[0])
@@ -123,14 +129,17 @@ export default function FxDashboard({ revision }: { revision: number }) {
   const availablePairs = [...new Set([...pairs, ...(latest?.reference ? [selection, ...selected.map(code => `${code}/${reference}`)] : [])])]
   const pair = availablePairs.includes(selection) ? selection : pairs[0]
   const [base, quote] = pair.split('/')
-  const chart = usePublicData('/api/v1/fx/history?' + new URLSearchParams({ base, quote, period }), revision, parseHistory, undefined, true, historyCache)?.data
+  const chartResult = usePublicData(detailed ? '/api/v1/fx/history?' + new URLSearchParams({ base, quote, period }) : undefined, revision, parseHistory, undefined, true, historyCache)
+  const chart = chartResult?.data
+  const ready = latestResult?.revision === revision && (!detailed || chartResult?.revision === revision)
+  useEffect(() => { onRefreshReady(ready) }, [onRefreshReady, ready])
   const chartMultiplier = base === 'JPY' && yen100 ? 100 : 1
 
   useEffect(() => { guestPreferences.save(fxKey, preferences) }, [preferences])
 
   return <section className="market-sections" aria-label="환율">
     <div className="section-heading"><h2>환율</h2><span className="badge">공표 기준환율 · 일별</span></div>
-    <details className="panel fx-settings">
+    <details className="panel fx-settings" ref={settings} hidden={!detailed}>
       <summary>환율 설정</summary>
       <div className="fx-preferences">
         <label>기준 통화 <select value={reference} onChange={event => {
@@ -153,7 +162,7 @@ export default function FxDashboard({ revision }: { revision: number }) {
         <label><input type="checkbox" checked={yen100} onChange={event => setPreferences({ ...preferences, yen100: event.target.checked })} /> 일본 엔화 100엔 기준</label>
       </div>
     </details>
-    <div className="quote-grid">
+    <div className="quote-grid fx-rates">
       {selected.map(code => {
         const name = `${code}/${reference}`
         const row = latestRate(latest, code, reference)
@@ -181,6 +190,7 @@ export default function FxDashboard({ revision }: { revision: number }) {
             </div>
             <dl className="observation-dates">
               <div><dt>관측일</dt><dd>{row?.observationDate ? <time dateTime={row.observationDate}>{row.observationDate}</time> : '확인 불가'}</dd></div>
+              <div><dt>공표 상태</dt><dd>{row ? row.status === 'previous_publication' ? '이전 공표 기준환율' : '최근 공표 기준환율' : '확인 불가'}</dd></div>
               <div><dt>수집 시각 (KST)</dt><dd>{row ? <time dateTime={row.collectedAt}>{time.format(new Date(row.collectedAt))}</time> : '확인 불가'}</dd></div>
               <div><dt>계산 방식</dt><dd>{rate == null ? '확인 불가' : row?.calculated ? '같은 관측일의 교차환율' : 'ECB 공표 기준환율'}</dd></div>
               {rate != null && <div><dt>상세 수치</dt><dd>1 {code} = {detailFormat.format(rate)} {unit}
@@ -192,7 +202,7 @@ export default function FxDashboard({ revision }: { revision: number }) {
         </article>
       })}
     </div>
-    <div className="panel chart-panel">
+    {detailed && <div className="panel chart-panel">
       <div className="panel-heading">
         <div><h2>환율 추이</h2><p>{quote} / {chartMultiplier} {base}</p></div>
         <div className="chart-selects"><select aria-label="통화쌍 선택" value={pair} onChange={event => setPair(event.target.value)}>
@@ -216,6 +226,6 @@ export default function FxDashboard({ revision }: { revision: number }) {
           </ResponsiveContainer>}
       </div>
       <p className="chart-note"><a href={ecbUrl}>ECB</a> · <a href="https://frankfurter.dev/">Frankfurter v2</a></p>
-    </div>
+    </div>}
   </section>
 }

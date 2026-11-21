@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { randomBytes } from 'node:crypto'
 import { Writable } from 'node:stream'
-import { createFredProvider } from './fred-provider.mjs'
+import { configureMemberFred, createFredProvider } from './fred-provider.mjs'
 import { buildApp } from './server.mjs'
 
 const endpoint = '/api/v1/economy/indicators'
@@ -16,9 +16,11 @@ function requestPrivate(app) {
 }
 const fixtureRows = {
   DFEDTARU: [['2026-11-19', '4.00']],
-  DGS10: [['2026-11-19', '.'], ['2026-11-10', '5.1']],
+  DGS10: [['2026-11-19', '.'], ['2026-11-10', '5.1'], ['2026-11-09', '.'], ['2026-11-06', '5.0']],
   CPIAUCSL: [['2026-10-01', '330'], ['2026-09-01', '320'], ['2025-11-01', '307'], ['2025-10-01', '300']],
   UNRATE: [['2026-10-01', '.'], ['2026-09-01', '4.1']],
+  DGS2: [['2026-11-19', '4.7'], ['2026-11-18', '4.7']],
+  FEDFUNDS: [['2026-11-01', '.'], ['2026-10-01', '3.8'], ['2026-08-01', '3.7']],
 }
 
 function mockResponse(url, rows = fixtureRows) {
@@ -29,7 +31,7 @@ function mockResponse(url, rows = fixtureRows) {
   if (url.pathname === '/fred/series') return Response.json({
     seriess: [{
       id,
-      frequency_short: id === 'CPIAUCSL' || id === 'UNRATE' ? 'M' : 'D',
+      frequency_short: ['CPIAUCSL', 'UNRATE', 'FEDFUNDS'].includes(id) ? 'M' : 'D',
       units: id === 'CPIAUCSL' ? 'Index 1982-1984=100' : 'Percent',
       last_updated: '2026-11-19 08:30:00-06',
     }],
@@ -58,7 +60,7 @@ async function appFor(t, getEconomyIndicators, logger = false) {
   return app
 }
 
-test('normalizes four series and calculates CPI YoY from exactly the same month a year earlier', async t => {
+test('normalizes the default series and calculates CPI YoY from exactly the same month a year earlier', async t => {
   key(t)
   let calls = 0
   const provider = createFredProvider({
@@ -73,20 +75,26 @@ test('normalizes four series and calculates CPI YoY from exactly the same month 
   const app = await appFor(t, provider)
   const [one, two] = await Promise.all([provider(), provider()])
   assert.equal(one, two)
-  assert.equal(calls, 8)
+  assert.equal(calls, 12)
   const response = await requestPrivate(app)
   assert.equal(response.statusCode, 200)
   assert.equal(response.headers['cache-control'], 'no-store')
   assert.equal(response.headers['access-control-allow-origin'], undefined)
-  assert.equal(calls, 16)
+  assert.equal(calls, 24)
   const { source, indicators } = response.json()
   assert.deepEqual(source, { label: 'FRED', simulated: false })
-  const [fed, treasury, cpi, cpiChange, unemployment] = indicators
+  const [fed, treasury, cpi, cpiChange, unemployment, treasury2, fedFunds] = indicators
   assert.equal(fed.value, 4)
   assert.equal(fed.stale, false)
   assert.match(fed.source.agency, /Board of Governors/)
   assert.deepEqual([treasury.value, treasury.observationDate, treasury.stale], [5.1, '2026-11-10', true])
+  assert.equal(treasury.previousObservationDate, '2026-11-06')
+  assert.ok(Math.abs(treasury.change - 0.1) < 1e-10)
+  assert.equal(treasury2.change, 0)
+  assert.deepEqual([fedFunds.value, fedFunds.observationDate, fedFunds.previousObservationDate, fedFunds.change],
+    [3.8, '2026-10-01', null, null])
   assert.deepEqual([cpi.unit, cpi.value], ['index', 330])
+  assert.deepEqual([cpi.previousObservationDate, cpi.change], ['2026-09-01', 10])
   assert.equal(cpi.source.agency, 'U.S. Bureau of Labor Statistics')
   assert.equal(cpiChange.unit, '%')
   assert.ok(Math.abs(cpiChange.value - 10) < 1e-10)
@@ -100,6 +108,7 @@ test('normalizes four series and calculates CPI YoY from exactly the same month 
     ['DFEDTARU', '%', '2026-11-19'], ['DGS10', '%', '2026-11-10'],
     ['CPIAUCSL', 'index', '2026-10-01'], ['CPIAUCSL', '%', '2026-10-01'],
     ['UNRATE', '%', '2026-10-01'],
+    ['DGS2', '%', '2026-11-19'], ['FEDFUNDS', '%', '2026-10-01'],
   ])
   assert.equal(treasury.source.agency, fed.source.agency)
   assert.equal(unemployment.source.agency, cpi.source.agency)
@@ -137,10 +146,11 @@ test('CPI uses dates even when rows are sparse and out of order, and never fills
   assert.equal(first.comparisonPeriod, '2025-12-01')
   assert.equal(first.value, 8)
   rows.CPIAUCSL[2][1] = '.'
-  const missing = (await provider()).indicators[3]
+  const { indicators: [, , latest, missing] } = await provider()
   assert.equal(missing.observationDate, '2026-12-01')
   assert.equal(missing.value, null)
   assert.equal(missing.missingReason, 'CURRENT_MISSING')
+  assert.deepEqual([latest.observationDate, latest.value], ['2026-11-01', 327])
 })
 
 test('malformed provider observations, HTTP errors and oversized responses return sanitized 502/503', async t => {
@@ -178,10 +188,10 @@ test('times out and aborts outstanding FRED requests', async t => {
     },
   }))
   assert.equal((await requestPrivate(app)).statusCode, 503)
-  assert.equal(signals.length, 8)
+  assert.equal(signals.length, 12)
   assert.ok(signals.every(signal => signal.aborted))
   assert.equal((await requestPrivate(app)).statusCode, 503)
-  assert.equal(signals.length, 8)
+  assert.equal(signals.length, 12)
 })
 
 test('FRED has a shared rolling quota independent of caller IP and recovers after the window', async t => {
@@ -196,10 +206,10 @@ test('FRED has a shared rolling quota independent of caller IP and recovers afte
   await Promise.all([provider(), provider()])
   time = 59_999
   assert.throws(provider, { statusCode: 503 })
-  assert.equal(calls, 8)
+  assert.equal(calls, 12)
   time++
   await provider()
-  assert.equal(calls, 16)
+  assert.equal(calls, 24)
 })
 
 test('private data requires a real loopback peer and a separate access credential', async t => {
@@ -246,4 +256,64 @@ test('disabled and missing-key routes make no calls and share the existing marke
 
 test('private mode refuses to start without a well-formed access credential', async () => {
   await assert.rejects(buildApp({ getEconomyIndicators: () => {}, logger: false }), /missing or invalid/)
+})
+
+test('member FRED only loads configured series and shares the five-minute cache', async t => {
+  key(t)
+  let clock = 0
+  const requested = []
+  const provider = createFredProvider({
+    enabledSeries: ['DFEDTARU', 'UNRATE'], cacheMs: 5 * 60_000,
+    clock: () => clock, now: () => new Date(time),
+    fetchImpl: url => {
+      requested.push(url.searchParams.get('series_id'))
+      return mockResponse(url)
+    },
+  })
+  const [one, two] = await Promise.all([provider(), provider()])
+  assert.equal(one, two)
+  assert.deepEqual(one.indicators.map(row => [row.id, row.frequency]), [
+    ['DFEDTARU', 'daily-7-day'], ['UNRATE', 'monthly'],
+  ])
+  assert.deepEqual(requested.sort(), ['DFEDTARU', 'DFEDTARU', 'UNRATE', 'UNRATE'])
+  clock = 5 * 60_000 - 1
+  assert.equal(await provider(), one)
+  clock++
+  assert.notEqual(await provider(), one)
+  assert.equal(requested.length, 8)
+})
+
+
+test('unset member series uses defaults while explicit empty disables the member feed', async t => {
+  key(t)
+  const previous = process.env.FRED_MEMBER_SERIES
+  delete process.env.FRED_MEMBER_SERIES
+  t.after(() => {
+    if (previous !== undefined) process.env.FRED_MEMBER_SERIES = previous
+  })
+  assert.equal(configureMemberFred({ configuredSeries: '' }), undefined)
+  assert.throws(() => configureMemberFred({ configuredSeries: 'UNRATE,UNRATE' }), /Invalid FRED/)
+  const provider = configureMemberFred({ fetchImpl: url => mockResponse(url) })
+  assert.equal((await provider()).indicators.length, 7)
+})
+
+test('member FRED distinguishes absent credentials, supplier key rejection and rate limits', async t => {
+  key(t, '')
+  const url = '/api/v1/economy/indicators'
+  let reply
+  const memberFred = configureMemberFred({ configuredSeries: 'UNRATE', fetchImpl: () => reply() })
+  const membership = { verify: () => ({ id: 'test' }), read: () => ({ status: 'approved' }) }
+  const app = await buildApp({ membership, memberFred, logger: false })
+  t.after(() => app.close())
+  const request = () => app.inject({ url, headers: { authorization: 'Bearer test.payload.signature' } })
+  assert.equal((await app.inject(url)).statusCode, 401)
+  assert.equal((await request()).json().code, 'FRED_CONFIGURATION_MISSING')
+  process.env.FRED_API_KEY = mockKey
+  reply = () => Response.json({ error_message: 'The api_key is not registered: ' + mockKey }, { status: 400 })
+  const rejected = await request()
+  assert.equal(rejected.statusCode, 502)
+  assert.equal(rejected.json().code, 'FRED_AUTH_REJECTED')
+  assert.ok(!rejected.body.includes(mockKey))
+  reply = () => new Response('busy', { status: 429 })
+  assert.equal((await request()).json().code, 'FRED_RATE_LIMITED')
 })

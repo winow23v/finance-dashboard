@@ -5,7 +5,6 @@ import { buildApp } from './server.mjs'
 import { createDartProvider } from './dart-provider.mjs'
 import { createEcosProvider } from './ecos-provider.mjs'
 import { createFxProvider } from './fx-provider.mjs'
-import { createSecProvider } from './sec-provider.mjs'
 
 async function appFor(t, providers) {
   const app = await buildApp({ logger: false, ...providers })
@@ -91,12 +90,10 @@ test('provider configuration and query errors are distinct and never call upstre
   const app = await appFor(t, {
     ecos: createEcosProvider({ key: '', fetchImpl: fail }),
     dart: createDartProvider({ key: '', fetchImpl: fail }),
-    sec: createSecProvider({ userAgent: '', fetchImpl: fail }),
   })
   for (const [path, code] of [
     ['/api/v1/economy/korea', 'ECOS_CONFIGURATION_MISSING'],
     ['/api/v1/disclosures/kr?q=005930', 'DART_CONFIGURATION_MISSING'],
-    ['/api/v1/disclosures/us?q=0000320193', 'SEC_CONFIGURATION_MISSING'],
   ]) {
     const result = await app.inject(path)
     assert.equal(result.statusCode, 503)
@@ -108,8 +105,6 @@ test('provider configuration and query errors are distinct and never call upstre
     '/api/v1/disclosures/kr?q=삼성&period=q1',
     '/api/v1/disclosures/kr?q=삼성&page=0',
     '/api/v1/disclosures/kr?corpCode=00126380&page=2',
-    '/api/v1/disclosures/us?cik=0',
-    '/api/v1/disclosures/us?cik=320193&q=AAPL',
   ]) assert.equal((await app.inject(encodeURI(path))).statusCode, 400)
 })
 
@@ -175,12 +170,10 @@ test('each provider sanitizes supplier errors and secret-bearing messages', asyn
   const app = await appFor(t, {
     ecos: createEcosProvider({ key, fetchImpl: async () => Response.json({ RESULT: { CODE: 'ERROR-100', MESSAGE: key } }) }),
     dart: createDartProvider({ key, fetchImpl: async () => new Response(`<?xml version="1.0"?><result><status>010</status><message>${key}</message></result>`) }),
-    sec: createSecProvider({ userAgent: 'Example operator security@example.org', fetchImpl: async () => { throw new Error(key) } }),
   })
   for (const [path, code] of [
     ['/api/v1/economy/korea', 'ECOS_PROVIDER_ERROR'],
     ['/api/v1/disclosures/kr?q=005930', 'DART_PROVIDER_ERROR'],
-    ['/api/v1/disclosures/us?q=AAPL', 'PROVIDER_UNAVAILABLE'],
   ]) {
     const result = await app.inject(path)
     assert.equal(result.statusCode, 502)
@@ -260,68 +253,4 @@ test('DART maps the exact stock code, preserves corrections and labels consolida
   assert.equal(partial.json().financialsError, 'PROVIDER_UNAVAILABLE')
   assert.equal(catalogCalls, 1)
   assert.equal(filingCalls, 1)
-})
-
-test('SEC 403 blocks queued and later calls until a new request after cooldown', async t => {
-  let now = 0
-  let calls = 0
-  const sec = createSecProvider({
-    userAgent: 'Example operator security@example.org',
-    clock: () => now,
-    fetchImpl: async () => {
-      calls++
-      if (calls === 1) {
-        await new Promise(resolve => setTimeout(resolve, 25))
-        return new Response('upstream details', { status: 403 })
-      }
-      return Response.json({})
-    },
-  })
-  const app = await appFor(t, { sec })
-  const search = '/api/v1/disclosures/us?q=AAPL'
-  const detail = '/api/v1/disclosures/us?cik=320193'
-  const responses = await Promise.all([app.inject(search), app.inject(detail)])
-  now = 60 * 60_000 - 1
-  responses.push(await app.inject(search))
-  for (const response of responses) {
-    assert.equal(response.statusCode, 503)
-    assert.equal(response.json().code, 'SEC_ACCESS_RESTRICTED')
-    assert.ok(!response.body.includes('upstream details'))
-  }
-  assert.equal(calls, 1)
-  now++
-  assert.equal((await app.inject(search)).statusCode, 200)
-  assert.equal(calls, 2)
-})
-
-test('SEC identifies requests and selects only the matching USD filing and standalone fiscal quarter', async t => {
-  const cik = 320193
-  const userAgent = 'Example operator security@example.org'
-  const accession = '0000320193-26-000078'
-  const filed = '2026-08-01'
-  const end = '2026-06-27'
-  const row = { accn: accession, filed, end, start: '2026-03-29', form: '10-Q', val: 217 }
-  const starts = []
-  const sec = createSecProvider({ userAgent, fetchImpl: async (url, options) => {
-    starts.push(performance.now())
-    assert.equal(options.headers['User-Agent'], userAgent)
-    if (url.includes('company_tickers')) return Response.json({ 0: { cik_str: cik, ticker: 'AAPL', title: 'Apple Inc.' } })
-    if (url.includes('submissions')) return Response.json({ cik: '0000320193', name: 'Apple Inc.', filings: { recent: {
-      form: ['10-Q'], accessionNumber: [accession], filingDate: [filed], reportDate: [end], primaryDocument: ['aapl.htm'],
-    } } })
-    return Response.json({ cik, facts: { 'us-gaap': { Revenues: { units: {
-      USD: [row, { ...row, start: '2025-09-28', val: 999 }, { ...row, accn: 'unrelated', val: 1000 }],
-      EUR: [{ ...row, val: 88 }],
-    } } } } })
-  } })
-  const app = await appFor(t, { sec })
-  const search = await app.inject('/api/v1/disclosures/us?q=320193')
-  assert.equal(search.json().companies[0].id, '0000320193')
-  const response = await app.inject('/api/v1/disclosures/us?cik=320193')
-  assert.equal(response.statusCode, 200)
-  assert.deepEqual(response.json().financials.map(item => [item.period, item.unit, item.start, item.end, item.value]), [
-    ['quarter', 'USD', '2026-03-29', end, 217],
-  ])
-  assert.ok(starts[1] - starts[0] >= 249 && starts[2] - starts[1] >= 249)
-  assert.ok(!response.body.includes(userAgent))
 })

@@ -1,5 +1,6 @@
-import type { EconomyIndicators, FinanceSnapshot, FredIndicator, Indicator, Period, Quote, SeriesPoint } from '../types/finance'
+import type { EconomyIndicators, FredIndicator, KrxAnalysis, KrxMarket, KrxMarketRow, KrxOverview, KrxStock, KrxStocks, MarketIndex, Period, SeriesPoint } from '../types/finance'
 import type { FinanceService } from './financeService'
+import { fetchMemberApi } from './memberTransport'
 import { recordProviderStatus } from './providerStatus'
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -18,29 +19,16 @@ function isDate(value: unknown): value is string {
   return typeof value === 'string' && Number.isFinite(Date.parse(value))
 }
 
-function isQuote(value: unknown): value is Quote {
-  if (!isRecord(value) || !isText(value.id) || !isText(value.name) || !isText(value.symbol)
-    || (value.currency !== 'KRW' && value.currency !== 'USD') || !isNumber(value.price)
-    || !isNumber(value.change) || !isNumber(value.percent) || !isDate(value.asOf)
-    || typeof value.delayed !== 'boolean') return false
-
-  if (value.kind === 'fx') return value.market === 'FX'
-  if (value.market !== 'KR' && value.market !== 'US') return false
-  return value.kind === 'index' || ((value.kind === 'stock' || value.kind === 'etf') && isText(value.exchange))
-}
-
-function isIndicator(value: unknown): value is Indicator {
-  return isRecord(value) && isText(value.id) && isText(value.name) && isNumber(value.value)
-    && value.unit === '%' && isDate(value.observationDate) && isDate(value.releaseDate) && isDate(value.collectedAt)
-}
-
 function isFredIndicator(value: unknown): value is FredIndicator {
   if (!isRecord(value) || !isText(value.seriesId) || !/^[A-Z0-9]+$/.test(value.seriesId)
     || !isText(value.id) || !isText(value.name) || (value.unit !== '%' && value.unit !== 'index')
     || value.releaseDate !== null || !isDate(value.collectedAt) || !isRecord(value.source)
     || value.source.name !== 'FRED' || !isText(value.source.agency)
-    || value.source.url !== `https://fred.stlouisfed.org/series/${value.seriesId}`) return false
+    || value.source.url !== `https://fred.stlouisfed.org/series/${value.seriesId}`
+    || (value.frequency !== undefined && !['daily', 'daily-7-day', 'monthly'].includes(String(value.frequency)))) return false
   if (value.comparisonPeriod != null && !isDate(value.comparisonPeriod)) return false
+  if (value.previousObservationDate != null && !isDate(value.previousObservationDate)) return false
+  if (value.change != null && (!isNumber(value.change) || !isDate(value.previousObservationDate))) return false
   if (value.missingReason != null && value.missingReason !== 'CURRENT_MISSING'
     && value.missingReason !== 'COMPARISON_MISSING') return false
 
@@ -54,10 +42,6 @@ function isPoint(value: unknown): value is SeriesPoint {
   return isRecord(value) && isDate(value.at) && isNumber(value.value)
 }
 
-function isStatus(value: unknown): value is 'open' | 'closed' {
-  return value === 'open' || value === 'closed'
-}
-
 function parseRows<T>(value: unknown, valid: (row: unknown) => row is T, field: string): T[] {
   if (!Array.isArray(value)) throw new Error(`Invalid API field: ${field}`)
   const rows = value.filter(valid)
@@ -65,34 +49,88 @@ function parseRows<T>(value: unknown, valid: (row: unknown) => row is T, field: 
   return rows
 }
 
-function parseSnapshot(value: unknown): FinanceSnapshot {
-  if (!isRecord(value) || !isRecord(value.source) || !isText(value.source.label)
-    || typeof value.source.simulated !== 'boolean' || !isDate(value.updatedAt)
-    || !isRecord(value.marketStatus) || !isStatus(value.marketStatus.KR) || !isStatus(value.marketStatus.US)) {
-    throw new Error('Invalid API snapshot metadata')
+function isMarketIndex(value: unknown): value is MarketIndex {
+  if (!isRecord(value) || !isText(value.id) || !isText(value.symbol) || !isText(value.name)
+    || (value.market !== 'KR' && value.market !== 'US')) return false
+  if (value.status === 'unavailable') {
+    return ['provider-not-configured', 'no-observation', 'provider-error', 'not-published'].includes(String(value.reason))
+      && value.price === null && value.change === null && value.changePercent === null
+      && value.source === null && value.observedAt === null && value.collectedAt === null && value.tradingDate === null
   }
-  const quotes = parseRows(value.quotes, isQuote, 'quotes')
-  const indicators = parseRows(value.indicators, isIndicator, 'indicators')
-  return {
-    source: { label: value.source.label, simulated: value.source.simulated },
-    updatedAt: value.updatedAt,
-    quotes: [...new Map(quotes.map(quote => [quote.id, quote])).values()],
-    indicators: [...new Map(indicators.map(indicator => [indicator.id, indicator])).values()],
-    marketStatus: { KR: value.marketStatus.KR, US: value.marketStatus.US },
-    trendTopics: [...new Set(parseRows(value.trendTopics, isText, 'trendTopics'))],
-  }
+  return (value.status === 'available' || value.status === 'stale') && isNumber(value.price) && value.price > 0
+    && isNullableNumber(value.change) && isNullableNumber(value.changePercent) && isDate(value.observedAt)
+    && isDate(value.collectedAt) && isDate(value.tradingDate) && isText(value.source)
 }
 
-function requestUrl(path: string): string {
-  const configured = import.meta.env.VITE_API_BASE_URL?.trim()
-  if (import.meta.env.DEV && !configured) return path
-  if (!configured) throw new Error('VITE_API_BASE_URL is required in production API mode')
+const isNullableNumber = (value: unknown) => value === null || isNumber(value)
+const isKrxMarket = (value: unknown) => value === 'KOSPI' || value === 'KOSDAQ'
+const isKrxReason = (value: unknown) => value === null ||
+  ['provider-not-configured', 'provider-error', 'not-published', 'weekend', 'before-collection'].includes(String(value))
+const isOptionalDate = (value: unknown) => value === null || isDate(value)
+const isKrxQuote = (value: unknown) => value === null || (isRecord(value) && isNumber(value.price) && value.price > 0
+  && isNullableNumber(value.volume) && isNullableNumber(value.change)
+  && isNullableNumber(value.changePercent) && isDate(value.tradingDate))
 
-  const base = new URL(configured)
-  if (base.protocol !== 'https:' || base.username || base.password || base.search || base.hash) {
-    throw new Error('VITE_API_BASE_URL must be an HTTPS base URL')
+function isKrxStock(value: unknown): value is KrxStock {
+  return isRecord(value) && isText(value.symbol) && /^[0-9A-Z]{6}$/.test(value.symbol) && isText(value.name)
+    && typeof value.englishName === 'string' && typeof value.shareClass === 'string' && isDate(value.listedOn)
+    && isKrxMarket(value.market) && isKrxQuote(value.quote)
+}
+
+export async function getKrxStocks(market: KrxMarket, filters: { q?: string; symbol?: string }, signal: AbortSignal): Promise<KrxStocks> {
+  const query = new URLSearchParams({ market, ...filters })
+  const value = await getJson('/api/v1/market/kr/stocks?' + query, false, signal)
+  const validStatus = (status: unknown) => isRecord(status) && ['available', 'stale', 'unavailable'].includes(String(status.status))
+    && typeof status.source === 'string' && (status.collectedAt === null || isDate(status.collectedAt))
+    && isKrxReason(status.reason)
+  if (!isRecord(value) || value.market !== market || !Array.isArray(value.items)
+    || !value.items.every(item => isKrxStock(item) && item.market === market)
+    || !validStatus(value.listings) || !validStatus(value.trades)
+    || (value.listingDate !== null && !isDate(value.listingDate))) throw new Error('Invalid KRX stock response')
+  return value as unknown as KrxStocks
+}
+
+export async function getKrxAnalysis(symbol: string, signal: AbortSignal): Promise<KrxAnalysis> {
+  const value = await getJson('/api/v1/market/kr/stocks/' + encodeURIComponent(symbol) + '/history', false, signal)
+  if (!isRecord(value) || value.symbol !== symbol || !isText(value.name) || !isKrxMarket(value.market)
+    || value.source !== 'KRX OPEN API' || !isKrxQuote(value.quote) || !isKrxReason(value.reason)
+    || !isOptionalDate(value.latestDate) || !isOptionalDate(value.collectedAt) || !isOptionalDate(value.stoppedAt)
+    || !(value.stoppedReason === null || value.stoppedReason === 'missing-observation' || value.stoppedReason === 'not-collected')
+    || !isRecord(value.history) || value.history.currency !== 'KRW' || value.history.timeZone !== 'Asia/Seoul'
+    || value.history.adjustment !== 'unadjusted' || !['complete', 'missing-observations'].includes(String(value.history.completeness))
+    || !Array.isArray(value.history.bars) || value.history.bars.length > 390
+    || !value.history.bars.every(bar => isRecord(bar) && isDate(bar.tradingDate)
+      && [bar.open, bar.high, bar.low, bar.close, bar.volume].every(isNumber))) throw new Error('Invalid KRX history')
+  return value as unknown as KrxAnalysis
+}
+
+function isKrxMarketRow(value: unknown): value is KrxMarketRow {
+  return isRecord(value) && isText(value.name) && isText(value.symbol) && /^[0-9A-Z]{6}$/.test(value.symbol)
+    && isText(value.shortName) && typeof value.mapped === 'boolean'
+    && isKrxMarket(value.market) && isNumber(value.price) && value.price > 0 && isNumber(value.volume) && value.volume > 0
+    && isNullableNumber(value.changePercent) && isNullableNumber(value.marketCap)
+}
+
+export async function getKrxOverview(signal: AbortSignal): Promise<KrxOverview> {
+  const data = await getJson('/api/v1/market/kr/overview', false, signal)
+  const rows = (value: unknown, limit: number) => Array.isArray(value) && value.length <= limit && value.every(isKrxMarketRow)
+  if (!isRecord(data) || data.source !== 'KRX OPEN API' || !isOptionalDate(data.tradingDate) || !isOptionalDate(data.collectedAt)
+    || !(isKrxReason(data.reason) || data.reason === 'same-date-data-unavailable')
+    || !(data.leaders === null || (isRecord(data.leaders) &&
+      [data.leaders.advances, data.leaders.declines, data.leaders.volume].every(value => rows(value, 5))))
+    || !rows(data.tiles, 60) || !isRecord(data.marketTiles)
+    || !rows(data.marketTiles.KOSPI, 60) || !rows(data.marketTiles.KOSDAQ, 60)) throw new Error('Invalid KRX overview')
+  return data as unknown as KrxOverview
+}
+
+export async function getMarketIndices(signal: AbortSignal): Promise<MarketIndex[]> {
+  const value = await getJson('/api/v1/market/snapshot', false, signal)
+  if (!isRecord(value) || !isRecord(value.source) || value.source.simulated !== false
+    || !Array.isArray(value.quotes) || !value.quotes.every(isMarketIndex)
+    || new Set(value.quotes.map(quote => quote.id)).size !== value.quotes.length) {
+    throw new Error('Invalid market snapshot')
   }
-  return base.href.replace(/\/+$/, '') + path
+  return value.quotes
 }
 
 export class FinanceApiError extends Error {
@@ -102,18 +140,17 @@ export class FinanceApiError extends Error {
 }
 
 export async function getJson(path: string, allowMissingIndex = false, signal?: AbortSignal, timeoutMs = 15_000): Promise<unknown> {
-  const response = await fetch(requestUrl(path), {
-    headers: { Accept: 'application/json' },
+  const response = await fetchMemberApi(path, {
     signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]),
   }).catch(error => {
-    if (!signal?.aborted) recordProviderStatus(path, 'error')
+    if (!signal?.aborted && !(error instanceof DOMException && error.name === 'AbortError')) recordProviderStatus(path, 'error')
     throw error
   })
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => null)
     if (allowMissingIndex && response.status === 404 && isRecord(body) && body.error === 'Index not found') return []
     const code = isRecord(body) && typeof body.code === 'string' ? body.code : undefined
-    recordProviderStatus(path, code === 'SEC_ACCESS_RESTRICTED' ? 'restricted' : 'error')
+    recordProviderStatus(path, 'error')
     throw new FinanceApiError(response.status, code)
   }
   const body: unknown = await response.json()
@@ -134,32 +171,35 @@ export async function getJson(path: string, allowMissingIndex = false, signal?: 
 }
 
 export async function getEconomyIndicators(signal: AbortSignal): Promise<EconomyIndicators | null> {
-  const response = await fetch(requestUrl('/api/v1/economy/indicators'), {
-    headers: { Accept: 'application/json' },
+  const response = await fetchMemberApi('/api/v1/economy/indicators', {
     signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
     cache: 'no-store',
   })
-  if (response.status === 503) {
-    const body: unknown = await response.json()
-    if (isRecord(body) && body.code === 'FRED_DISABLED') return null
+  const path = '/api/v1/economy/indicators'
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => null)
+    const code = isRecord(body) && typeof body.code === 'string' ? body.code : undefined
+    if (response.status === 503 && code === 'FRED_DISABLED') {
+      recordProviderStatus(path, 'unavailable')
+      return null
+    }
+    recordProviderStatus(path, 'error')
+    throw new FinanceApiError(response.status, code)
   }
-  if (!response.ok) throw new Error(`Economy API request failed: ${response.status}`)
   const value: unknown = await response.json()
   if (!isRecord(value) || !isRecord(value.source) || value.source.label !== 'FRED'
     || value.source.simulated !== false || !Array.isArray(value.indicators)
-    || value.indicators.length !== 5 || !value.indicators.every(isFredIndicator)
-    || new Set(value.indicators.map(indicator => indicator.id)).size !== 5) {
+    || value.indicators.length < 1 || !value.indicators.every(isFredIndicator)
+    || new Set(value.indicators.map(indicator => indicator.id)).size !== value.indicators.length) {
+    recordProviderStatus(path, 'error')
     throw new Error('Invalid economy API response')
   }
+  const published = value.indicators.filter(indicator => indicator.value !== null).length
+  recordProviderStatus(path, !published ? 'unavailable' : published === value.indicators.length ? 'published' : 'partial')
   return { source: { label: 'FRED', simulated: false }, indicators: value.indicators }
 }
 
-export const apiFinanceService: FinanceService = {
-  async getSnapshot() {
-    const snapshot = parseSnapshot(await getJson('/api/v1/market/snapshot'))
-    // The legacy endpoint supplies DEMO data and has no per-instrument display approval.
-    return snapshot.source.simulated ? snapshot : { ...snapshot, quotes: [] }
-  },
+export const apiFinanceService: Pick<FinanceService, 'getPriceHistory' | 'getKeywordTrend'> = {
   async getPriceHistory(symbolId: string, period: Period) {
     const query = new URLSearchParams({ symbolId, period })
     const value = await getJson(`/api/v1/market/history?${query}`, true)

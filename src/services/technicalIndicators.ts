@@ -32,6 +32,24 @@ const ema = (values: readonly number[], period: number) => smoothed(values, peri
 const wilder = (values: readonly number[]) => smoothed(values, 14, 1 / 14).at(-1)
 const latest = (values: number[]) => values.at(-1) ?? null
 
+export function calculatePriceReturns(history: MarketDailyHistory) {
+  const { bars } = history
+  const last = bars.at(-1)
+  const newestFirst = last && history.completeness === 'complete' && validBars(bars) ? [...bars].reverse() : []
+  return Object.fromEntries([1, 3, 6].map(months => {
+    if (!last || !newestFirst.length) return [months, null]
+    const cutoff = new Date(last.tradingDate + 'T00:00:00Z')
+    const date = cutoff.getUTCDate()
+    cutoff.setUTCDate(1)
+    cutoff.setUTCMonth(cutoff.getUTCMonth() - months)
+    const end = Date.UTC(cutoff.getUTCFullYear(), cutoff.getUTCMonth() + 1, 0)
+    cutoff.setUTCDate(Math.min(date, new Date(end).getUTCDate()))
+    const boundary = cutoff.toISOString().slice(0, 10)
+    const previous = newestFirst.find(bar => bar.tradingDate <= boundary)
+    return [months, previous ? { percent: (last.close / previous.close - 1) * 100, tradingDate: previous.tradingDate } : null]
+  }))
+}
+
 export function calculateTechnicalIndicators(history: MarketDailyHistory) {
   const { bars } = history
   if (history.completeness !== 'complete' || !bars.length || !validBars(bars)) return null
@@ -51,6 +69,7 @@ export function calculateTechnicalIndicators(history: MarketDailyHistory) {
     tradingDate: bars[bars.length - 1].tradingDate,
     sma: Object.fromEntries(windows.map(period => [period, average(closes, period)])),
     ema: Object.fromEntries(windows.map(period => [period, latest(ema(closes, period))])),
+    sma20Slope: closes.length < 21 ? null : (closes[closes.length - 1] - closes[closes.length - 21]) / 20,
     rsi14,
     macd: { line, signal, histogram: line === null || signal === null ? null : line - signal },
     volumeSma20: average(bars.map(bar => bar.volume), 20),

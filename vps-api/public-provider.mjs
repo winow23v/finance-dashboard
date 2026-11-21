@@ -19,23 +19,16 @@ export function isDay(value) {
 
 export function providerClient(fetchImpl, intervalMs, {
   binary = false, maxBytes = 16 * 1024 * 1024, queue = false, dailyLimit = 0, timeoutMs = 6000,
-  forbiddenCooldownMs = 0, clock = Date.now,
 } = {}) {
   let next = 0
   let active = 0
-  let blockedUntil = -Infinity
   const recent = []
-  const checkAccess = () => {
-    if (clock() < blockedUntil) throw new ProviderError(503, 'SEC_ACCESS_RESTRICTED')
-  }
   return async (url, headers = {}, requestTimeoutMs = timeoutMs) => {
-    checkAccess()
     if (active >= 2 || (!queue && performance.now() < next)) throw new ProviderError(503, 'PROVIDER_BUSY')
     active++
     while (performance.now() < next) await delay(Math.ceil(next - performance.now()))
     const signal = AbortSignal.timeout(requestTimeoutMs)
     try {
-      checkAccess()
       const now = performance.now()
       if (dailyLimit) {
         while (recent.length && recent[0] <= now - 86_400_000) recent.shift()
@@ -44,12 +37,6 @@ export function providerClient(fetchImpl, intervalMs, {
       }
       next = now + intervalMs
       const response = await fetchImpl(url, { headers: { Accept: binary ? 'application/zip, application/json' : 'application/json', ...headers }, signal, redirect: 'error' })
-      if (response.status === 403 && forbiddenCooldownMs) {
-        blockedUntil = clock() + forbiddenCooldownMs
-        const error = new ProviderError(503, 'SEC_ACCESS_RESTRICTED')
-        void response.body?.cancel().catch(() => {})
-        throw error
-      }
       if (response.status === 429) throw new ProviderError(503, 'PROVIDER_RATE_LIMITED')
       if (!response.ok) throw new ProviderError(502, 'PROVIDER_UNAVAILABLE')
       try {

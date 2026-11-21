@@ -1,9 +1,9 @@
-type ProviderStatus = 'published' | 'previous' | 'restricted' | 'error' | 'unavailable' | 'partial'
+type ProviderStatus = 'published' | 'previous' | 'error' | 'unavailable' | 'partial'
 const routes = {
   '/api/v1/economy/korea': 'ecos',
+  '/api/v1/economy/indicators': 'fred',
   '/api/v1/fx/latest': 'fx',
   '/api/v1/disclosures/kr': 'dart',
-  '/api/v1/disclosures/us': 'sec',
 } as const
 type Provider = typeof routes[keyof typeof routes]
 let current: Partial<Record<Provider, ProviderStatus>> = {}
@@ -19,6 +19,10 @@ export function recordProviderStatus(path: string, status: ProviderStatus) {
 }
 
 export const providerStatuses = {
+  clear() {
+    current = {}
+    for (const listener of listeners) listener()
+  },
   read: () => current,
   subscribe(listener: () => void) {
     listeners.add(listener)

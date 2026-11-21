@@ -35,19 +35,34 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - id: pages
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/configure-pages@v5
+      - name: Check public Google sign-in configuration
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          node --input-type=module -e '
+            const url = new URL(process.env.VITE_SUPABASE_URL);
+            if (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash ||
+                !process.env.VITE_SUPABASE_PUBLISHABLE_KEY?.startsWith("sb_publishable_")) {
+              throw new Error("Configure the Supabase project URL and its publishable key in repository variables");
+            }
+          '
       - run: npm run build
         env:
           VITE_DATA_MODE: api
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
           VITE_API_BASE_URL: https://winow.duckdns.org
-          PAGES_BASE_PATH: ${{ github.event_name == 'pull_request' && '/finance-dashboard/' || format('{0}/', steps.pages.outputs.base_path) }}
+          PAGES_BASE_PATH: ${{ github.event_name == 'workflow_dispatch' && format('{0}/', steps.pages.outputs.base_path) || '/finance-dashboard/' }}
       - uses: actions/upload-pages-artifact@v4
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch'
         with:
           path: dist
   deploy:
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     needs: build
     runs-on: ubuntu-latest
     permissions:

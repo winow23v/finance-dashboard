@@ -15,3 +15,22 @@ oracle_finance_deploy
 
 # Local documentation only
 *.md
+
+# Local Python market research
+/research/market-data/.venv/
+/research/market-data/data_raw/
+/research/market-data/data_adj/
+/research/market-data/snapshots/
+/research/market-data/.pytest_cache/
+/research/market-data/.collect.lock
+__pycache__/
+
+/vps-api/.krx-cache/
+
+# Local test, log and backup output
+/.pytest_cache/
+*.log
+*.bak
+*.bak.*
+*.backup
+*.backup.*

@@ -12,8 +12,8 @@ const rectStyle = (rect: HeatmapRect): CSSProperties => ({
   left: rect.x + '%', top: rect.y + '%', width: rect.width + '%', height: rect.height + '%',
 })
 
-export function MarketHeatmap({ market, favorites, data }: {
-  market: EquityMarket; favorites: readonly MarketSymbol[]; data?: unknown
+export function MarketHeatmap({ market, favorites, data, summary = false }: {
+  market: EquityMarket; favorites: readonly MarketSymbol[]; data?: unknown; summary?: boolean
 }) {
   const snapshot = useMemo(() => parseMarketHeatmap(data, market), [data, market])
   const [sector, setSector] = useState('')
@@ -45,13 +45,16 @@ export function MarketHeatmap({ market, favorites, data }: {
 
   return <section className="panel market-heatmap" aria-label={title}>
     <div className="section-heading"><h2>{title}</h2>
+      {summary && <a className="text-link" href={market === 'KR' ? '#domestic' : '#global'}>상세보기</a>}
+    </div>
+    <div className="section-heading">
       <div className="heatmap-legend" aria-label="등락률 색상 범위">
-        {[-3, 0, 3].map(percent => <span key={percent}>
-          <i aria-hidden="true" style={{ background: heatmapColor(market, percent) }} />{change.format(percent)}%
+        {[-3, 0, 3].map((percent, index) => <span key={percent}>
+          <i aria-hidden="true" style={{ background: heatmapColor(market, percent) }} />{['하락', '보합', '상승'][index]} {change.format(percent)}%
         </span>)}
       </div>
     </div>
-    {!snapshot ? <p className="state" role="status">시세·시가총액·업종 데이터 미연결</p> : <>
+    {!snapshot ? <p className="state" role="status">{market === 'US' ? '해외 종목 히트맵 공급자 미연결' : '시세·시가총액·업종 데이터 미연결'}</p> : <>
       <p className="heatmap-meta">{snapshot.tradingDate} 기준 · {snapshot.session === 'open' ? '장중' : snapshot.session === 'closed' ? '장 마감' : '휴장'}
         {' · '}{snapshot.timing.kind === 'delayed' ? `${snapshot.timing.minutes}분 지연` : snapshot.timing.kind === 'realtime' ? '실시간' : '확정 종가'}
         {' · '}{snapshot.adjustment === 'split-adjusted' ? '분할 수정주가' : '미수정주가'}</p>

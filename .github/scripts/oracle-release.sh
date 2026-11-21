@@ -76,6 +76,7 @@ runuser -u "$deploy_user" -- bash -euc '
   for entry in *; do
     [[ -f $entry && ! -L $entry ]]
     case "$entry" in
+      sec-provider.mjs) exit 1 ;;
       server.mjs|market-cache.mjs|*-provider.mjs|*.test.mjs|package.json|package-lock.json) ;;
       *) exit 1 ;;
     esac
@@ -88,6 +89,8 @@ runuser -u "$deploy_user" -- bash -euc '
 # Preserve local configuration, ownership and attributes. Update only the release files.
 release=$(mktemp -d "${api}.release.XXXXXXXX")
 cp -a -- "$api" "$release/api"
+# Retire SEC EDGAR from the candidate only. The live tree and rollback copy stay intact.
+rm -f -- "$release/api/sec-provider.mjs"
 rm -rf -- "$release/api/node_modules"
 cp -a -- "$work/node_modules" "$release/api/node_modules"
 chown -hR --reference="$api/node_modules" "$release/api/node_modules"

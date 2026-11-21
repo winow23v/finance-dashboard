@@ -8,9 +8,10 @@
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "node --test src/services/requestCache.test.mjs src/services/technicalIndicators.test.mjs src/services/marketHeatmap.test.mjs && npm --prefix vps-api test"
+    "test": "bash .github/scripts/oracle-release.test.sh && node --test src/services/requestCache.test.mjs src/services/technicalIndicators.test.mjs src/services/marketHeatmap.test.mjs && npm --prefix vps-api test"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.119.2",
     "lucide-react": "^0.577.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",

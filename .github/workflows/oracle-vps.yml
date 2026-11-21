@@ -50,7 +50,13 @@ jobs:
           printf '%s\n' "$ORACLE_SSH_PRIVATE_KEY" > "$ssh_dir/key"
           printf '%s\n' "$ORACLE_SSH_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
           unset ORACLE_SSH_PRIVATE_KEY ORACLE_SSH_KNOWN_HOSTS
-          git ls-files -z -- 'vps-api/*.mjs' vps-api/package.json vps-api/package-lock.json |
+          release_files=(
+            vps-api/server.mjs vps-api/market-cache.mjs
+            ':(glob)vps-api/*-provider.mjs' ':(glob)vps-api/*.test.mjs'
+            vps-api/package.json vps-api/package-lock.json
+            ':(exclude)vps-api/sec-provider.mjs'
+          )
+          git ls-files -z -- "${release_files[@]}" |
             tar --null --transform='s|^vps-api/||' -cf "$ssh_dir/release.tar" -T -
           { printf '%s\n' "$RELEASE_MODE"; cat "$ssh_dir/release.tar"; } |
             ssh -F /dev/null -T -i "$ssh_dir/key" \

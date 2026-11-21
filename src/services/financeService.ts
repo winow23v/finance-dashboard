@@ -9,4 +9,4 @@ export interface FinanceService {
 }
 
 export const dataMode = import.meta.env.VITE_DATA_MODE === 'api' ? 'api' : 'mock'
-export const financeService: FinanceService = dataMode === 'api' ? apiFinanceService : mockFinanceService
+export const financeService: Pick<FinanceService, 'getPriceHistory' | 'getKeywordTrend'> = dataMode === 'api' ? apiFinanceService : mockFinanceService

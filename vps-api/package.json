@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
+    "dev": "node --env-file-if-exists=../.env --env-file-if-exists=../.env.local --env-file-if-exists=.env --env-file-if-exists=.env.local server.mjs",
     "test": "node --test"
   },
   "dependencies": {

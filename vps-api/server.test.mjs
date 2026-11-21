@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { buildApp } from './server.mjs'
 import { createMarketCache } from './market-cache.mjs'
+import { createIndexSnapshot } from './market-index-provider.mjs'
 
 const snapshot = '/api/v1/market/snapshot'
 const history = '/api/v1/market/history'
@@ -13,7 +14,7 @@ async function fixture(t, options) {
   return app
 }
 
-test('existing response contracts and fixed DEMO timestamps', async t => {
+test('market routes report absent providers without simulated observations', async t => {
   const app = await fixture(t, { cache: createMarketCache({ wallClock: () => Date.parse(asOf) + 172_800_000 }) })
   const health = await app.inject('/health')
   assert.equal(health.statusCode, 200)
@@ -23,16 +24,39 @@ test('existing response contracts and fixed DEMO timestamps', async t => {
   assert.equal(market.headers['access-control-allow-origin'], undefined)
   assert.equal(market.headers['cache-control'], 'no-store')
   assert.equal(market.headers['x-content-type-options'], 'nosniff')
-  assert.deepEqual(market.json().source, { label: 'DEMO', simulated: true })
-  assert.equal(market.json().updatedAt, asOf)
-  assert.equal(market.json().quotes[0].price, 2658.41)
-  assert.equal(market.headers['x-market-as-of'], '2026-11-18T21:00:00.000Z')
-  assert.equal(market.headers['x-cache-stored-at'], '2026-11-20T21:00:00.000Z')
-  assert.equal(market.headers['x-market-stale'], 'true')
+  assert.equal(market.json().source.simulated, false)
+  assert.equal(market.json().updatedAt, null)
+  assert.equal(market.headers['x-market-as-of'], undefined)
+  assert.equal(market.json().quotes.length, 4)
+  assert.ok(market.json().quotes.every(quote => quote.price === null && quote.status === 'unavailable'))
   const series = await app.inject(`${history}?symbolId=kospi`)
   assert.equal(series.statusCode, 200)
-  assert.equal(series.json().length, 25)
-  assert.deepEqual(series.json().at(-1), { at: '2026-11-18T21:00:00.000Z', value: 2658.41 })
+  assert.deepEqual(series.json(), [])
+})
+
+test('research close is available on loopback only and never enters the shared snapshot cache', async t => {
+  const app = await fixture(t, { localIndexResearch: createIndexSnapshot({
+    async getQuote(symbol) {
+      if (symbol === '^IXIC') return { dataStatus: 'no-observation' }
+      return { symbol, close: 5050, previousClose: 5000, dataStatus: 'stale',
+        distribution: 'local-research-only', observedAt: asOf, collectedAt: asOf, tradingDate: '2026-11-18' }
+    },
+  }) })
+  const local = { url: snapshot, remoteAddress: '127.0.0.1', headers: { host: '127.0.0.1:5174' } }
+  const response = await app.inject(local)
+  const quotes = response.json().quotes
+  assert.equal(quotes[2].price, 5050)
+  assert.equal(quotes[2].change, 50)
+  assert.equal(quotes[2].changePercent, 1)
+  assert.equal(quotes[2].status, 'stale')
+  assert.equal(quotes[3].reason, 'no-observation')
+  for (const request of [
+    { ...local, headers: { host: 'api.example' } },
+    { ...local, headers: { ...local.headers, 'x-forwarded-for': '192.0.2.1' } },
+    { ...local, remoteAddress: '192.0.2.1' },
+  ]) {
+    assert.ok((await app.inject(request)).json().quotes.every(quote => quote.price === null))
+  }
 })
 
 test('rejects malformed inputs and preserves the missing-index response', async t => {

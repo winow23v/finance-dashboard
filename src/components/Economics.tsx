@@ -1,22 +1,28 @@
 import { useEffect, useState } from 'react'
 import { Landmark } from 'lucide-react'
-import { getEconomyIndicators } from '../services/apiFinanceService'
+import { FinanceApiError, getEconomyIndicators } from '../services/apiFinanceService'
 import type { EconomyIndicators, Indicator } from '../types/finance'
 
 const timestamp = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
 const percent = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const indexValue = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
+const pointChange = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 3, signDisplay: 'exceptZero' })
+
+const frequencyLabels = { daily: '일별', 'daily-7-day': '일별 · 주 7일', monthly: '월별' }
 
 type EconomyResult =
   | { status: 'loaded'; data: EconomyIndicators | null }
-  | { status: 'error' }
+  | { status: 'error'; message: string }
 
-export function Economics({ api, demo, detailed, revision }: {
-  api: boolean; demo?: Indicator[]; detailed: boolean; revision: number
+export function Economics({ api, demo, detailed, revision, onRefreshReady }: {
+  api: boolean; demo?: Indicator[]; detailed: boolean; revision: number; onRefreshReady: (ready: boolean) => void
 }) {
   const [attempt, setAttempt] = useState(0)
   const [result, setResult] = useState<{ revision: number; attempt: number; result: EconomyResult }>()
   const current = result?.revision === revision && result.attempt === attempt ? result.result : undefined
+
+  const ready = current !== undefined
+  useEffect(() => { onRefreshReady(ready) }, [onRefreshReady, ready])
 
   useEffect(() => {
     if (!api) return
@@ -26,7 +32,14 @@ export function Economics({ api, demo, detailed, revision }: {
     }
     getEconomyIndicators(controller.signal).then(
       data => finish({ status: 'loaded', data }),
-      () => finish({ status: 'error' }),
+      error => {
+        const code = error instanceof FinanceApiError ? error.code : undefined
+        const message = code === 'FRED_CONFIGURATION_MISSING' ? '서버의 FRED 연결 설정을 확인하지 못했습니다.'
+          : code === 'FRED_AUTH_REJECTED' || code === 'FRED_ACCESS_DENIED' ? 'FRED 공급자가 조회를 허용하지 않았습니다.'
+          : code === 'FRED_RATE_LIMITED' ? 'FRED 요청 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.'
+          : '경제지표를 불러오지 못했습니다.'
+        finish({ status: 'error', message })
+      },
     )
     return () => controller.abort()
   }, [api, revision, attempt])
@@ -40,7 +53,7 @@ export function Economics({ api, demo, detailed, revision }: {
     </div>
     {api && !current && <p className="state" role="status">경제지표를 불러오는 중입니다.</p>}
     {api && current?.status === 'error' && <div className="state">
-      <p role="alert">경제지표를 불러오지 못했습니다.</p>
+      <p role="alert">{current.message}</p>
       <button className="button" onClick={() => setAttempt(value => value + 1)}>다시 시도</button>
     </div>}
     {api && live === null && <p className="state" role="status">FRED 실데이터 연동이 꺼져 있습니다.</p>}
@@ -49,7 +62,7 @@ export function Economics({ api, demo, detailed, revision }: {
       {rows.map(item => <li key={item.id}>
         <div>
           <h3>{item.name}</h3>
-          <small>{item.observationDate ? <><time dateTime={item.observationDate}>{item.observationDate}</time> 관측 기준</> : '관측일 미확인'}
+          <small>{'frequency' in item && item.frequency && <>{frequencyLabels[item.frequency]} · </>}{item.observationDate ? <><time dateTime={item.observationDate}>{item.observationDate}</time> 관측 기준</> : '관측일 미확인'}
             {'stale' in item && item.stale && ' · 오래된 관측값'}
           </small>
         </div>
@@ -58,9 +71,13 @@ export function Economics({ api, demo, detailed, revision }: {
             ? '전년 동월 관측값 없음' : '미발표 / 관측값 없음') : item.unit === 'index'
           ? `${indexValue.format(item.value)} (1982–84=100)` : `${percent.format(item.value)}%`}</strong>
         {'source' in item && <div className="indicator-source"><small>
-          출처 <a href={item.source.url}>FRED · {item.source.agency}</a>
+          출처 <a href={item.source.url}>{item.source.agency} · FRED ({item.seriesId})</a>
         </small></div>}
-        {detailed && <dl>
+        {(detailed || 'source' in item) && <dl>
+          {'change' in item && item.change != null && item.previousObservationDate && <div>
+            <dt>{item.frequency === 'monthly' ? '전월 대비' : '직전 관측 대비'}</dt>
+            <dd>{pointChange.format(item.change)}{item.unit === '%' ? '%p' : 'pt'} ({item.previousObservationDate})</dd>
+          </div>}
           {'comparisonPeriod' in item && item.comparisonPeriod && <div><dt>전년 동월 기준</dt>
             <dd><time dateTime={item.comparisonPeriod}>{item.comparisonPeriod.slice(0, 7)}</time></dd></div>}
           <div><dt>발표일</dt><dd>{item.releaseDate ?? '미확인'}</dd></div>
