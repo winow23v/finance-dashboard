@@ -13,6 +13,7 @@ export function DataStatus({ api }: { api: boolean }) {
     <dl>
       <div><dt>시장 지수</dt><dd>데이터 미연결</dd></div>
       <div><dt>개별 주식·ETF</dt><dd>데이터 미연결</dd></div>
+      <div><dt>시장 히트맵</dt><dd>시세·시가총액·업종 데이터 미연결</dd></div>
       {api && <>
         <div><dt>한국은행 ECOS</dt><dd>{statuses.ecos ? labels[statuses.ecos] : '경제지표 탭에서 확인'}</dd></div>
         <div><dt>Frankfurter · ECB</dt><dd>{statuses.fx ? statuses.fx === 'published' ? '실제 공표 기준환율' : labels[statuses.fx] : '개요 탭에서 확인'}</dd></div>

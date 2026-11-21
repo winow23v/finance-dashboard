@@ -8,6 +8,7 @@ import { Economics } from './components/Economics'
 import { informationPages, SiteInformation, type InformationPage } from './components/SiteInformation'
 import { findMarketListing, parseStockPage } from './services/marketListings'
 import { StockDetail } from './components/StockDetail'
+import { MarketHeatmap } from './components/MarketHeatmap'
 import { Watchlist } from './components/Watchlist'
 import { Change, marketNames, price } from './components/QuoteDisplay'
 import { guestStorage, type SettingsState } from './storage/guestStorage'
@@ -27,17 +28,19 @@ const tabs = [
   { id: 'settings', label: '설정', icon: Settings },
 ] as const
 type Tab = typeof tabs[number]['id']
-type Page = Tab | InformationPage | `stock/${string}`
+type Page = Tab | InformationPage | `stock/${string}` | `index/${string}`
 
-const marketIndices: readonly { name: string; market: EquityMarket }[] = [
-  { name: 'KOSPI', market: 'KR' }, { name: 'KOSDAQ', market: 'KR' },
-  { name: 'S&P 500', market: 'US' }, { name: 'NASDAQ Composite', market: 'US' },
+const marketIndices: readonly { id: string; name: string; market: EquityMarket }[] = [
+  { id: 'kospi', name: 'KOSPI', market: 'KR' }, { id: 'kosdaq', name: 'KOSDAQ', market: 'KR' },
+  { id: 'spx', name: 'S&P 500', market: 'US' }, { id: 'nasdaq', name: 'NASDAQ Composite', market: 'US' },
 ]
+const indexPage = (path: string) => marketIndices.find(index => path === 'index/' + index.id)
 
 const timestamp = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
 function hashPage(): Page | undefined {
   const hash = location.hash.slice(1)
   if (parseStockPage(hash)) return hash as `stock/${string}`
+  if (indexPage(hash)) return hash as `index/${string}`
   if (Object.hasOwn(informationPages, hash)) return hash as InformationPage
   return tabs.find(item => item.id === hash)?.id
 }
@@ -107,8 +110,10 @@ export function App() {
 
   const current = tabs.find(item => item.id === tab)
   const stock = parseStockPage(tab)
+  const index = indexPage(tab)
   const information = Object.hasOwn(informationPages, tab) ? tab as InformationPage : undefined
-  const pageLabel = stock ? (findMarketListing(stock)?.name ?? stock.symbol) : current?.label ?? (information && informationPages[information])
+  const pageLabel = stock ? (findMarketListing(stock)?.name ?? stock.symbol)
+    : index?.name ?? current?.label ?? (information && informationPages[information])
   const market = tab === 'domestic' ? 'KR' : tab === 'global' ? 'US' : undefined
   const fx = snapshot?.quotes.find(quote => quote.kind === 'fx')
   const watchlistProps = { selected: watchlist, onToggle: toggle }
@@ -132,7 +137,7 @@ export function App() {
       <header className="topbar">
         <a className="compact-brand" href="#overview"><Activity size={20} aria-hidden="true" /> Finance Dashboard</a>
         <span className="breadcrumb">Finance Dashboard <span>/</span> {pageLabel}</span>
-        {!information && !stock && <div className="top-actions">
+        {!information && !stock && !index && <div className="top-actions">
           <button className="icon-button" onClick={refresh} disabled={pending} aria-label="데이터 새로고침" title="데이터 새로고침"><RefreshCw size={17} /></button>
           <a className="icon-button" href="#settings" aria-label="설정" title="설정"><Settings size={18} /></a>
         </div>}
@@ -143,7 +148,13 @@ export function App() {
           <div><h1>{tab === 'overview' ? '시장 개요' : pageLabel}</h1></div>
         </div>
         {information ? <SiteInformation page={information} /> : stock ? <StockDetail listing={stock}
-          saved={watchlist.some(item => marketSymbolKey(item) === marketSymbolKey(stock))} onToggle={() => toggle(stock)} /> : <>
+          saved={watchlist.some(item => marketSymbolKey(item) === marketSymbolKey(stock))} onToggle={() => toggle(stock)} />
+          : index ? <section className="panel stock-detail" aria-label="지수 상세">
+            <div className="section-heading"><h2>지수 추이</h2>
+              <a href={index.market === 'KR' ? '#domestic' : '#global'}>시장으로 돌아가기</a>
+            </div>
+            <p className="state" role="status">실제 지수 시계열 데이터 미연결</p>
+          </section> : <>
         {(storageFailures.favorites || storageFailures.settings) && <p className="notice" role="status">브라우저에 변경사항을 저장하지 못했습니다. 현재 화면에서만 유지됩니다.</p>}
         {pending && (!isApi || tab !== 'economy') && <p className={snapshot ? 'refresh-status' : 'panel state'} role="status">데이터를 불러오는 중입니다.</p>}
         {error && (!isApi || tab !== 'economy') && <div className="panel state"><p role="alert">{isApi ? 'API 데이터를 불러오지 못했습니다.' : '데이터 갱신에 실패했습니다.'}</p><button className="button" onClick={refresh}>다시 시도</button></div>}
@@ -154,7 +165,7 @@ export function App() {
             <div className={market ? 'quote-grid' : 'quote-grid overview-quotes'}>
               {marketIndices.filter(index => !market || index.market === market).map(index =>
                 <article className="panel quote-card" key={index.name}>
-                  <div className="quote-label"><h3>{index.name}</h3><span>{marketNames[index.market]}</span></div>
+                  <div className="quote-label"><h3><a className="stock-detail-link" href={'#index/' + index.id}>{index.name}</a></h3><span>{marketNames[index.market]}</span></div>
                   <small>데이터 미연결</small>
                 </article>)}
             </div>
@@ -165,6 +176,7 @@ export function App() {
                 : <small>환율 데이터가 없습니다.</small>}
             </section>}
           </section>
+          {market && <MarketHeatmap key={market} market={market} favorites={watchlist} />}
           <Watchlist key={'watchlist:' + tab} {...watchlistProps} market={market} />
         </>}
         {isApi && tab === 'overview' && <FxDashboard revision={request} />}

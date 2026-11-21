@@ -30,9 +30,15 @@ function loadPreferences() {
 const periods = { '1W': '7일', '1M': '1개월', '3M': '3개월', '1Y': '1년' }
 const format = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 4 })
 const wonFormat = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const smallRateFormat = new Intl.NumberFormat('ko-KR', { maximumSignificantDigits: 4 })
 const detailFormat = new Intl.NumberFormat('ko-KR', { maximumSignificantDigits: 15 })
 const time = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Seoul' })
 const ecbUrl = 'https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html'
+
+function displayRate(value: number, quote: string) {
+  if (value !== 0 && Math.abs(value) < (quote === 'KRW' ? 0.005 : 0.00005)) return smallRateFormat.format(value)
+  return (quote === 'KRW' ? wonFormat : format).format(value)
+}
 
 type Point = { observationDate: string; rate: number }
 type Rate = {
@@ -163,7 +169,7 @@ export default function FxDashboard({ revision }: { revision: number }) {
             <button type="button" className="fx-info-button" popoverTarget={details} aria-controls={details}
               aria-label={name + ' 환율 정보'}><Info size={17} aria-hidden="true" /></button>
           </div>
-          <strong>{rate != null ? <>{(reference === 'KRW' ? wonFormat : format).format(rate * multiplier)} <span>{unit}</span></>
+          <strong>{rate != null ? <>{displayRate(rate * multiplier, reference)} <span>{unit}</span></>
             : latest === undefined ? '조회 중' : '조회 불가'}</strong>
           {rate != null && row?.observationDate && <small><time dateTime={row.observationDate}>{row.observationDate.replaceAll('-', '.')}</time> 기준</small>}
           {status && <small className="fx-quote-state">{status}</small>}
@@ -203,7 +209,7 @@ export default function FxDashboard({ revision }: { revision: number }) {
             <AreaChart data={chart.map(point => ({ ...point, rate: point.rate * chartMultiplier, dateTime: Date.parse(point.observationDate) }))} margin={{ top: 10, right: 12, left: 12, bottom: 8 }}>
               <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="4 5" />
               <XAxis dataKey="dateTime" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={date => new Date(date).toISOString().slice(5, 10)} minTickGap={28} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
-              <YAxis orientation="right" width={65} domain={['auto', 'auto']} tickFormatter={value => (quote === 'KRW' ? wonFormat : format).format(value)} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
+              <YAxis orientation="right" width={65} domain={['auto', 'auto']} tickFormatter={value => displayRate(value, quote)} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
               <Tooltip labelFormatter={date => new Date(Number(date)).toISOString().slice(0, 10)} formatter={value => `${detailFormat.format(Number(value))} ${quote}`} contentStyle={{ background: 'var(--panel)', borderColor: 'var(--line)' }} />
               <Area name={pair} dataKey="rate" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.09} isAnimationActive={false} dot={chart.length === 1} />
             </AreaChart>
