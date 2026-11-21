@@ -49,9 +49,15 @@ export function App() {
   const [refreshedAt, setRefreshedAt] = useState<string>()
   const [revision, setRevision] = useState(0)
   const [request, setRequest] = useState(0)
+  const [economyRevision, setEconomyRevision] = useState(0)
   const [pending, setPending] = useState(true)
   const [error, setError] = useState(false)
+  const showEconomy = tab === 'overview' || tab === 'economy'
+  const [visitedEconomy, setVisitedEconomy] = useState(showEconomy)
 
+  useEffect(() => {
+    if (showEconomy) setVisitedEconomy(true)
+  }, [showEconomy])
   useEffect(() => {
     const change = () => setTab(hashPage() ?? guestStorage.loadSettings().market)
     window.addEventListener('hashchange', change)
@@ -93,6 +99,7 @@ export function App() {
     setPending(true)
     setError(false)
     setRequest(value => value + 1)
+    if (showEconomy) setEconomyRevision(value => value + 1)
   }
 
   const current = tabs.find(item => item.id === tab)
@@ -168,14 +175,18 @@ export function App() {
           </div>
         </>}
         {isApi && tab === 'overview' && <FxDashboard revision={request} />}
-        {isApi && market && <Disclosures key={market} market={market} revision={request} />}
-        {isApi && (tab === 'overview' || tab === 'economy') && <KoreaEconomy revision={request} />}
-        {(tab === 'overview' || tab === 'economy') && (isApi || snapshot) &&
-          <Economics api={isApi} demo={snapshot?.indicators} detailed={tab === 'economy'} revision={request} />}
         {snapshot && tab === 'trends' && (isApi
           ? <p className="panel state" role="status">현재 API는 키워드 트렌드를 지원하지 않습니다.</p>
           : <HistoryChart keyword simulated={simulated} items={snapshot.trendTopics.map(name => ({ id: name, name }))} revision={revision} />)}
         </Suspense>
+        </>}
+        {isApi && market === 'KR' && <Disclosures market="KR" revision={request} />}
+        {isApi && <div hidden={market !== 'US'}><Disclosures market="US" revision={request} /></div>}
+        {(showEconomy || visitedEconomy) && (isApi || snapshot) && <div hidden={!showEconomy}>
+          {isApi && <KoreaEconomy revision={economyRevision} />}
+          <Economics api={isApi} demo={snapshot?.indicators} detailed={tab === 'economy'} revision={economyRevision} />
+        </div>}
+        {!information && <>
         {tab === 'settings' && <>
           <section className="panel settings-panel">
             <div className="panel-heading"><h2>화면 설정</h2></div>

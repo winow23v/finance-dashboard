@@ -199,6 +199,26 @@ nav a[aria-current], nav a:hover { background: var(--accent-bg); color: var(--ac
 }
 .disclosure-list { display: grid; gap: 8px; padding: 0; list-style: none; overflow-wrap: anywhere; }
 .disclosure-list .button { text-align: left; }
+.observation-dates { display: grid; gap: 4px; margin: 8px 0 0; font-size: .75rem; color: var(--muted); }
+.observation-dates div { display: flex; flex-wrap: wrap; gap: 4px 8px; }
+.observation-dates dd { margin: 0; color: var(--text); }
+.company-results { gap: 0; }
+.company-results li { border-bottom: 1px solid var(--line); }
+.company-result {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.company-result:hover { background: var(--accent-bg); }
+.company-code { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; font-size: .8rem; }
 .disclosure-table { overflow-x: auto; margin-top: 12px; }
 .disclosure-table table { width: 100%; border-collapse: collapse; }
 .disclosure-table :is(th, td) { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; }

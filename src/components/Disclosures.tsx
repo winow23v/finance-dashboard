@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { isNumber, isRecord } from '../services/apiFinanceService'
 import { usePublicData } from '../services/usePublicData'
 
@@ -10,6 +10,8 @@ const metricNames = { revenue: '매출액', operatingIncome: '영업이익', net
 const periods = { annual: '연간', q1: '1분기', half: '반기', q3: '3분기', quarter: '분기' }
 const statements = { consolidated: '연결', separate: '별도', 'entity-wide': '기업 전체' }
 const number = new Intl.NumberFormat('ko-KR')
+const initialResultCount = 10
+const secCooldownMs = 60 * 60_000
 
 type Company = { id: string; name: string; ticker?: string }
 type Filing = { id: string; title: string; filedAt: string; reportEnd?: string; amended: boolean; url: string }
@@ -60,22 +62,35 @@ export function Disclosures({ market, revision }: { market: keyof typeof sources
   const path = `/api/v1/disclosures/${market.toLowerCase()}`
   const [term, setTerm] = useState('')
   const [search, setSearch] = useState('')
-  const [selected, setSelected] = useState<Company>()
+  const [lastCompany, setLastCompany] = useState<Company>()
+  const [showDetail, setShowDetail] = useState(false)
+  const selected = showDetail ? lastCompany : undefined
+  const [expanded, setExpanded] = useState(false)
+  const resultsId = useId()
+  const secBlockedUntil = useRef(0)
   const [year, setYear] = useState(String(new Date().getFullYear() - 1))
   const [period, setPeriod] = useState('annual')
-  const [attempt, setAttempt] = useState(0)
-  const requestRevision = domestic ? revision + attempt : attempt
+  const [searchAttempt, setSearchAttempt] = useState(0)
+  const [detailAttempt, setDetailAttempt] = useState(0)
   const timeoutMs = domestic ? 30_000 : undefined
-  const searchPath = search && !selected ? path + '?' + new URLSearchParams({ q: search }) : undefined
-  const searchResult = usePublicData(searchPath, requestRevision, parseSearch, timeoutMs)
-  const detailQuery = selected && (domestic ? { corpCode: selected.id, year, period } : { cik: selected.id })
+  const searchPath = search ? path + '?' + new URLSearchParams({ q: search }) : undefined
+  const searchResult = usePublicData(searchPath, searchAttempt, parseSearch, timeoutMs)
+  const detailCompany = domestic ? selected : lastCompany
+  const detailQuery = detailCompany && (domestic ? { corpCode: detailCompany.id, year, period } : { cik: detailCompany.id })
   const detailPath = detailQuery ? path + '?' + new URLSearchParams(Object.entries(detailQuery)) : undefined
-  const detailResult = usePublicData(detailPath, requestRevision, parseDetail, timeoutMs)
+  const detailResult = usePublicData(detailPath, detailAttempt + (domestic ? revision : 0), parseDetail, timeoutMs)
   const companies = searchResult?.data
   const detail = detailResult?.data
-  const accessRestricted = searchResult?.errorCode === 'SEC_ACCESS_RESTRICTED' || detailResult?.errorCode === 'SEC_ACCESS_RESTRICTED'
-  const unavailable = accessRestricted ? '조회 불가 · SEC EDGAR 공급자 접근 제한' : '조회 불가'
+  const restrictedResult = searchResult?.errorCode === 'SEC_ACCESS_RESTRICTED' ? searchResult
+    : detailResult?.errorCode === 'SEC_ACCESS_RESTRICTED' ? detailResult : undefined
+  const unavailable = restrictedResult ? '조회 불가 · SEC EDGAR 공급자 접근 제한' : '조회 불가'
   const source = sources[market]
+  useEffect(() => {
+    if (restrictedResult) secBlockedUntil.current = Date.now() + secCooldownMs
+  }, [restrictedResult])
+  const secBlocked = () => !domestic && Date.now() < secBlockedUntil.current
+  const canExpand = domestic && !!companies && companies.length > initialResultCount
+  const visibleCompanies = expanded || !canExpand ? companies : companies?.slice(0, initialResultCount)
 
   return <section className="panel disclosures-panel">
     <div className="panel-heading"><div><h2>{domestic ? '국내' : '미국'} 기업 공시·재무</h2>
@@ -83,9 +98,14 @@ export function Disclosures({ market, revision }: { market: keyof typeof sources
     <form className="disclosure-controls" onSubmit={event => {
       event.preventDefault()
       const query = term.trim()
-      if (!query) return
-      setSelected(undefined)
-      if (query === search) setAttempt(value => value + 1)
+      if (!query || secBlocked()) return
+      setShowDetail(false)
+      if (query === search) {
+        if (domestic || companies === null) setSearchAttempt(value => value + 1)
+        return
+      }
+      setLastCompany(undefined)
+      setExpanded(false)
       setSearch(query)
     }}>
       <label>기업 검색 <input value={term} onChange={event => setTerm(event.target.value)} maxLength={64} required
@@ -94,12 +114,24 @@ export function Disclosures({ market, revision }: { market: keyof typeof sources
     </form>
     {search && !selected && <div aria-live="polite">
       {!companies?.length ? <p className="state">{companies === undefined ? '조회 중' : companies === null ? unavailable : '검색 결과 없음'}</p>
-        : <ul className="disclosure-list">{companies.map(item => <li key={`${item.id}/${item.ticker}`}><button className="button" onClick={() => setSelected(item)}>
-          {item.name} · {item.ticker ?? item.id}
-        </button></li>)}</ul>}
+        : <>
+          <ul id={resultsId} className={domestic ? 'disclosure-list company-results' : 'disclosure-list'}>
+            {visibleCompanies?.map(item => <li key={`${item.id}/${item.ticker}`}><button type="button" className={domestic ? 'company-result' : 'button'} onClick={() => {
+              if (secBlocked() && item.id !== lastCompany?.id) return
+              setLastCompany(item)
+              setShowDetail(true)
+              if (!domestic && item.id === lastCompany?.id && detail === null && !secBlocked()) setDetailAttempt(value => value + 1)
+            }}>
+              {domestic ? <><span>{item.name}</span><span className="company-code">{item.ticker ?? '종목코드 없음'}</span></> : `${item.name} · ${item.ticker ?? item.id}`}
+            </button></li>)}
+          </ul>
+          {canExpand && <button type="button" className="button" aria-controls={resultsId} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>
+            {expanded ? '검색 결과 접기' : `추가 결과 ${companies.length - initialResultCount}개 보기`}
+          </button>}
+        </>}
     </div>}
     {selected && <>
-      <div className="section-heading"><h3>{selected.name} · {selected.id}</h3><button className="button" onClick={() => setSelected(undefined)}>검색 결과</button></div>
+      <div className="section-heading"><h3>{selected.name} · {selected.ticker ?? selected.id}</h3><button className="button" onClick={() => setShowDetail(false)}>검색 결과</button></div>
       {domestic && <div className="disclosure-controls">
         <label>사업연도 <select value={year} onChange={event => setYear(event.target.value)}>
           {Array.from({ length: new Date().getFullYear() - 2014 }, (_, i) => new Date().getFullYear() - i)
@@ -110,7 +142,9 @@ export function Disclosures({ market, revision }: { market: keyof typeof sources
         </select></label>
       </div>}
       {!detail ? <div className="state"><p role="status">{detail === undefined ? '조회 중' : unavailable}</p>
-        {detail === null && !accessRestricted && <button className="button" onClick={() => setAttempt(value => value + 1)}>다시 시도</button>}</div> : <>
+        {detail === null && !restrictedResult && <button className="button" onClick={() => {
+          if (!secBlocked()) setDetailAttempt(value => value + 1)
+        }}>다시 시도</button>}</div> : <>
         <h3>최근 공시</h3>
         <ul className="disclosure-list">{detail.filings.map(item => <li key={item.id}>
           <a href={item.url}>{item.title}</a> · 공시일 {item.filedAt}{item.reportEnd && ` · 결산일 ${item.reportEnd}`}{item.amended && ' · 정정'}

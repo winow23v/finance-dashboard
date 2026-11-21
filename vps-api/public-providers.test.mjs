@@ -102,10 +102,18 @@ test('provider configuration and query errors are distinct and never call upstre
 
 test('ECOS validates the official series and preserves collection, observation, and release dates', async t => {
   const key = 'test-ecos-key'
-  const ecos = createEcosProvider({ key, clock: () => Date.parse('2026-04-05T12:00:00Z'), fetchImpl: async url => {
-    if (url.includes('/901Y009/')) return Response.json({ StatisticSearch: { row: [
-      { STAT_CODE: '901Y009', ITEM_CODE1: '0', TIME: '202603', UNIT_NAME: '2020=100', DATA_VALUE: '120.5' },
-    ] } })
+  let now = Date.parse('2026-04-05T12:00:00Z')
+  let calls = 0
+  let exactComparison = true
+  const ecos = createEcosProvider({ key, clock: () => now, fetchImpl: async url => {
+    calls++
+    if (url.includes('/901Y009/')) {
+      assert.match(url, /\/1\/16\/901Y009\/M\/202501\/202604\/0$/)
+      return Response.json({ StatisticSearch: { row: [
+        { STAT_CODE: '901Y009', ITEM_CODE1: '0', TIME: exactComparison ? '202503' : '202502', UNIT_NAME: '2020=100', DATA_VALUE: '118' },
+        { STAT_CODE: '901Y009', ITEM_CODE1: '0', TIME: '202603', UNIT_NAME: '2020=100', DATA_VALUE: '120.5' },
+      ] } })
+    }
     if (url.includes('/901Y027/')) {
       assert.match(url, /I61BC\/I28A$/)
       return Response.json({ StatisticSearch: { row: [
@@ -118,8 +126,11 @@ test('ECOS validates the official series and preserves collection, observation, 
     ] } })
   } })
   const app = await appFor(t, { ecos })
-  const result = await app.inject('/api/v1/economy/korea')
+  const request = () => app.inject('/api/v1/economy/korea')
+  const [result, concurrent] = await Promise.all([request(), request()])
   assert.equal(result.statusCode, 200)
+  assert.equal(concurrent.body, result.body)
+  assert.equal(calls, 3)
   const [rate, cpi, unemployment] = result.json().indicators
   assert.equal(rate.value, 2.5)
   assert.equal(rate.observationDate, '2026-04-03')
@@ -128,8 +139,19 @@ test('ECOS validates the official series and preserves collection, observation, 
   assert.deepEqual([cpi.value, unemployment.value], [120.5, 3.1])
   assert.equal(cpi.observationDate, null)
   assert.equal(cpi.observationPeriod, '2026-03')
+  assert.equal(cpi.yearOverYear.comparisonPeriod, '2025-03')
+  assert.ok(Math.abs(cpi.yearOverYear.value - (120.5 - 118) / 118 * 100) < 1e-10)
   assert.equal(unemployment.agency.name, '국가데이터처 KOSIS')
   assert.ok(!result.body.includes(key))
+  now += 5 * 60_000 - 1
+  assert.equal((await request()).body, result.body)
+  assert.equal(calls, 3)
+  now++
+  exactComparison = false
+  const refreshed = await request()
+  assert.equal(refreshed.statusCode, 200)
+  assert.equal(refreshed.json().indicators[1].yearOverYear, undefined)
+  assert.equal(calls, 6)
 })
 
 test('each provider sanitizes supplier errors and secret-bearing messages', async t => {
