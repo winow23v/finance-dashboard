@@ -69,13 +69,13 @@ export function KoreaEconomy({ revision, visible }: { revision: number; visible:
         const row = data?.find(item => item.id === id)
         const hasHistory = (row?.history?.length ?? 0) >= 2
         return <article className={hasHistory ? 'panel quote-card indicator-has-chart' : 'panel quote-card'} key={id}>
-          <div className="quote-label"><h3>{name}</h3>{row?.value !== undefined && <span>공표 통계</span>}</div>
+          <div className="quote-label"><h3>{name}</h3></div>
           <strong>{row?.value !== undefined
             ? `${(id === 'unemployment' ? oneDecimal : twoDecimals).format(row.value)}${id === 'cpi' ? '' : '%'}`
             : data === undefined ? '조회 중' : data === null || row?.code ? '조회 불가' : '공표 관측값 없음'}</strong>
           {id === 'cpi' && row?.value !== undefined && <small>기준연도 {row.unit}</small>}
           {row?.yearOverYear && <small>전년 동월 대비 {twoDecimals.format(row.yearOverYear.value)}% · 비교월 <time dateTime={row.yearOverYear.period}>{row.yearOverYear.period}</time></small>}
-          <small>출처 <a href={url}>{agency}</a></small>
+          <small><a href={url}>{agency}</a></small>
           {row?.collectedAt && <dl className="observation-dates">
             <div><dt>{row.observationDate ? '관측일' : '관측월'}</dt><dd><time dateTime={row.observationDate ?? row.observationPeriod}>{row.observationDate ?? row.observationPeriod}</time></dd></div>
             <div><dt>공표일</dt><dd>{row.releaseDate ? <time dateTime={row.releaseDate}>{row.releaseDate}</time> : '미확인'}</dd></div>

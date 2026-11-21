@@ -1,11 +1,57 @@
 export const informationPages = {
   about: '서비스 소개',
-  sources: '데이터 출처',
+  sources: '데이터 출처·이용안내',
   privacy: '개인정보처리방침',
   contact: '문의',
 }
 
 export type InformationPage = keyof typeof informationPages
+
+function DataSources() {
+  return <>
+    <h2>날짜와 시각 읽는 법</h2>
+    <dl className="source-timing">
+      <div><dt>관측일·관측월</dt><dd>통계나 환율이 나타내는 날짜 또는 기간입니다.</dd></div>
+      <div><dt>공표일</dt><dd>제공기관이 값을 발표한 날짜입니다. 확인된 경우에 표시합니다.</dd></div>
+      <div><dt>수집 시각</dt><dd>대시보드 서버가 공급자에서 그 값을 가져온 시각입니다. 캐시된 응답은 원래 수집 시각을 유지합니다.</dd></div>
+    </dl>
+    <div className="source-list">
+      <section>
+        <h2>환율 · 유럽중앙은행 (ECB)</h2>
+        <p><strong>정기 공표</strong> · ECB 영업일마다 공표하는 일별 기준환율을 Frankfurter v2에서 가져옵니다. ECB는 보통 중부유럽 시각 16시쯤 갱신하며 TARGET 휴무일에는 공표가 없습니다.</p>
+        <p>교차환율은 같은 관측일의 ECB 값을 사용합니다. 화면은 선택에 따라 엔화 100엔 기준으로 환산합니다. 기준환율은 참고용이며 실시간 매매 호가로 사용할 수 없습니다.</p>
+        <p><a href="https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html">ECB 기준환율</a> · <a href="https://frankfurter.dev/">Frankfurter v2</a></p>
+      </section>
+      <section>
+        <h2>한국 경제지표 · 한국은행 ECOS</h2>
+        <p><strong>정기 공표 통계</strong> · 한국은행 기준금리는 일별 관측값을, 국가데이터처 소비자물가지수와 실업률은 월별 관측값을 표시합니다. 기준금리 변경과 월별 통계 발표 일정은 각 기관을 따릅니다.</p>
+        <p>차트는 공표 관측값을 표시합니다. CPI 전년 동월 대비는 비교할 관측값이 있을 때 표시합니다.</p>
+        <p><a href="https://ecos.bok.or.kr/">한국은행 ECOS</a> · <a href="https://www.bok.or.kr/portal/singl/baseRate/list.do?menuNo=200656">한국은행 기준금리</a> · <a href="https://kosis.kr/">국가통계포털 KOSIS</a></p>
+      </section>
+      <section>
+        <h2>기업 공시·재무 · OPEN DART와 SEC EDGAR</h2>
+        <p><strong>공시 접수 기준</strong> · 금융감독원의 국내 기업 공시·재무정보와 미국 증권거래위원회의 EDGAR 자료를 기업 조회 시 요청합니다. 새 자료와 정정 내역은 각 기관의 공개 시점을 따릅니다.</p>
+        <p>공시일과 회계기간을 구분해 읽고, 재무 수치와 정정 내용은 원문을 확인하세요. SEC 접근 제한은 조회 화면에 표시됩니다.</p>
+        <p><a href="https://opendart.fss.or.kr/">금융감독원 OPEN DART</a> · <a href="https://www.sec.gov/search-filings">미국 SEC EDGAR</a></p>
+      </section>
+      <section>
+        <h2>시장 가격과 등락 · 대시보드 DEMO</h2>
+        <p><strong>모의 데이터</strong> · DEMO로 표시된 지수 가격·등락·차트는 앱이 제공하는 예시입니다. 거래소 시세 갱신 주기는 적용되지 않습니다.</p>
+        <p><a href="https://github.com/winow23v/finance-dashboard">Finance Dashboard 프로젝트</a></p>
+      </section>
+      <section>
+        <h2>외부 종목 차트 · TradingView</h2>
+        <p><strong>지원 종목별 시세</strong> · 차트를 열 때 공식 위젯을 불러옵니다. 갱신과 지연 여부는 거래소 및 위젯 표시를 따릅니다. 대시보드의 가격·등락과 위젯 차트는 별도로 제공됩니다.</p>
+        <p><a href="https://www.tradingview.com/widget-docs/faq/data/">TradingView 위젯 데이터 안내</a></p>
+      </section>
+      <section>
+        <h2>미국 거시경제 지표 · FRED</h2>
+        <p><strong>비공개 검증용</strong> · 세인트루이스 연방준비은행 FRED를 통해 원 제공기관의 지표를 확인하는 기능입니다. 지표별 공표 주기가 다르며 공개 대시보드에서는 실데이터를 제공하지 않습니다.</p>
+        <p><a href="https://fred.stlouisfed.org/">FRED</a> · <a href="https://fred.stlouisfed.org/legal/">FRED 이용약관과 출처 안내</a></p>
+      </section>
+    </div>
+  </>
+}
 
 export function SiteInformation({ page }: { page: InformationPage }) {
   return <section className="panel site-information">
@@ -13,12 +59,7 @@ export function SiteInformation({ page }: { page: InformationPage }) {
       <p>Finance Dashboard는 국내외 증시와 환율, 경제지표, 기업 공시를 한 화면에서 살펴보는 공개 대시보드입니다. 누구나 로그인 없이 이용할 수 있습니다.</p>
       <p>관심종목을 저장하고 지수의 기간별 흐름을 살펴볼 수 있습니다. DEMO로 표시된 수치는 화면과 기능을 보여 주는 예시입니다.</p>
     </>}
-    {page === 'sources' && <>
-      <p>공개 시장 데이터의 DEMO 표시는 모의 가격과 차트를 뜻합니다. 화면에 표시된 기준 시각은 해당 데이터의 기준 시각입니다.</p>
-      <p>환율은 Frankfurter v2를 통해 수집한 유럽중앙은행(ECB) 일별 기준환율입니다. USD/KRW와 USD/JPY는 같은 관측일의 ECB 기준환율로 계산한 교차환율입니다.</p>
-      <p>경제지표는 한국은행 ECOS에서 수집합니다. 기준금리는 한국은행, 소비자물가지수와 실업률은 국가데이터처가 발표합니다. 기업 공시와 재무정보는 금융감독원 OPEN DART와 미국 SEC EDGAR에서 수집합니다.</p>
-      <p>개인 검증 환경의 FRED 실데이터에는 원 제공기관과 실제 관측일이 함께 표시됩니다.</p>
-    </>}
+    {page === 'sources' && <DataSources />}
     {page === 'privacy' && <>
       <p>서비스는 계정을 만들거나 로그인을 요구하지 않습니다. 관심종목과 화면 설정은 브라우저의 localStorage에 저장됩니다. 해당 사이트의 브라우저 데이터를 지우면 삭제됩니다.</p>
       <p>API는 과도한 요청을 제한하기 위해 요청 IP를 메모리의 요청 카운터에 사용합니다. API 접속 정보는 서버 접근 로그에 기록될 수 있습니다.</p>

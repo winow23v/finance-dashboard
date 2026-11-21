@@ -187,7 +187,7 @@ export function Disclosures({ market, revision }: { market: keyof typeof sources
 
   return <section className="panel disclosures-panel">
     <div className="panel-heading"><div><h2>{domestic ? '국내' : '미국'} 기업 공시·재무</h2>
-      <p><a href={source.url}>{source.name}</a> · 공표 자료</p></div></div>
+      <p><a href={source.url}>{source.name}</a></p></div></div>
     <form className="disclosure-controls" onSubmit={event => {
       event.preventDefault()
       const query = term.trim()

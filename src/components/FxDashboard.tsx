@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
+import { Info, X } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { isNumber, isRecord } from '../services/apiFinanceService'
 
@@ -31,6 +32,7 @@ const format = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 4 })
 const wonFormat = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const detailFormat = new Intl.NumberFormat('ko-KR', { maximumSignificantDigits: 15 })
 const time = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Seoul' })
+const ecbUrl = 'https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html'
 
 type Point = { observationDate: string; rate: number }
 type Rate = {
@@ -109,7 +111,9 @@ export default function FxDashboard({ revision }: { revision: number }) {
   const { reference, selected, yen100 } = preferences
   const [selection, setPair] = useState(pairs[0])
   const [period, setPeriod] = useState<keyof typeof periods>('1M')
-  const latest = usePublicData('/api/v1/fx/latest', revision, parseLatest, undefined, true, latestCache)?.data
+  const latestResult = usePublicData('/api/v1/fx/latest', revision, parseLatest, undefined, true, latestCache)
+  const latest = latestResult?.data
+  const infoId = useId()
   const availablePairs = [...new Set([...pairs, ...(latest?.reference ? [selection, ...selected.map(code => `${code}/${reference}`)] : [])])]
   const pair = availablePairs.includes(selection) ? selection : pairs[0]
   const [base, quote] = pair.split('/')
@@ -148,22 +152,43 @@ export default function FxDashboard({ revision }: { revision: number }) {
         const name = `${code}/${reference}`
         const row = latestRate(latest, code, reference)
         const multiplier = code === 'JPY' && yen100 ? 100 : 1
-        return <article className="panel quote-card" key={name}>
-          <div className="quote-label"><h3>{name}</h3><span>{reference} / {multiplier} {code}</span></div>
-          <strong>{row?.rate != null ? (reference === 'KRW' ? wonFormat : format).format(row.rate * multiplier) : latest === undefined ? '조회 중' : '조회 불가'}</strong>
-          {row?.observationDate && row.rate !== null && <small>관측일 <time dateTime={row.observationDate}>{row.observationDate}</time> · {row.status === 'published_today' ? '당일 공표' : '이전 공표값'}{row.calculated && ' · 교차환율 계산'}</small>}
-          {row?.rate != null && <details className="fx-rate-detail">
-            <summary>상세 수치</summary>
-            <small>1 {code} = {detailFormat.format(row.rate)} {reference}</small>
-            {multiplier !== 1 && <small>{multiplier} {code} = {detailFormat.format(row.rate * multiplier)} {reference}</small>}
-          </details>}
-          {row && <small>수집 (KST) <time dateTime={row.collectedAt}>{time.format(new Date(row.collectedAt))}</time></small>}
+        const details = infoId + '-' + code
+        const rate = row?.rate
+        const unit = reference === 'KRW' ? '원' : reference
+        const status = latestResult?.refreshFailed && latestResult.revision === revision ? '갱신 실패 · 이전 값'
+          : rate != null && row?.status === 'previous_publication' ? '이전 공표값' : undefined
+        return <article className="panel quote-card fx-quote" key={name}>
+          <div className="fx-quote-heading">
+            <h3>{name}{multiplier === 100 && <small>100엔 기준</small>}</h3>
+            <button type="button" className="fx-info-button" popoverTarget={details} aria-controls={details}
+              aria-label={name + ' 환율 정보'}><Info size={17} aria-hidden="true" /></button>
+          </div>
+          <strong>{rate != null ? <>{(reference === 'KRW' ? wonFormat : format).format(rate * multiplier)} <span>{unit}</span></>
+            : latest === undefined ? '조회 중' : '조회 불가'}</strong>
+          {rate != null && row?.observationDate && <small><time dateTime={row.observationDate}>{row.observationDate.replaceAll('-', '.')}</time> 기준</small>}
+          {status && <small className="fx-quote-state">{status}</small>}
+          <div className="panel fx-info-popover" id={details} popover="auto" role="group" aria-labelledby={details + '-title'}>
+            <div className="section-heading">
+              <h4 id={details + '-title'}>{name} 환율 정보</h4>
+              <button type="button" className="fx-info-button" popoverTarget={details} popoverTargetAction="hide"
+                aria-label="환율 정보 닫기"><X size={17} aria-hidden="true" /></button>
+            </div>
+            <dl className="observation-dates">
+              <div><dt>관측일</dt><dd>{row?.observationDate ? <time dateTime={row.observationDate}>{row.observationDate}</time> : '확인 불가'}</dd></div>
+              <div><dt>수집 시각 (KST)</dt><dd>{row ? <time dateTime={row.collectedAt}>{time.format(new Date(row.collectedAt))}</time> : '확인 불가'}</dd></div>
+              <div><dt>계산 방식</dt><dd>{rate == null ? '확인 불가' : row?.calculated ? '같은 관측일의 교차환율' : 'ECB 공표 기준환율'}</dd></div>
+              {rate != null && <div><dt>상세 수치</dt><dd>1 {code} = {detailFormat.format(rate)} {unit}
+                {multiplier === 100 && <><br />100 {code} = {detailFormat.format(rate * multiplier)} {unit}</>}</dd></div>}
+              <div><dt>출처</dt><dd><a href={ecbUrl}>유럽중앙은행 (ECB)</a> · <a href="https://frankfurter.dev/">Frankfurter v2</a></dd></div>
+            </dl>
+            <a className="fx-info-guide" href="#sources">데이터 출처·이용안내</a>
+          </div>
         </article>
       })}
     </div>
     <div className="panel chart-panel">
       <div className="panel-heading">
-        <div><h2>환율 추이</h2><p>{quote} / {chartMultiplier} {base}{base !== 'EUR' && ' · ECB 기준환율을 사용한 교차환율'}</p></div>
+        <div><h2>환율 추이</h2><p>{quote} / {chartMultiplier} {base}</p></div>
         <div className="chart-selects"><select aria-label="통화쌍 선택" value={pair} onChange={event => setPair(event.target.value)}>
           {availablePairs.map(name => <option key={name}>{name}</option>)}
         </select></div>
@@ -184,7 +209,7 @@ export default function FxDashboard({ revision }: { revision: number }) {
             </AreaChart>
           </ResponsiveContainer>}
       </div>
-      <p className="chart-note">공표 기준환율이며 실시간 매매 호가는 제공하지 않습니다. 출처 <a href="https://frankfurter.dev/">Frankfurter v2</a> · <a href="https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html">유럽중앙은행 (ECB)</a></p>
+      <p className="chart-note"><a href={ecbUrl}>ECB</a> · <a href="https://frankfurter.dev/">Frankfurter v2</a></p>
     </div>
   </section>
 }

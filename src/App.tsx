@@ -197,6 +197,9 @@ export function App() {
     {tabs.map(({ id, label, icon: Icon, ...item }) => <a key={id} href={'#' + id} aria-current={id === tab ? 'page' : undefined}>
       <Icon size={19} aria-hidden="true" /><span>{'short' in item ? <><span className="nav-wide">{label}</span><span className="nav-short">{item.short}</span></> : label}</span>
     </a>)}
+    <a href="#sources" aria-label={informationPages.sources} aria-current={tab === 'sources' ? 'page' : undefined}>
+      <CircleHelp size={19} aria-hidden="true" /><span className="nav-wide">{informationPages.sources}</span><span className="nav-short">출처</span>
+    </a>
   </nav>
 
   return <div className="app">
@@ -222,7 +225,6 @@ export function App() {
           {!information && snapshot && tab !== 'economy' && <span className="badge">{snapshot.source.label}{snapshot.source.simulated && ' · 샘플 데이터'}</span>}
         </div>
         {information ? <SiteInformation page={information} /> : <>
-        {snapshot?.source.simulated && tab !== 'economy' && <div className="notice"><CircleHelp size={16} aria-hidden="true" /><span>DEMO 가격·등락·차트는 예시입니다. 실시간 시세가 아닙니다.</span></div>}
         {(storageFailures.favorites || storageFailures.settings) && <p className="notice" role="status">브라우저에 변경사항을 저장하지 못했습니다. 현재 화면에서만 유지됩니다.</p>}
         {pending && (!isApi || tab !== 'economy') && <p className={snapshot ? 'refresh-status' : 'panel state'} role="status">데이터를 불러오는 중입니다.</p>}
         {error && (!isApi || tab !== 'economy') && <div className="panel state"><p role="alert">{isApi ? 'API 데이터를 불러오지 못했습니다.' : '데이터 갱신에 실패했습니다.'}</p><button className="button" onClick={refresh}>다시 시도</button></div>}
