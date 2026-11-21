@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Activity, BarChart3, ChevronDown, CircleHelp, Globe2, Home, Landmark, Moon, RefreshCw, Settings, Sun, TrendingUp } from 'lucide-react'
 import { dataMode, financeService } from './services/financeService'
 import { defaultHistoryPeriod, marketHistory } from './services/marketHistory'
+import { findTradingViewListing, tradingViewIndices, type TradingViewSymbol } from './services/tradingViewSymbols'
 import { Disclosures } from './components/Disclosures'
 import { KoreaEconomy } from './components/KoreaEconomy'
 import { DataStatus } from './components/DataStatus'
@@ -16,6 +17,7 @@ import type { EquityQuote, FinanceSnapshot, Quote, SeriesPoint } from './types/f
 const FxDashboard = lazy(() => import('./components/FxDashboard'))
 const HistoryChart = lazy(() => import('./components/HistoryChart'))
 const IndexSparkline = lazy(() => import('./components/IndexSparkline'))
+const TradingViewChart = lazy(() => import('./components/TradingViewChart'))
 const isApi = dataMode === 'api'
 
 const tabs = [
@@ -28,6 +30,7 @@ const tabs = [
 ] as const
 type Tab = typeof tabs[number]['id']
 type Page = Tab | InformationPage
+type WidgetSelection = { key: string; group: 'index' | 'favorite'; name: string; chart?: TradingViewSymbol }
 
 const timestamp = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
 function hashPage(): Page | undefined {
@@ -35,8 +38,9 @@ function hashPage(): Page | undefined {
   if (Object.hasOwn(informationPages, hash)) return hash as InformationPage
   return tabs.find(item => item.id === hash)?.id
 }
-function QuoteCard({ quote, simulated, units, revision, onOpen }: {
+function QuoteCard({ quote, simulated, units, revision, onOpen, widgetOpen, onOpenWidget }: {
   quote: Quote; simulated: boolean; units: SettingsState['units']; revision: number; onOpen: () => void
+  widgetOpen: boolean; onOpenWidget: (trigger: HTMLButtonElement) => void
 }) {
   const [result, setResult] = useState<{ id: string; revision: number; points: SeriesPoint[] }>()
   const { id } = quote
@@ -52,10 +56,15 @@ function QuoteCard({ quote, simulated, units, revision, onOpen }: {
   const points = simulated ? undefined : result?.id === id && result.revision === revision
     ? result.points : marketHistory(id, defaultHistoryPeriod, false, revision).read()
   return <article className="panel quote-card">
-    <div className="quote-label"><h3>{quote.name}</h3><span>{marketNames[quote.market]}{simulated ? ' · DEMO' : quote.delayed ? ' · 지연' : ''}</span></div>
-    <strong>{price(quote, units)}</strong>
-    <Change quote={quote} detailed />
-    {!simulated && <small>시세 기준 (KST) <time dateTime={quote.asOf}>{timestamp.format(new Date(quote.asOf))}</time></small>}
+    <div className="quote-widget-area">
+      <div className="quote-label"><h3>{quote.name}</h3><span>{marketNames[quote.market]}{simulated ? ' · DEMO' : quote.delayed ? ' · 지연' : ''}</span></div>
+      <strong>{price(quote, units)}</strong>
+      <Change quote={quote} detailed />
+      {!simulated && <small>시세 기준 (KST) <time dateTime={quote.asOf}>{timestamp.format(new Date(quote.asOf))}</time></small>}
+      <button type="button" className="quote-widget-trigger" aria-label={quote.name + ' TradingView 차트'}
+        aria-expanded={widgetOpen} aria-controls={widgetOpen ? 'tradingview-chart' : undefined}
+        onClick={event => onOpenWidget(event.currentTarget)}>TradingView 차트</button>
+    </div>
     {points && points.length > 1 && <Suspense fallback={null}>
       <IndexSparkline name={quote.name} points={points} onOpen={onOpen} />
     </Suspense>}
@@ -76,6 +85,8 @@ export function App() {
   const [pending, setPending] = useState(true)
   const [error, setError] = useState(false)
   const [chartSelection, setChartSelection] = useState<string>()
+  const [widget, setWidget] = useState<WidgetSelection>()
+  const widgetTrigger = useRef<HTMLButtonElement>(null)
   const [chartOpenCount, setChartOpenCount] = useState(0)
   const focusChartOnOpen = useRef(false)
   const chartTitleRef = useCallback((heading: HTMLHeadingElement | null) => {
@@ -95,6 +106,10 @@ export function App() {
     window.addEventListener('hashchange', change)
     return () => window.removeEventListener('hashchange', change)
   }, [])
+  useEffect(() => {
+    setWidget(undefined)
+    widgetTrigger.current = null
+  }, [tab])
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme
     document.documentElement.dataset.colors = settings.colors
@@ -121,12 +136,29 @@ export function App() {
     return () => { active = false }
   }, [request])
 
-  const toggle = (symbol: MarketSymbol) => setWatchlist(previous => {
+  const toggle = (symbol: MarketSymbol) => {
     const key = marketSymbolKey(symbol)
-    return previous.some(item => marketSymbolKey(item) === key)
+    if (widget?.group === 'favorite' && widget.key === key) {
+      setWidget(undefined)
+      widgetTrigger.current = null
+    }
+    setWatchlist(previous => previous.some(item => marketSymbolKey(item) === key)
       ? previous.filter(item => marketSymbolKey(item) !== key)
-      : [...previous, { market: symbol.market, exchange: symbol.exchange, symbol: symbol.symbol }]
-  })
+      : [...previous, { market: symbol.market, exchange: symbol.exchange, symbol: symbol.symbol }])
+  }
+
+  const closeWidget = () => {
+    widgetTrigger.current?.focus()
+    widgetTrigger.current = null
+    setWidget(undefined)
+  }
+  const openWidget = (next: WidgetSelection, trigger: HTMLButtonElement) => {
+    if (widget?.group === next.group && widget.key === next.key) closeWidget()
+    else {
+      widgetTrigger.current = trigger
+      setWidget(next)
+    }
+  }
   const refresh = () => {
     setPending(true)
     setError(false)
@@ -147,7 +179,14 @@ export function App() {
   const watchlistProps = {
     simulated, stocks, selected: watchlist, onToggle: toggle, units: settings.units,
     catalogUnavailable: isApi && !!snapshot && stocks.length === 0,
+    activeChartKey: widget?.group === 'favorite' ? widget.key : undefined,
+    onOpenChart: (listing: MarketSymbol, name: string, trigger: HTMLButtonElement) => {
+      openWidget({ key: marketSymbolKey(listing), group: 'favorite', name, chart: findTradingViewListing(listing)?.chart }, trigger)
+    },
   }
+  const widgetPanel = widget && <Suspense fallback={<p className="panel state" role="status">차트를 준비하는 중입니다.</p>}>
+    <TradingViewChart id="tradingview-chart" chart={widget.chart} name={widget.name} theme={settings.theme} onClose={closeWidget} />
+  </Suspense>
   const isMarket = tab === 'overview' || market !== undefined
   const openIndexChart = (id: string) => {
     focusChartOnOpen.current = true
@@ -199,8 +238,12 @@ export function App() {
             </div>
             {indices.length ? <div className={market ? 'quote-grid' : 'quote-grid overview-quotes'}>
               {indices.map(quote => <QuoteCard key={quote.id} quote={quote} simulated={simulated} units={settings.units}
-                revision={revision} onOpen={() => openIndexChart(quote.id)} />)}
+                revision={revision} onOpen={() => openIndexChart(quote.id)}
+                widgetOpen={widget?.group === 'index' && widget.key === quote.id}
+                onOpenWidget={trigger => openWidget({ key: quote.id, group: 'index', name: quote.name,
+                  chart: tradingViewIndices[quote.id] }, trigger)} />)}
             </div> : <p className="panel state">표시할 지수가 없습니다.</p>}
+            {widget?.group === 'index' && widgetPanel}
             {tab === 'overview' && !isApi && <section className="panel fx-summary" aria-label="환율">
               <h2><Globe2 size={16} aria-hidden="true" /> USD/KRW{simulated && ' · DEMO'}</h2>
               {fx ? <><strong>{price(fx, settings.units)}</strong><Change quote={fx} detailed />
@@ -211,7 +254,7 @@ export function App() {
           <div className={tab === 'overview' ? 'market-layout' : 'market-sections'}>
             <HistoryChart simulated={simulated} key={`chart:${tab}:${chartOpenCount}`} items={indices} revision={revision}
               selectedId={chartSelection} onSelect={setChartSelection} titleRef={chartTitleRef} />
-            <Watchlist key={'watchlist:' + tab} {...watchlistProps} market={market} />
+            <Watchlist key={'watchlist:' + tab} {...watchlistProps} market={market} chartPanel={widget?.group === 'favorite' ? widgetPanel : undefined} />
           </div>
         </>}
         {isApi && tab === 'overview' && <FxDashboard revision={request} />}
@@ -246,7 +289,7 @@ export function App() {
             <div className="setting"><strong>게스트 · 이 브라우저</strong><span>브라우저에 저장됨</span></div>
             <p className="storage-note">공유 기기에서는 같은 브라우저 프로필의 사용자가 저장된 목록을 볼 수 있습니다. 사이트 데이터를 지우면 저장값이 삭제됩니다.</p>
           </section>
-          <Watchlist {...watchlistProps} />
+          <Watchlist {...watchlistProps} chartPanel={widget?.group === 'favorite' ? widgetPanel : undefined} />
         </>}
         </>}
         <footer>
