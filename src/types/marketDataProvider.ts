@@ -1,4 +1,4 @@
-import type { Period, SeriesPoint } from './finance'
+import type { Period } from './finance'
 import type { EquityMarket, MarketSymbol } from './marketSymbol'
 
 // Provider symbols are mapped by an adapter. Saved favorites keep their exchange and ticker.
@@ -15,6 +15,7 @@ export interface MarketDataApproval {
     publicDisplay: boolean
     publicApiRedistribution: boolean
     advertisingSupportedDisplay: boolean
+    publicDerivedIndicators: boolean
   }
   cache: { server: MarketDataCachePolicy; browser: MarketDataCachePolicy }
 }
@@ -29,10 +30,30 @@ export type MarketDataTiming =
 
 export type MarketDataQuote = {
   value: number
+  previousClose: number | null
   currency: 'KRW' | 'USD'
+  tradingDate: string
+  timeZone: string
   observation: { kind: 'instant'; at: string } | { kind: 'session'; date: string }
   change: number | null
   percentChange: number | null
+}
+
+export interface DailyOhlcvBar {
+  tradingDate: string
+  open: number
+  high: number
+  low: number
+  close: number
+  volume: number
+}
+
+export interface MarketDailyHistory {
+  currency: 'KRW' | 'USD'
+  timeZone: string
+  adjustment: 'unadjusted' | 'split-adjusted' | 'total-return-adjusted'
+  completeness: 'complete' | 'missing-observations'
+  bars: readonly DailyOhlcvBar[]
 }
 
 export type MarketDataLicense =
@@ -55,7 +76,7 @@ export type MarketDataResult<T> =
     display: MarketDataDisplay
     data: T
   }
-  | { status: 'no-observation' | 'unsupported' | 'restricted' | 'provider-error' }
+  | { status: 'no-observation' | 'missing-data' | 'unsupported' | 'restricted' | 'provider-error' }
 
 // A future server integration must check approval before fetching, caching, or publishing.
 // Unavailable observations stay unavailable. DEMO records remain explicitly labeled.
@@ -63,5 +84,5 @@ export interface MarketDataProvider {
   approvalFor(instrument: MarketInstrument, resource: 'quote' | 'history'): MarketDataApproval | undefined
   historyPeriods(instrument: MarketInstrument): readonly Period[]
   quote(instrument: MarketInstrument, signal: AbortSignal): Promise<MarketDataResult<MarketDataQuote>>
-  history(instrument: MarketInstrument, period: Period, signal: AbortSignal): Promise<MarketDataResult<readonly SeriesPoint[]>>
+  dailyHistory(instrument: MarketInstrument, period: Period, signal: AbortSignal): Promise<MarketDataResult<MarketDailyHistory>>
 }

@@ -35,8 +35,8 @@ function DataSources() {
         <p><a href="https://opendart.fss.or.kr/">금융감독원 OPEN DART</a> · <a href="https://www.sec.gov/search-filings">미국 SEC EDGAR</a></p>
       </section>
       <section>
-        <h2>시장 가격과 등락 · 대시보드 DEMO</h2>
-        <p><strong>모의 데이터</strong> · DEMO로 표시된 지수 가격·등락·차트는 앱이 제공하는 예시입니다. 거래소 시세 갱신 주기는 적용되지 않습니다.</p>
+        <h2>시장 가격과 등락</h2>
+        <p><strong>데이터 미연결</strong> · 시장 지수와 개별 종목은 승인된 시세 공급자가 연결되면 표시합니다. 기존 샘플 시세는 공개 화면에서 제외했습니다.</p>
         <p><a href="https://github.com/winow23v/finance-dashboard">Finance Dashboard 프로젝트</a></p>
       </section>
       <section>
@@ -52,7 +52,7 @@ export function SiteInformation({ page }: { page: InformationPage }) {
   return <section className="panel site-information">
     {page === 'about' && <>
       <p>Finance Dashboard는 국내외 증시와 환율, 경제지표, 기업 공시를 한 화면에서 살펴보는 공개 대시보드입니다. 누구나 로그인 없이 이용할 수 있습니다.</p>
-      <p>관심종목을 저장하고 지수의 기간별 흐름을 살펴볼 수 있습니다. DEMO로 표시된 수치는 화면과 기능을 보여 주는 예시입니다.</p>
+      <p>종목을 검색해 관심종목에 저장하고 상세 화면에서 시세 연결 상태를 확인할 수 있습니다.</p>
     </>}
     {page === 'sources' && <DataSources />}
     {page === 'privacy' && <>

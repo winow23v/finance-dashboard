@@ -1,0 +1,27 @@
+import { Star } from 'lucide-react'
+import { findMarketListing } from '../services/marketListings'
+import type { MarketSymbol } from '../types/marketSymbol'
+
+export function StockDetail({ listing, saved, onToggle }: { listing: MarketSymbol; saved: boolean; onToggle: () => void }) {
+  const metadata = findMarketListing(listing)
+  return <>
+    <section className="panel stock-detail" aria-label="종목 정보">
+      <div className="section-heading">
+        <a href={listing.market === 'KR' ? '#domestic' : '#global'}>시장으로 돌아가기</a>
+        <button type="button" className="button" aria-pressed={saved} onClick={onToggle}>
+          <Star size={16} aria-hidden="true" /> {saved ? '관심종목 삭제' : '관심종목 추가'}
+        </button>
+      </div>
+      <dl className="stock-detail-fields">
+        <div><dt>종목 코드</dt><dd>{listing.symbol}</dd></div>
+        <div><dt>거래소</dt><dd>{listing.exchange}</dd></div>
+        <div><dt>통화</dt><dd>{metadata?.currency ?? '미확인'}</dd></div>
+        <div><dt>시세 상태</dt><dd>데이터 미연결</dd></div>
+      </dl>
+    </section>
+    <section className="panel stock-detail" aria-label="기술적 분석">
+      <h2>기술적 분석</h2>
+      <p className="state" role="status">실제 시가·고가·저가·종가·거래량 데이터가 연결되면 표시됩니다.</p>
+    </section>
+  </>
+}
