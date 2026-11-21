@@ -40,11 +40,6 @@ function DataSources() {
         <p><a href="https://github.com/winow23v/finance-dashboard">Finance Dashboard 프로젝트</a></p>
       </section>
       <section>
-        <h2>외부 종목 차트 · TradingView</h2>
-        <p><strong>지원 종목별 시세</strong> · 차트를 열 때 공식 위젯을 불러옵니다. 갱신과 지연 여부는 거래소 및 위젯 표시를 따릅니다. 대시보드의 가격·등락과 위젯 차트는 별도로 제공됩니다.</p>
-        <p><a href="https://www.tradingview.com/widget-docs/faq/data/">TradingView 위젯 데이터 안내</a></p>
-      </section>
-      <section>
         <h2>미국 거시경제 지표 · FRED</h2>
         <p><strong>비공개 검증용</strong> · 세인트루이스 연방준비은행 FRED를 통해 원 제공기관의 지표를 확인하는 기능입니다. 지표별 공표 주기가 다르며 공개 대시보드에서는 실데이터를 제공하지 않습니다.</p>
         <p><a href="https://fred.stlouisfed.org/">FRED</a> · <a href="https://fred.stlouisfed.org/legal/">FRED 이용약관과 출처 안내</a></p>

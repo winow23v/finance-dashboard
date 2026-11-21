@@ -3,7 +3,7 @@ import type { EquityMarket, MarketSymbol } from './marketSymbol'
 
 // Provider symbols are mapped by an adapter. Saved favorites keep their exchange and ticker.
 export type MarketInstrument =
-  | { kind: 'index'; market: EquityMarket; id: string }
+  | { kind: 'index'; market: EquityMarket; id: string; exchange: string; symbol: string }
   | { kind: 'stock' | 'etf'; listing: MarketSymbol }
 
 // An approval applies to a specific feed and instrument scope, not an entire vendor.
@@ -35,12 +35,30 @@ export type MarketDataQuote = {
   percentChange: number | null
 }
 
+export type MarketDataLicense =
+  | { status: 'unverified' | 'restricted' | 'not-applicable' }
+  | { status: 'verified'; approval: MarketDataApproval }
+
+export type MarketDataDisplay =
+  | { status: 'allowed'; audience: 'public' | 'private' }
+  | { status: 'blocked' }
+
 export type MarketDataResult<T> =
-  | { status: 'available'; timing: MarketDataTiming; collectedAt: string; data: T }
+  | {
+    status: 'available'
+    instrument: MarketInstrument
+    source: { providerId: string; label: string; simulated: boolean }
+    timing: MarketDataTiming
+    collectedAt: string
+    refreshIntervalMs: number | null
+    license: MarketDataLicense
+    display: MarketDataDisplay
+    data: T
+  }
   | { status: 'no-observation' | 'unsupported' | 'restricted' | 'provider-error' }
 
 // A future server integration must check approval before fetching, caching, or publishing.
-// Unavailable observations stay unavailable. DEMO and official embeds are separate paths.
+// Unavailable observations stay unavailable. DEMO records remain explicitly labeled.
 export interface MarketDataProvider {
   approvalFor(instrument: MarketInstrument, resource: 'quote' | 'history'): MarketDataApproval | undefined
   historyPeriods(instrument: MarketInstrument): readonly Period[]

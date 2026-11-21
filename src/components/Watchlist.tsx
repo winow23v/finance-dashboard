@@ -4,7 +4,7 @@ import { Change, price } from './QuoteDisplay'
 import { marketSymbolKey, type EquityMarket, type MarketSymbol } from '../types/marketSymbol'
 import type { EquityQuote } from '../types/finance'
 import type { SettingsState } from '../storage/guestStorage'
-import { findTradingViewListing, tradingViewListings } from '../services/tradingViewSymbols'
+import { findMarketListing, marketListings } from '../services/marketListings'
 
 type Row = { listing: MarketSymbol; quote?: EquityQuote; name?: string }
 type Props = {
@@ -38,8 +38,8 @@ function StockTable({ rows, saved, onToggle, units, label, simulated, onOpenChar
       const name = quote?.name ?? savedName ?? listing.symbol
       return <tr key={key}>
         <th scope="row">
-          {onOpenChart ? <button type="button" className="stock-name stock-chart-trigger" title={name} aria-label={name + ' TradingView 차트'}
-            aria-expanded={activeChartKey === key} aria-controls={activeChartKey === key ? 'tradingview-chart' : undefined}
+          {onOpenChart ? <button type="button" className="stock-name stock-chart-trigger" title={name} aria-label={name + ' 시세 차트'}
+            aria-expanded={activeChartKey === key} aria-controls={activeChartKey === key ? 'favorite-history' : undefined}
             onClick={event => onOpenChart(listing, name, event.currentTarget)}>{name}</button>
             : <span className="stock-name" title={name}>{name}</span>}
           <small className="stock-name">{listing.symbol} · {listing.exchange}{quote?.kind === 'etf' && ' · ETF'}</small>
@@ -60,10 +60,10 @@ export function Watchlist({ stocks, selected, onToggle, units, market, catalogUn
   const quotes = new Map(scope.map(quote => [marketSymbolKey(quote), quote]))
   const saved = new Set(selected.map(marketSymbolKey))
   const rows = selected.filter(listing => !market || listing.market === market)
-    .map(listing => ({ listing, quote: quotes.get(marketSymbolKey(listing)), name: findTradingViewListing(listing)?.name }))
+    .map(listing => ({ listing, quote: quotes.get(marketSymbolKey(listing)), name: findMarketListing(listing)?.name }))
   const catalog = Array.from(quotes.values(), quote => ({ listing: quote, quote }))
-  const chartListings = tradingViewListings.filter(({ listing }) => (!market || listing.market === market) && !quotes.has(marketSymbolKey(listing)))
-  const matches: Row[] = [...catalog, ...chartListings]
+  const knownListings = marketListings.filter(({ listing }) => (!market || listing.market === market) && !quotes.has(marketSymbolKey(listing)))
+  const matches: Row[] = [...catalog, ...knownListings]
   const filtered = matches.filter(({ listing, quote, name }) => [quote?.name ?? name, listing.symbol, listing.exchange, quote?.kind]
     .join(' ').toLowerCase().includes(query.trim().toLowerCase()))
   const title = market === 'KR' ? '국내 관심종목' : market === 'US' ? '해외 관심종목' : '관심종목'

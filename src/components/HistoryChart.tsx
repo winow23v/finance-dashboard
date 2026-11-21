@@ -6,8 +6,11 @@ import type { Period, SeriesPoint } from '../types/finance'
 const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
 const date = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric' })
 const time = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+const fullDate = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'medium', timeStyle: 'short' })
+const marketPeriods = { '1W': '1주', '1M': '1개월', '3M': '3개월', '1Y': '1년' } as const
+const signed = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2, signDisplay: 'exceptZero' })
 
-export default function HistoryChart({ items, keyword = false, simulated, revision, selectedId, onSelect, titleRef }: {
+export default function HistoryChart({ items, keyword = false, simulated, revision, selectedId, onSelect, titleRef, favoriteName, onClose }: {
   items: { id: string; name: string }[]
   keyword?: boolean
   simulated: boolean
@@ -15,6 +18,8 @@ export default function HistoryChart({ items, keyword = false, simulated, revisi
   selectedId?: string
   onSelect?: (id: string) => void
   titleRef?: Ref<HTMLHeadingElement>
+  favoriteName?: string
+  onClose?: () => void
 }) {
   const [selection, setSelection] = useState('')
   const [comparison, setComparison] = useState('')
@@ -44,11 +49,18 @@ export default function HistoryChart({ items, keyword = false, simulated, revisi
   const tick = (value: string) => (period === '1D' ? time : date).format(new Date(value))
   const primaryName = items.find(item => item.id === id)?.name
   const comparisonName = items.find(item => item.id === compareId)?.name
-  return <section id={keyword ? undefined : 'market-history'} className={keyword ? 'panel chart-panel trend-chart' : 'panel chart-panel'} aria-label={keyword ? '키워드 추이' : '지수 추이'}>
+  const title = keyword ? '검색 관심도 추이' : favoriteName ? favoriteName + ' 시세 추이' : '지수 추이'
+  const periods = keyword ? historyPeriods : Object.keys(marketPeriods) as (keyof typeof marketPeriods)[]
+  const observations = !keyword && points ? points.map((point, index) => {
+    const previous = points[index - 1]?.value
+    const change = point.value !== undefined && previous ? (point.value / previous - 1) * 100 : NaN
+    return { ...point, change: Number.isFinite(change) ? change : undefined }
+  }) : []
+  return <section id={keyword ? undefined : favoriteName ? 'favorite-history' : 'market-history'} className={keyword ? 'panel chart-panel trend-chart' : 'panel chart-panel'} aria-label={title}>
     <div className="panel-heading">
       <div>
-        <h2 ref={titleRef} tabIndex={keyword ? undefined : -1}>{keyword ? '검색 관심도 추이' : '지수 추이'}{simulated && ' · DEMO'}</h2>
-        <p>{keyword ? '키워드 상대 검색량 (0–100)' : '주요 시장 지수의 기간별 움직임'}</p>
+        <h2 ref={titleRef} tabIndex={keyword ? undefined : -1}>{title}{simulated && ' · DEMO'}</h2>
+        {keyword && <p>키워드 상대 검색량 (0–100)</p>}
       </div>
       {id && <div className="chart-selects">
         <select aria-label={keyword ? '기준 키워드' : '지수 선택'} value={id} onChange={event => {
@@ -64,17 +76,19 @@ export default function HistoryChart({ items, keyword = false, simulated, revisi
           {items.filter(item => item.id !== id).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select>}
       </div>}
+      {onClose && <button type="button" className="button" onClick={onClose}>차트 닫기</button>}
     </div>
     <div className="chart-toolbar">
       <div className="periods" role="group" aria-label="차트 기간">
-        {historyPeriods.map(value => <button key={value} aria-pressed={value === period} onClick={() => setPeriod(value)}>{value}</button>)}
+        {periods.map(value => <button key={value} aria-pressed={value === period} onClick={() => setPeriod(value)}>
+          {keyword ? value : marketPeriods[value as keyof typeof marketPeriods]}</button>)}
       </div>
       {compareId && points && <div className="chart-legend">
         <span>{primaryName}</span><span>{comparisonName}</span>
       </div>}
     </div>
     <div className="chart-body">
-      {!id || points?.length === 0 ? <p className="state" role="status">표시할 데이터가 없습니다.</p>
+      {!id || points?.length === 0 ? <p className="state" role="status">{keyword ? '표시할 데이터가 없습니다.' : '실제 시세 데이터 준비 중'}</p>
         : points === undefined ? <p className="state" role="status">차트 데이터를 불러오는 중입니다.</p>
         : points === null ? <div className="state"><p role="alert">차트를 불러오지 못했습니다.</p><button className="button" onClick={() => setRetry(value => value + 1)}>다시 시도</button></div>
         : <ResponsiveContainer width="100%" height="100%" minWidth={0}>
@@ -88,6 +102,17 @@ export default function HistoryChart({ items, keyword = false, simulated, revisi
           </AreaChart>
         </ResponsiveContainer>}
     </div>
+    {observations.length > 0 && <details className="chart-note market-observations">
+      <summary>날짜별 가격·변동률</summary>
+      <div className="disclosure-table"><table>
+        <thead><tr><th scope="col">관측 시각 (KST)</th><th scope="col">가격</th><th scope="col">직전 관측값 대비</th></tr></thead>
+        <tbody>{observations.map(point => <tr key={point.at}>
+          <th scope="row"><time dateTime={point.at}>{fullDate.format(new Date(point.at))}</time></th>
+          <td>{point.value === undefined ? '—' : number.format(point.value)}</td>
+          <td>{point.change === undefined ? '—' : signed.format(point.change) + '%'}</td>
+        </tr>)}</tbody>
+      </table></div>
+    </details>}
     {compareId && points?.length && (!points.some(point => point.comparison !== undefined) || !points.some(point => point.value !== undefined))
       ? <p className="chart-note" role="status">선택한 키워드 중 일부의 데이터가 없습니다.</p> : null}
   </section>

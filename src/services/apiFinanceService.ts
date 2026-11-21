@@ -156,7 +156,9 @@ export async function getEconomyIndicators(signal: AbortSignal): Promise<Economy
 
 export const apiFinanceService: FinanceService = {
   async getSnapshot() {
-    return parseSnapshot(await getJson('/api/v1/market/snapshot'))
+    const snapshot = parseSnapshot(await getJson('/api/v1/market/snapshot'))
+    // The legacy endpoint supplies DEMO data and has no per-instrument display approval.
+    return snapshot.source.simulated ? snapshot : { ...snapshot, quotes: [] }
   },
   async getPriceHistory(symbolId: string, period: Period) {
     const query = new URLSearchParams({ symbolId, period })
