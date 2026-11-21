@@ -23,9 +23,12 @@ test('ECB holidays and weekends keep real observation dates, with same-day cross
       calls++
       const query = new URL(url).searchParams
       assert.equal(query.get('providers'), 'ecb')
+      assert.equal(query.get('quotes'), 'USD,KRW,JPY,CNY,GBP,CHF,AUD,CAD')
       assert.equal(query.get('from'), '2025-04-05')
       return Response.json([
         fxRow(date, 'JPY', 160), fxRow(date, 'USD', 1.25), fxRow(date, 'KRW', 1500),
+        fxRow(date, 'GBP', 0.8), fxRow(date, 'CNY', 8), fxRow(date, 'CHF', 0.9),
+        fxRow(date, 'AUD', 1.6), fxRow(date, 'CAD', 1.5), fxRow('2026-03-31', 'GBP', 0.75),
         fxRow('2026-03-30', 'USD', 1.2), fxRow('2026-03-30', 'KRW', 1440),
         fxRow('2026-03-31', 'USD', 1.2),
         fxRow('2026-02-10', 'USD', 1.2), fxRow('2026-02-10', 'KRW', 1440),
@@ -47,13 +50,21 @@ test('ECB holidays and weekends keep real observation dates, with same-day cross
   ])
   assert.equal(history.json().from, '2026-03-30')
   assert.deepEqual(history.json().points.map(row => row.observationDate), ['2026-03-30', date])
+  const { reference } = latest.json()
+  assert.equal(reference.observationDate, date)
+  assert.equal(reference.rates.JPY.KRW, 1500 / 160)
+  assert.equal(reference.rates.GBP.CAD, 1.5 / 0.8)
+  assert.equal(reference.rates.CNY.CHF, 0.9 / 8)
+  const alternate = await app.inject('/api/v1/fx/history?base=GBP&quote=KRW')
+  assert.equal(alternate.statusCode, 200)
+  assert.deepEqual(alternate.json().points, [{ observationDate: date, rate: 1500 / 0.8 }])
   for (const [period, count] of [['1M', 2], ['3M', 3], ['1Y', 3]]) {
     const result = await app.inject(`/api/v1/fx/history?base=USD&quote=KRW&period=${period}`)
     assert.equal(result.json().points.length, count)
   }
   for (const path of [
-    '/api/v1/fx/history?base=EUR&quote=JPY',
-    '/api/v1/fx/history?base=GBP&quote=KRW',
+    '/api/v1/fx/history?base=KRW&quote=KRW',
+    '/api/v1/fx/history?base=XXX&quote=KRW',
     '/api/v1/fx/history?base=USD&quote=KRW&period=1D',
     '/api/v1/fx/latest?key=anything',
   ]) assert.equal((await app.inject(path)).statusCode, 400)
@@ -95,6 +106,8 @@ test('provider configuration and query errors are distinct and never call upstre
     '/api/v1/economy/korea?key=abc',
     '/api/v1/disclosures/kr?corpCode=00126380&year=2025',
     '/api/v1/disclosures/kr?q=삼성&period=q1',
+    '/api/v1/disclosures/kr?q=삼성&page=0',
+    '/api/v1/disclosures/kr?corpCode=00126380&page=2',
     '/api/v1/disclosures/us?cik=0',
     '/api/v1/disclosures/us?cik=320193&q=AAPL',
   ]) assert.equal((await app.inject(encodeURI(path))).statusCode, 400)
@@ -179,9 +192,14 @@ test('DART maps the exact stock code, preserves corrections and labels consolida
   const id = '20260401000002'
   const key = 'test-dart-key'
   let catalogCalls = 0
+  let filingCalls = 0
+  const otherCompanies = Array.from({ length: 24 }, (_, i) =>
+    `<list><corp_code>${String(20_000_000 + i)}</corp_code><corp_name>삼성 테스트 ${i}</corp_name><stock_code>${100_000 + i}</stock_code></list>`,
+  )
   const archive = zipSync({ 'CORPCODE.xml': strToU8(`<?xml version="1.0"?><result>
     <list><corp_code>${corp}</corp_code><corp_name>삼성전자</corp_name><stock_code>${ticker}</stock_code></list>
-    <list><corp_code>00123456</corp_code><corp_name>비상장</corp_name><stock_code> </stock_code></list></result>`) })
+    <list><corp_code>00123456</corp_code><corp_name>비상장</corp_name><stock_code> </stock_code></list>
+    ${otherCompanies.join('')}</result>`) })
   const fetchImpl = async rawUrl => {
     const url = new URL(rawUrl)
     assert.equal(url.searchParams.get('crtfc_key'), key)
@@ -191,6 +209,7 @@ test('DART maps the exact stock code, preserves corrections and labels consolida
     }
     assert.equal(url.searchParams.get('corp_code'), corp)
     if (url.pathname.endsWith('list.json')) {
+      filingCalls++
       assert.equal(url.searchParams.get('last_reprt_at'), 'N')
       assert.equal(url.searchParams.get('sort'), 'date')
       assert.equal(url.searchParams.get('sort_mth'), 'desc')
@@ -211,6 +230,16 @@ test('DART maps the exact stock code, preserves corrections and labels consolida
   }
   const app = await appFor(t, { dart: createDartProvider({ key, fetchImpl }) })
   assert.deepEqual((await app.inject('/api/v1/disclosures/kr?q=005930')).json().companies, [{ id: corp, ticker, name: '삼성전자' }])
+  const query = '/api/v1/disclosures/kr?q=' + encodeURIComponent('삼성')
+  const legacy = (await app.inject(query)).json()
+  assert.equal(legacy.total, 25)
+  assert.equal(legacy.companies.length, 20)
+  const first = (await app.inject(query + '&page=1')).json()
+  const last = (await app.inject(query + '&page=3')).json()
+  assert.deepEqual(first.companies, legacy.companies.slice(0, 10))
+  assert.equal(last.total, 25)
+  assert.equal(last.companies.length, 5)
+  assert.ok(last.companies.every(company => !legacy.companies.some(item => item.id === company.id)))
   const result = await app.inject(`/api/v1/disclosures/kr?corpCode=${corp}&year=2025&period=q1`)
   assert.equal(result.statusCode, 200)
   assert.ok(!result.body.includes(key))
@@ -227,6 +256,7 @@ test('DART maps the exact stock code, preserves corrections and labels consolida
   assert.deepEqual(partial.json().financials, [])
   assert.equal(partial.json().financialsError, 'PROVIDER_UNAVAILABLE')
   assert.equal(catalogCalls, 1)
+  assert.equal(filingCalls, 1)
 })
 
 test('SEC 403 blocks queued and later calls until a new request after cooldown', async t => {

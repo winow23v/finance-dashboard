@@ -1,24 +1,26 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type Ref } from 'react'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { financeService } from '../services/financeService'
+import { defaultHistoryPeriod, historyPeriods, marketHistory } from '../services/marketHistory'
 import type { Period, SeriesPoint } from '../types/finance'
 
-const periods: Period[] = ['1D', '1W', '1M', '3M', '1Y']
 const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
 const date = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric' })
 const time = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 
-export default function HistoryChart({ items, keyword = false, simulated, revision }: {
+export default function HistoryChart({ items, keyword = false, simulated, revision, selectedId, onSelect, titleRef }: {
   items: { id: string; name: string }[]
   keyword?: boolean
   simulated: boolean
   revision: number
+  selectedId?: string
+  onSelect?: (id: string) => void
+  titleRef?: Ref<HTMLHeadingElement>
 }) {
   const [selection, setSelection] = useState('')
   const [comparison, setComparison] = useState('')
-  const [period, setPeriod] = useState<Period>('1M')
+  const [period, setPeriod] = useState<Period>(defaultHistoryPeriod)
   const [retry, setRetry] = useState(0)
-  const id = items.find(item => item.id === selection)?.id ?? items[0]?.id
+  const id = items.find(item => item.id === (selectedId ?? selection))?.id ?? items[0]?.id
   const compareId = keyword && comparison !== id && items.some(item => item.id === comparison) ? comparison : ''
   const [result, setResult] = useState<{ key: string; points: ChartPoint[] | null }>()
   const key = JSON.stringify([id, compareId, period, keyword, revision, retry])
@@ -26,30 +28,34 @@ export default function HistoryChart({ items, keyword = false, simulated, revisi
   useEffect(() => {
     if (!id) return
     let active = true
-    const primary = keyword ? financeService.getKeywordTrend(id, period) : financeService.getPriceHistory(id, period)
-    const secondary = compareId ? financeService.getKeywordTrend(compareId, period) : Promise.resolve([])
+    const primary = marketHistory(id, period, keyword, revision).load()
+    const secondary = compareId ? marketHistory(compareId, period, true, revision).load() : Promise.resolve([])
     Promise.all([primary, secondary]).then(
       ([points, comparisonPoints]) => { if (active) setResult({ key, points: alignSeries(points, comparisonPoints) }) },
       () => { if (active) setResult({ key, points: null }) },
     )
     return () => { active = false }
-  }, [id, compareId, period, keyword, key])
+  }, [id, compareId, period, keyword, revision, key])
 
-  const points = result?.key === key ? result.points : undefined
+  const primaryCached = id ? marketHistory(id, period, keyword, revision).read() : undefined
+  const comparisonCached = compareId ? marketHistory(compareId, period, true, revision).read() : []
+  const points = result?.key === key ? result.points
+    : primaryCached && comparisonCached ? alignSeries(primaryCached, comparisonCached) : undefined
   const tick = (value: string) => (period === '1D' ? time : date).format(new Date(value))
   const primaryName = items.find(item => item.id === id)?.name
   const comparisonName = items.find(item => item.id === compareId)?.name
-  return <section className={keyword ? 'panel chart-panel trend-chart' : 'panel chart-panel'} aria-label={keyword ? '키워드 추이' : '지수 추이'}>
+  return <section id={keyword ? undefined : 'market-history'} className={keyword ? 'panel chart-panel trend-chart' : 'panel chart-panel'} aria-label={keyword ? '키워드 추이' : '지수 추이'}>
     <div className="panel-heading">
       <div>
-        <h2>{keyword ? '검색 관심도 추이' : '지수 추이'}{simulated && ' · DEMO'}</h2>
+        <h2 ref={titleRef} tabIndex={keyword ? undefined : -1}>{keyword ? '검색 관심도 추이' : '지수 추이'}{simulated && ' · DEMO'}</h2>
         <p>{keyword ? '키워드 상대 검색량 (0–100)' : '주요 시장 지수의 기간별 움직임'}</p>
       </div>
       {id && <div className="chart-selects">
         <select aria-label={keyword ? '기준 키워드' : '지수 선택'} value={id} onChange={event => {
           const next = event.target.value
           if (next === compareId) setComparison('')
-          setSelection(next)
+          if (onSelect) onSelect(next)
+          else setSelection(next)
         }}>
           {items.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
         </select>
@@ -61,7 +67,7 @@ export default function HistoryChart({ items, keyword = false, simulated, revisi
     </div>
     <div className="chart-toolbar">
       <div className="periods" role="group" aria-label="차트 기간">
-        {periods.map(value => <button key={value} aria-pressed={value === period} onClick={() => setPeriod(value)}>{value}</button>)}
+        {historyPeriods.map(value => <button key={value} aria-pressed={value === period} onClick={() => setPeriod(value)}>{value}</button>)}
       </div>
       {compareId && points && <div className="chart-legend">
         <span>{primaryName}</span><span>{comparisonName}</span>

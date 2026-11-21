@@ -1,6 +1,7 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Activity, BarChart3, ChevronDown, CircleHelp, Globe2, Home, Landmark, Moon, RefreshCw, Settings, Sun, TrendingUp } from 'lucide-react'
 import { dataMode, financeService } from './services/financeService'
+import { defaultHistoryPeriod, marketHistory } from './services/marketHistory'
 import { Disclosures } from './components/Disclosures'
 import { KoreaEconomy } from './components/KoreaEconomy'
 import { Economics } from './components/Economics'
@@ -9,10 +10,11 @@ import { Watchlist } from './components/Watchlist'
 import { Change, marketNames, price } from './components/QuoteDisplay'
 import { guestStorage, type SettingsState } from './storage/guestStorage'
 import { marketSymbolKey, type EquityMarket, type MarketSymbol } from './types/marketSymbol'
-import type { EquityQuote, FinanceSnapshot, Quote } from './types/finance'
+import type { EquityQuote, FinanceSnapshot, Quote, SeriesPoint } from './types/finance'
 
 const FxDashboard = lazy(() => import('./components/FxDashboard'))
 const HistoryChart = lazy(() => import('./components/HistoryChart'))
+const IndexSparkline = lazy(() => import('./components/IndexSparkline'))
 const isApi = dataMode === 'api'
 
 const tabs = [
@@ -32,11 +34,29 @@ function hashPage(): Page | undefined {
   if (Object.hasOwn(informationPages, hash)) return hash as InformationPage
   return tabs.find(item => item.id === hash)?.id
 }
-function QuoteCard({ quote, simulated, units }: { quote: Quote; simulated: boolean; units: SettingsState['units'] }) {
+function QuoteCard({ quote, simulated, units, revision, onOpen }: {
+  quote: Quote; simulated: boolean; units: SettingsState['units']; revision: number; onOpen: () => void
+}) {
+  const [result, setResult] = useState<{ id: string; revision: number; points: SeriesPoint[] }>()
+  const { id } = quote
+  useEffect(() => {
+    if (simulated) return
+    let active = true
+    marketHistory(id, defaultHistoryPeriod, false, revision).load().then(
+      points => { if (active) setResult({ id, revision, points }) },
+      () => { if (active) setResult({ id, revision, points: [] }) },
+    )
+    return () => { active = false }
+  }, [id, simulated, revision])
+  const points = simulated ? undefined : result?.id === id && result.revision === revision
+    ? result.points : marketHistory(id, defaultHistoryPeriod, false, revision).read()
   return <article className="panel quote-card">
     <div className="quote-label"><h3>{quote.name}</h3><span>{marketNames[quote.market]}{simulated && ' · DEMO'}</span></div>
     <strong>{price(quote, units)}</strong>
     <Change quote={quote} detailed />
+    {points && points.length > 1 && <Suspense fallback={null}>
+      <IndexSparkline name={quote.name} points={points} onOpen={onOpen} />
+    </Suspense>}
   </article>
 }
 
@@ -49,9 +69,19 @@ export function App() {
   const [refreshedAt, setRefreshedAt] = useState<string>()
   const [revision, setRevision] = useState(0)
   const [request, setRequest] = useState(0)
+  const [dartRevision, setDartRevision] = useState(0)
   const [economyRevision, setEconomyRevision] = useState(0)
   const [pending, setPending] = useState(true)
   const [error, setError] = useState(false)
+  const [chartSelection, setChartSelection] = useState<string>()
+  const [chartOpenCount, setChartOpenCount] = useState(0)
+  const focusChartOnOpen = useRef(false)
+  const chartTitleRef = useCallback((heading: HTMLHeadingElement | null) => {
+    if (heading && focusChartOnOpen.current) {
+      focusChartOnOpen.current = false
+      heading.focus()
+    }
+  }, [])
   const showEconomy = tab === 'overview' || tab === 'economy'
   const [visitedEconomy, setVisitedEconomy] = useState(showEconomy)
 
@@ -99,6 +129,7 @@ export function App() {
     setPending(true)
     setError(false)
     setRequest(value => value + 1)
+    if (tab === 'domestic') setDartRevision(value => value + 1)
     if (showEconomy) setEconomyRevision(value => value + 1)
   }
 
@@ -116,6 +147,11 @@ export function App() {
     catalogUnavailable: isApi && !!snapshot && stocks.length === 0,
   }
   const isMarket = tab === 'overview' || market !== undefined
+  const openIndexChart = (id: string) => {
+    focusChartOnOpen.current = true
+    setChartSelection(id)
+    setChartOpenCount(value => value + 1)
+  }
   const navigation = <nav aria-label="주 메뉴">
     {tabs.map(({ id, label, icon: Icon, ...item }) => <a key={id} href={'#' + id} aria-current={id === tab ? 'page' : undefined}>
       <Icon size={19} aria-hidden="true" /><span>{'short' in item ? <><span className="nav-wide">{label}</span><span className="nav-short">{item.short}</span></> : label}</span>
@@ -160,7 +196,8 @@ export function App() {
               </div>}
             </div>
             {indices.length ? <div className={market ? 'quote-grid' : 'quote-grid overview-quotes'}>
-              {indices.map(quote => <QuoteCard key={quote.id} quote={quote} simulated={simulated} units={settings.units} />)}
+              {indices.map(quote => <QuoteCard key={quote.id} quote={quote} simulated={simulated} units={settings.units}
+                revision={revision} onOpen={() => openIndexChart(quote.id)} />)}
             </div> : <p className="panel state">표시할 지수가 없습니다.</p>}
             {tab === 'overview' && !isApi && <section className="panel fx-summary" aria-label="환율">
               <h2><Globe2 size={16} aria-hidden="true" /> USD/KRW{simulated && ' · DEMO'}</h2>
@@ -170,7 +207,8 @@ export function App() {
             </section>}
           </section>
           <div className={tab === 'overview' ? 'market-layout' : 'market-sections'}>
-            <HistoryChart simulated={simulated} key={'chart:' + tab} items={indices} revision={revision} />
+            <HistoryChart simulated={simulated} key={`chart:${tab}:${chartOpenCount}`} items={indices} revision={revision}
+              selectedId={chartSelection} onSelect={setChartSelection} titleRef={chartTitleRef} />
             <Watchlist key={'watchlist:' + tab} {...watchlistProps} market={market} />
           </div>
         </>}
@@ -180,7 +218,7 @@ export function App() {
           : <HistoryChart keyword simulated={simulated} items={snapshot.trendTopics.map(name => ({ id: name, name }))} revision={revision} />)}
         </Suspense>
         </>}
-        {isApi && market === 'KR' && <Disclosures market="KR" revision={request} />}
+        {isApi && <div hidden={market !== 'KR'}><Disclosures market="KR" revision={dartRevision} /></div>}
         {isApi && <div hidden={market !== 'US'}><Disclosures market="US" revision={request} /></div>}
         {(showEconomy || visitedEconomy) && (isApi || snapshot) && <div hidden={!showEconomy}>
           {isApi && <KoreaEconomy revision={economyRevision} />}

@@ -223,3 +223,23 @@ nav a[aria-current], nav a:hover { background: var(--accent-bg); color: var(--ac
 .disclosure-table table { width: 100%; border-collapse: collapse; }
 .disclosure-table :is(th, td) { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; }
 .disclosure-table th:last-child, .disclosure-table td:last-child { text-align: right; white-space: nowrap; }
+
+.list-pagination, .recent-companies, .amount-display {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 10px 0;
+}
+.list-pagination { justify-content: center; color: var(--muted); }
+.list-pagination button:disabled { cursor: default; }
+
+.fx-preferences { padding: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.fx-preferences fieldset { min-width: 0; margin: 0; padding: 4px 8px; border: 1px solid var(--line); border-radius: 8px; }
+.fx-preferences legend { color: var(--muted); padding: 0 4px; font-size: .8rem; }
+.fx-preferences select { background: var(--control); color: inherit; border: 1px solid var(--line); padding: 4px; border-radius: 6px; }
+.currency-options { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.index-sparkline { display: grid; gap: 4px; margin-top: 8px; }
+.index-sparkline .button { justify-self: start; }
+.sparkline-plot { min-width: 0; height: 52px; cursor: pointer; }
+#market-history h2 { scroll-margin-top: 20px; }

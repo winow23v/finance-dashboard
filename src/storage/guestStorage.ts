@@ -47,6 +47,14 @@ function write<T>(key: string, data: T): boolean {
   }
 }
 
+export const guestPreferences = {
+  load(key: string) {
+    const payload = record(read(key))
+    return payload?.version === 1 ? payload.data : undefined
+  },
+  save: write,
+}
+
 function isMarketSymbol(value: unknown): value is MarketSymbol {
   const item = record(value)
   return !!item && (item.market === 'KR' || item.market === 'US')

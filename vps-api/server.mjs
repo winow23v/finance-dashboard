@@ -6,7 +6,7 @@ import rateLimit from '@fastify/rate-limit'
 import { createFredProvider, FredError } from './fred-provider.mjs'
 import { createMarketCache, MarketError } from './market-cache.mjs'
 
-import { createFxProvider, fxPeriods, pairs } from './fx-provider.mjs'
+import { createFxProvider, fxCurrencies, fxPeriods } from './fx-provider.mjs'
 import { createEcosProvider } from './ecos-provider.mjs'
 import { createDartProvider, dartPeriods } from './dart-provider.mjs'
 import { createSecProvider } from './sec-provider.mjs'
@@ -147,8 +147,8 @@ export async function buildApp({
         additionalProperties: false,
         required: ['base', 'quote'],
         properties: {
-          base: { type: 'string', enum: ['USD', 'EUR'] },
-          quote: { type: 'string', enum: ['KRW', 'JPY'] },
+          base: { type: 'string', enum: fxCurrencies },
+          quote: { type: 'string', enum: fxCurrencies },
           period: { type: 'string', enum: fxPeriods, default: '1M' },
         },
       },
@@ -156,7 +156,7 @@ export async function buildApp({
   }, async (request, reply) => {
     const { base, quote, period } = request.query
     const pair = `${base}/${quote}`
-    if (!pairs.includes(pair)) return reply.code(400).send({ code: 'UNSUPPORTED_CURRENCY_PAIR' })
+    if (base === quote) return reply.code(400).send({ code: 'UNSUPPORTED_CURRENCY_PAIR' })
     return fx.history(pair, period)
   })
 
@@ -168,10 +168,11 @@ export async function buildApp({
       type: 'object', additionalProperties: false,
       oneOf: [
         { required: ['q'], not: { anyOf: [{ required: ['corpCode'] }, { required: ['year'] }, { required: ['period'] }] } },
-        { required: ['corpCode'], not: { required: ['q'] }, dependencies: { period: ['year'], year: ['period'] } },
+        { required: ['corpCode'], not: { anyOf: [{ required: ['q'] }, { required: ['page'] }] }, dependencies: { period: ['year'], year: ['period'] } },
       ],
       properties: {
         q: searchTerm,
+        page: { type: 'integer', minimum: 1, maximum: 100000 },
         corpCode: { type: 'string', pattern: '^[0-9]{8}$' },
         year: { type: 'string', pattern: '^(201[5-9]|20[2-9][0-9])$' },
         period: { type: 'string', enum: Object.keys(dartPeriods) },

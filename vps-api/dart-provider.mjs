@@ -1,5 +1,6 @@
 import { unzipSync } from 'fflate'
 import { XMLParser } from 'fast-xml-parser'
+import { createMarketCache, MarketError } from './market-cache.mjs'
 import { invalidResponse, isDay, providerClient, ProviderError } from './public-provider.mjs'
 
 const source = { name: '금융감독원 OPEN DART', url: 'https://opendart.fss.or.kr/' }
@@ -93,6 +94,7 @@ export function createDartProvider({
 } = {}) {
   // Catalog and JSON requests share one limiter. Only the parsed catalog is cached in memory.
   const get = providerClient(fetchImpl, 1000, { queue: true, binary: true, maxBytes: 8 * 1024 * 1024, dailyLimit: 2000, timeoutMs: 3500 })
+  const filingsCache = createMarketCache({ maxEntries: 32, maxBytes: 384 * 1024, maxPending: 4, timeoutMs: 6000, wallClock: clock })
   const request = (path, params, timeoutMs) => get(`https://opendart.fss.or.kr/api/${path}?${new URLSearchParams({
       crtfc_key: key.trim(), ...params,
   })}`, {}, timeoutMs)
@@ -121,28 +123,38 @@ export function createDartProvider({
     try {
       return { rows: await load() }
     } catch (error) {
+      if (error instanceof MarketError) return { rows: [], error: new ProviderError(error.statusCode, 'DART_FILINGS_UNAVAILABLE') }
       if (!(error instanceof ProviderError)) throw error
       return { rows: [], error }
     }
   }
-  return async ({ q, corpCode, year, period }) => {
+  return async ({ q, corpCode, year, period, page }) => {
     if (!key?.trim()) throw new ProviderError(503, 'DART_CONFIGURATION_MISSING')
     if (clock() >= catalogExpires) pendingCatalog ??= loadCatalog().finally(() => { pendingCatalog = undefined })
     const companies = pendingCatalog ? await pendingCatalog : catalog
     if (!corpCode) {
       const term = q.trim().toUpperCase()
-      return { source, companies: companies.filter(company => company.ticker === term || company.id === term
+      const matches = companies.filter(company => company.ticker === term || company.id === term
         || company.name.toUpperCase().includes(term))
-        .sort((a, b) => Number(b.ticker === term) - Number(a.ticker === term)).slice(0, 20) }
+        .sort((a, b) => Number(b.ticker === term || b.id === term) - Number(a.ticker === term || a.id === term))
+      const offset = page === undefined ? 0 : (page - 1) * 10
+      return { source, total: matches.length, companies: matches.slice(offset, offset + (page === undefined ? 20 : 10)) }
     }
     const company = companies.find(item => item.id === corpCode)
     if (!company) throw new ProviderError(404, 'COMPANY_NOT_FOUND')
     const compact = time => new Date(time).toISOString().slice(0, 10).replaceAll('-', '')
     const now = clock() + 9 * 60 * 60_000
-    const filings = await readRows(async () => filingsFrom(checkedRows(json(await request('list.json', {
-      corp_code: corpCode, bgn_de: compact(now - 90 * 86_400_000), end_de: compact(now),
-      last_reprt_at: 'N', sort: 'date', sort_mth: 'desc', page_count: '30',
-    }))), corpCode))
+    const end = compact(now)
+    const filings = await readRows(async () => {
+      const result = await filingsCache.get(`${corpCode}:${end}`, { ttlMs: 5 * 60_000, staleAfterMs: 0 }, async () => ({
+        asOf: new Date(clock()).toISOString(),
+        data: filingsFrom(checkedRows(json(await request('list.json', {
+          corp_code: corpCode, bgn_de: compact(now - 90 * 86_400_000), end_de: end,
+          last_reprt_at: 'N', sort: 'date', sort_mth: 'desc', page_count: '30',
+        }))), corpCode),
+      }))
+      return JSON.parse(result.body)
+    })
     const financials = year ? await readRows(async () => financialsFrom(checkedRows(json(await request('fnlttSinglAcnt.json', {
       corp_code: corpCode, bsns_year: year, reprt_code: dartPeriods[period],
     }))), year, period, company)) : { rows: [] }
