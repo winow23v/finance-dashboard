@@ -4,6 +4,7 @@ import { dataMode, financeService } from './services/financeService'
 import { defaultHistoryPeriod, marketHistory } from './services/marketHistory'
 import { Disclosures } from './components/Disclosures'
 import { KoreaEconomy } from './components/KoreaEconomy'
+import { DataStatus } from './components/DataStatus'
 import { Economics } from './components/Economics'
 import { informationPages, SiteInformation, type InformationPage } from './components/SiteInformation'
 import { Watchlist } from './components/Watchlist'
@@ -51,9 +52,10 @@ function QuoteCard({ quote, simulated, units, revision, onOpen }: {
   const points = simulated ? undefined : result?.id === id && result.revision === revision
     ? result.points : marketHistory(id, defaultHistoryPeriod, false, revision).read()
   return <article className="panel quote-card">
-    <div className="quote-label"><h3>{quote.name}</h3><span>{marketNames[quote.market]}{simulated && ' · DEMO'}</span></div>
+    <div className="quote-label"><h3>{quote.name}</h3><span>{marketNames[quote.market]}{simulated ? ' · DEMO' : quote.delayed ? ' · 지연' : ''}</span></div>
     <strong>{price(quote, units)}</strong>
     <Change quote={quote} detailed />
+    {!simulated && <small>시세 기준 (KST) <time dateTime={quote.asOf}>{timestamp.format(new Date(quote.asOf))}</time></small>}
     {points && points.length > 1 && <Suspense fallback={null}>
       <IndexSparkline name={quote.name} points={points} onOpen={onOpen} />
     </Suspense>}
@@ -221,7 +223,7 @@ export function App() {
         {isApi && <div hidden={market !== 'KR'}><Disclosures market="KR" revision={dartRevision} /></div>}
         {isApi && <div hidden={market !== 'US'}><Disclosures market="US" revision={request} /></div>}
         {(showEconomy || visitedEconomy) && (isApi || snapshot) && <div hidden={!showEconomy}>
-          {isApi && <KoreaEconomy revision={economyRevision} />}
+          {isApi && <KoreaEconomy revision={economyRevision} visible={showEconomy} />}
           <Economics api={isApi} demo={snapshot?.indicators} detailed={tab === 'economy'} revision={economyRevision} />
         </div>}
         {!information && <>
@@ -237,7 +239,7 @@ export function App() {
             <SettingSelect label="기본 표시 시장" description="대시보드를 처음 열 때 표시" value={settings.market} options={{ overview: '개요', domestic: '국내시장', global: '해외시장' }} onChange={market => setSettings({ ...settings, market })} />
             <SettingSelect label="데이터 표시 단위" description="큰 종목 가격의 표시 방식" value={settings.units} options={{ full: '전체 숫자', compact: '간략 단위' }} onChange={units => setSettings({ ...settings, units })} />
             <SettingSelect label="상승·하락 색상" description="등락 방향별 색상" value={settings.colors} options={{ green: '상승 초록 · 하락 빨강', red: '상승 빨강 · 하락 파랑' }} onChange={colors => setSettings({ ...settings, colors })} />
-            <div className="setting"><strong>데이터 연결</strong><span>{!isApi ? 'Mock 사용 중 · API 미연결' : error ? 'API 조회 실패' : pending ? 'API 조회 중' : `API 연결 · ${snapshot?.source.label}`}</span></div>
+            <DataStatus api={isApi} snapshot={snapshot} pending={pending} error={error} />
           </section>
           <section className="panel settings-panel">
             <div className="panel-heading"><h2>관심종목 및 설정 저장</h2></div>

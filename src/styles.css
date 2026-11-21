@@ -243,3 +243,22 @@ nav a[aria-current], nav a:hover { background: var(--accent-bg); color: var(--ac
 .index-sparkline .button { justify-self: start; }
 .sparkline-plot { min-width: 0; height: 52px; cursor: pointer; }
 #market-history h2 { scroll-margin-top: 20px; }
+
+.data-status { padding-top: 12px; }
+.data-status dl { margin: 8px 0 0; }
+.data-status dl div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px 12px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.data-status dd { margin: 0; color: var(--muted); overflow-wrap: anywhere; }
+.fx-settings { padding: 10px 12px; }
+.fx-settings summary, .fx-rate-detail summary, .chart-note summary { cursor: pointer; }
+.fx-settings .fx-preferences { padding: 10px 0 0; }
+.fx-rate-detail { margin: 5px 0; color: var(--muted); font-size: .75rem; }
+.fx-rate-detail small { overflow-wrap: anywhere; }
+.indicator-has-chart { position: relative; }
+.indicator-chart-button { margin-top: 8px; }
+.indicator-chart-button::after { content: ""; position: absolute; inset: 0; }
+.indicator-has-chart a { position: relative; z-index: 1; }
+.indicator-has-chart:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 480px) {
+  .fx-settings .fx-preferences { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .currency-options label { min-height: 28px; display: inline-flex; align-items: center; gap: 4px; }
+}

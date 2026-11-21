@@ -121,7 +121,7 @@ test('ECOS validates the official series and preserves collection, observation, 
   const ecos = createEcosProvider({ key, clock: () => now, fetchImpl: async url => {
     calls++
     if (url.includes('/901Y009/')) {
-      assert.match(url, /\/1\/16\/901Y009\/M\/202501\/202604\/0$/)
+      assert.match(url, /\/1\/24\/901Y009\/M\/202405\/202604\/0$/)
       return Response.json({ StatisticSearch: { row: [
         { STAT_CODE: '901Y009', ITEM_CODE1: '0', TIME: exactComparison ? '202503' : '202502', UNIT_NAME: '2020=100', DATA_VALUE: '118' },
         { STAT_CODE: '901Y009', ITEM_CODE1: '0', TIME: '202603', UNIT_NAME: '2020=100', DATA_VALUE: '120.5' },
@@ -133,7 +133,7 @@ test('ECOS validates the official series and preserves collection, observation, 
         { STAT_CODE: '901Y027', ITEM_CODE1: 'I61BC', ITEM_CODE2: 'I28A', TIME: '202603', UNIT_NAME: '%', DATA_VALUE: '3.1' },
       ] } })
     }
-    assert.match(url, /\/722Y001\/D\/20260323\/20260405\/0101000$/)
+    assert.match(url, /\/722Y001\/D\/20260106\/20260405\/0101000$/)
     return Response.json({ StatisticSearch: { row: [
       { STAT_CODE: '722Y001', ITEM_CODE1: '0101000', TIME: '20260403', UNIT_NAME: '연%', DATA_VALUE: '2.5' },
     ] } })
@@ -152,6 +152,9 @@ test('ECOS validates the official series and preserves collection, observation, 
   assert.deepEqual([cpi.value, unemployment.value], [120.5, 3.1])
   assert.equal(cpi.observationDate, null)
   assert.equal(cpi.observationPeriod, '2026-03')
+  assert.deepEqual(cpi.history, [{ period: '2025-03', value: 118 }, { period: '2026-03', value: 120.5 }])
+  assert.deepEqual(rate.history, [{ period: '2026-04-03', value: 2.5 }])
+  assert.deepEqual(unemployment.history, [{ period: '2026-03', value: 3.1 }])
   assert.equal(cpi.yearOverYear.comparisonPeriod, '2025-03')
   assert.ok(Math.abs(cpi.yearOverYear.value - (120.5 - 118) / 118 * 100) < 1e-10)
   assert.equal(unemployment.agency.name, '국가데이터처 KOSIS')

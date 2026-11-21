@@ -19,9 +19,8 @@ function ranges(now) {
   const month = time => day(time).slice(0, 6)
   const monthsAgo = offset => month(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() - offset, 1))
   return {
-    D: [day(now - 13 * 86_400_000), day(now), 14],
-    M: [monthsAgo(3), month(now), 4],
-    cpi: [monthsAgo(15), month(now), 16, monthsAgo(3)],
+    D: [day(now - 89 * 86_400_000), day(now), 90, day(now - 13 * 86_400_000)],
+    M: [monthsAgo(23), month(now), 24, monthsAgo(3)],
   }
 }
 
@@ -47,6 +46,8 @@ function observationFrom(document, series, from, to, count, currentFrom = from) 
   }
   if (!latest) return null
   const { date, ...observation } = latest
+  observation.history = [...observations].sort(([left], [right]) => left.localeCompare(right))
+    .map(([period, value]) => ({ period: series.cycle === 'D' ? period : period.slice(0, 7), value }))
   if (series.id === 'cpi' && observation.value > 0) {
     const priorDate = String(Number(date.slice(0, 4)) - 1) + date.slice(4)
     const priorValue = observations.get(priorDate)
@@ -71,7 +72,7 @@ export function createEcosProvider({ key = process.env.ECOS_API_KEY, fetchImpl =
     let lastError
     for (const entry of series) {
       const { id, name, table, items, cycle, unit, agency } = entry
-      const [from, to, count, currentFrom] = range[id === 'cpi' ? 'cpi' : cycle]
+      const [from, to, count, currentFrom] = range[cycle]
       const metadata = { id, name, unit, agency, series: { table, items, cycle } }
       if (lastError?.code === 'ECOS_PROVIDER_ERROR' || lastError?.statusCode === 503) {
         indicators.push({ ...metadata, status: 'unavailable', code: lastError.code })

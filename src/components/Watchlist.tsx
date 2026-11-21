@@ -33,7 +33,7 @@ function StockTable({ rows, saved, onToggle, units, label, simulated }: {
       const name = quote?.name ?? listing.symbol
       return <tr key={key}>
         <th scope="row"><span className="stock-name" title={name}>{name}</span><small className="stock-name">{listing.symbol} · {listing.exchange}{quote?.kind === 'etf' && ' · ETF'}</small></th>
-        <td>{quote ? <>{price(quote, units)}<small>{quote.currency}</small></> : <span aria-label="가격 데이터 없음">—</span>}</td>
+        <td>{quote ? <>{price(quote, units)}<small>{quote.currency}{!simulated && quote.delayed && ' · 지연'}</small></> : <span aria-label="가격 데이터 없음">—</span>}</td>
         <td>{quote ? <Change quote={quote} /> : <span aria-label="등락률 데이터 없음">—</span>}</td>
         <td className="star-col"><FavoriteButton name={name} active={saved.has(key)} onClick={() => onToggle(listing)} /></td>
       </tr>

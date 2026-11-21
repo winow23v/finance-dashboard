@@ -28,6 +28,8 @@ function loadPreferences() {
 }
 const periods = { '1W': '7일', '1M': '1개월', '3M': '3개월', '1Y': '1년' }
 const format = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 4 })
+const wonFormat = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const detailFormat = new Intl.NumberFormat('ko-KR', { maximumSignificantDigits: 15 })
 const time = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Seoul' })
 
 type Point = { observationDate: string; rate: number }
@@ -118,26 +120,29 @@ export default function FxDashboard({ revision }: { revision: number }) {
 
   return <section className="market-sections" aria-label="환율">
     <div className="section-heading"><h2>환율</h2><span className="badge">공표 기준환율 · 일별</span></div>
-    <div className="panel fx-preferences">
-      <label>기준 통화 <select value={reference} onChange={event => {
-        const value = event.target.value
-        if (!isCurrency(value)) return
-        setPreferences(previous => {
-          const next = previous.selected.filter(code => code !== value)
-          return { ...previous, reference: value, selected: next.length ? next : [previous.reference] }
-        })
-      }}>{currencies.map(code => <option key={code}>{code}</option>)}</select></label>
-      <fieldset><legend>표시 통화 · 최대 {maxCurrencies}개</legend>
-        <div className="currency-options">{currencies.filter(code => code !== reference).map(code => {
-          const checked = selected.includes(code)
-          return <label key={code}><input type="checkbox" checked={checked}
-            disabled={checked ? selected.length === 1 : selected.length >= maxCurrencies}
-            onChange={() => setPreferences(previous => ({ ...previous, selected: checked
-              ? previous.selected.filter(item => item !== code) : [...previous.selected, code] }))} /> {code}</label>
-        })}</div>
-      </fieldset>
-      <label><input type="checkbox" checked={yen100} onChange={event => setPreferences({ ...preferences, yen100: event.target.checked })} /> 일본 엔화 100엔 기준</label>
-    </div>
+    <details className="panel fx-settings">
+      <summary>환율 설정</summary>
+      <div className="fx-preferences">
+        <label>기준 통화 <select value={reference} onChange={event => {
+          const value = event.target.value
+          if (!isCurrency(value)) return
+          setPreferences(previous => {
+            const next = previous.selected.filter(code => code !== value)
+            return { ...previous, reference: value, selected: next.length ? next : [previous.reference] }
+          })
+        }}>{currencies.map(code => <option key={code}>{code}</option>)}</select></label>
+        <fieldset><legend>표시 통화 · 최대 {maxCurrencies}개</legend>
+          <div className="currency-options">{currencies.filter(code => code !== reference).map(code => {
+            const checked = selected.includes(code)
+            return <label key={code}><input type="checkbox" checked={checked}
+              disabled={checked ? selected.length === 1 : selected.length >= maxCurrencies}
+              onChange={() => setPreferences(previous => ({ ...previous, selected: checked
+                ? previous.selected.filter(item => item !== code) : [...previous.selected, code] }))} /> {code}</label>
+          })}</div>
+        </fieldset>
+        <label><input type="checkbox" checked={yen100} onChange={event => setPreferences({ ...preferences, yen100: event.target.checked })} /> 일본 엔화 100엔 기준</label>
+      </div>
+    </details>
     <div className="quote-grid">
       {selected.map(code => {
         const name = `${code}/${reference}`
@@ -145,8 +150,13 @@ export default function FxDashboard({ revision }: { revision: number }) {
         const multiplier = code === 'JPY' && yen100 ? 100 : 1
         return <article className="panel quote-card" key={name}>
           <div className="quote-label"><h3>{name}</h3><span>{reference} / {multiplier} {code}</span></div>
-          <strong>{row?.rate != null ? format.format(row.rate * multiplier) : latest === undefined ? '조회 중' : '조회 불가'}</strong>
+          <strong>{row?.rate != null ? (reference === 'KRW' ? wonFormat : format).format(row.rate * multiplier) : latest === undefined ? '조회 중' : '조회 불가'}</strong>
           {row?.observationDate && row.rate !== null && <small>관측일 <time dateTime={row.observationDate}>{row.observationDate}</time> · {row.status === 'published_today' ? '당일 공표' : '이전 공표값'}{row.calculated && ' · 교차환율 계산'}</small>}
+          {row?.rate != null && <details className="fx-rate-detail">
+            <summary>상세 수치</summary>
+            <small>1 {code} = {detailFormat.format(row.rate)} {reference}</small>
+            {multiplier !== 1 && <small>{multiplier} {code} = {detailFormat.format(row.rate * multiplier)} {reference}</small>}
+          </details>}
           {row && <small>수집 (KST) <time dateTime={row.collectedAt}>{time.format(new Date(row.collectedAt))}</time></small>}
         </article>
       })}
@@ -168,8 +178,8 @@ export default function FxDashboard({ revision }: { revision: number }) {
             <AreaChart data={chart.map(point => ({ ...point, rate: point.rate * chartMultiplier, dateTime: Date.parse(point.observationDate) }))} margin={{ top: 10, right: 12, left: 12, bottom: 8 }}>
               <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="4 5" />
               <XAxis dataKey="dateTime" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={date => new Date(date).toISOString().slice(5, 10)} minTickGap={28} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
-              <YAxis orientation="right" width={65} domain={['auto', 'auto']} tickFormatter={value => format.format(value)} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
-              <Tooltip labelFormatter={date => new Date(Number(date)).toISOString().slice(0, 10)} formatter={value => `${format.format(Number(value))} ${quote}`} contentStyle={{ background: 'var(--panel)', borderColor: 'var(--line)' }} />
+              <YAxis orientation="right" width={65} domain={['auto', 'auto']} tickFormatter={value => (quote === 'KRW' ? wonFormat : format).format(value)} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
+              <Tooltip labelFormatter={date => new Date(Number(date)).toISOString().slice(0, 10)} formatter={value => `${detailFormat.format(Number(value))} ${quote}`} contentStyle={{ background: 'var(--panel)', borderColor: 'var(--line)' }} />
               <Area name={pair} dataKey="rate" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.09} isAnimationActive={false} dot={chart.length === 1} />
             </AreaChart>
           </ResponsiveContainer>}

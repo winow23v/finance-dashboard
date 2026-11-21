@@ -1,5 +1,6 @@
 import type { EconomyIndicators, FinanceSnapshot, FredIndicator, Indicator, Period, Quote, SeriesPoint } from '../types/finance'
 import type { FinanceService } from './financeService'
+import { recordProviderStatus } from './providerStatus'
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -104,13 +105,32 @@ export async function getJson(path: string, allowMissingIndex = false, signal?: 
   const response = await fetch(requestUrl(path), {
     headers: { Accept: 'application/json' },
     signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]),
+  }).catch(error => {
+    if (!signal?.aborted) recordProviderStatus(path, 'error')
+    throw error
   })
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => null)
     if (allowMissingIndex && response.status === 404 && isRecord(body) && body.error === 'Index not found') return []
-    throw new FinanceApiError(response.status, isRecord(body) && typeof body.code === 'string' ? body.code : undefined)
+    const code = isRecord(body) && typeof body.code === 'string' ? body.code : undefined
+    recordProviderStatus(path, code === 'SEC_ACCESS_RESTRICTED' ? 'restricted' : 'error')
+    throw new FinanceApiError(response.status, code)
   }
-  return response.json()
+  const body: unknown = await response.json()
+  if (isRecord(body)) {
+    if (Array.isArray(body.indicators)) {
+      const published = body.indicators.filter(item => isRecord(item) && item.status === 'published').length
+      recordProviderStatus(path, !published ? 'unavailable' : published === body.indicators.length ? 'published' : 'partial')
+    } else if (Array.isArray(body.rates)) {
+      const rates = body.rates.filter(item => isRecord(item) && isNumber(item.rate))
+      const today = rates.some(item => item.status === 'published_today') ||
+        (isRecord(body.reference) && body.reference.status === 'published_today')
+      recordProviderStatus(path, !rates.length ? 'unavailable' : today ? 'published' : 'previous')
+    } else if (Array.isArray(body.companies) || isRecord(body.company)) {
+      recordProviderStatus(path, body.filingsError || body.financialsError ? 'partial' : 'published')
+    }
+  }
+  return body
 }
 
 export async function getEconomyIndicators(signal: AbortSignal): Promise<EconomyIndicators | null> {
