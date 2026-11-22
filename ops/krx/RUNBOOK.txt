@@ -1,0 +1,63 @@
+Phase 16 KRX history import (304 sessions, 2025-08-22 through 2026-11-20)
+
+This import does not call KRX or modify authentication or API configuration.
+It transfers only the two markets' validated daily OHLCV files, including
+observed empty market days. It does not transfer quotes, listing metadata,
+ledgers, environment files or keys. Ensure the membership display and historical
+storage are covered by the operating data rights before transferring the files.
+
+1. Resolve the live cache path from the Fastify process KRX_MEMBER_CACHE_DIR,
+   or its configured fallback (.krx-cache/member relative to the deployed
+   provider module). If the configured value is relative, resolve it using the
+   live process working directory. Determine the Fastify service account.
+2. Run the local manifest check, and use the resulting 64-digit source SHA on
+   Oracle. Transfer only the matching ohlcv-KOSPI/DAQ-YYYY-MM-DD.json files
+   for the stated date range through an approved private channel. Keep them
+   outside the Git working tree on Oracle. Re-run verify against that directory.
+
+     node ops/krx/import-history.mjs verify vps-api/.krx-cache
+     node import-history.mjs verify "$STAGED_CACHE"
+
+3. As the Fastify service account, compare source and destination. If existing
+   files differ, the tool reports filenames and refuses the import. Review the
+   cached dates and differences before proceeding, including equivalent files
+   that differ only in serialization.
+
+     node import-history.mjs plan "$STAGED_CACHE" "$MEMBER_CACHE"
+
+4. If missing files must be added, make a restricted backup on Oracle before
+   apply. Back up the member cache itself, keeping service environment files
+   and keys outside the archive. Verify the archive checksum and test extraction
+   into an isolated directory. Keep a before and after plan and source digest.
+
+     umask 077
+     (cd "$MEMBER_CACHE" &&
+       find . -maxdepth 1 -type f \( -name '*.json' -o -name '*.jsonl' \) -print0 |
+       tar --null -czf "$BACKUP" -T -)
+     sha256sum "$BACKUP" > "$BACKUP.sha256"
+     sha256sum -c "$BACKUP.sha256"
+     tar -tzf "$BACKUP"
+
+   Use a protected BACKUP path outside MEMBER_CACHE. A cache backup preserves
+   the existing data, which may be subject to retention restrictions.
+5. Run apply as the account that runs Fastify. The destination already exists.
+   Each missing file is linked atomically, and existing files stay untouched
+   even if created after the plan. An interrupted import is safely repeatable.
+
+     node import-history.mjs apply "$STAGED_CACHE" "$MEMBER_CACHE" "$SOURCE_SHA256"
+     node import-history.mjs plan "$STAGED_CACHE" "$MEMBER_CACHE"
+
+6. Verify each symbol in the approved-member API and UI, plus existing KRX
+   overview, exchange rates and US market. The importer and existing history
+   reader require no Fastify restart. The normal API release workflow is
+   independent of this operation.
+
+Recovery
+- Stop further import attempts to avoid changing data during recovery.
+- Verify the untouched backup checksum. Restore it into a fresh restricted
+  directory and validate file ownership, modes and API readability. Do not
+  extract over the live tree. For a full rollback, switch to the restored tree
+  in an approved service transition after preserving the current live tree.
+- If an import stops early, existing files are preserved. Review the report
+  and repeat the plan before re-applying. Review conflicts with an operator
+  before replacing any file.
