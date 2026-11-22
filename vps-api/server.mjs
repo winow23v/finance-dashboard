@@ -12,6 +12,7 @@ import { createDartProvider, dartPeriods } from './dart-provider.mjs'
 import { createMembership, memberStatuses, uuidPattern } from './membership-provider.mjs'
 import { ProviderError } from './public-provider.mjs'
 import { createIndexSnapshot, marketIndices } from './market-index-provider.mjs'
+import { configureMemberUsMarket, usTickerSchema } from './us-market-provider.mjs'
 import { configureMemberKrx, createKrxProvider } from './krx-provider.mjs'
 
 const periods = ['1D', '1W', '1M', '3M', '1Y']
@@ -34,6 +35,7 @@ export async function buildApp({
   localIndexResearch,
   localKrx,
   memberKrx,
+  memberUs,
   cache = createMarketCache(),
   logger = true,
   getEconomyIndicators,
@@ -49,7 +51,9 @@ export async function buildApp({
   if (memberKrx && (!membership || privateOnly)) {
     throw new Error('Member KRX requires membership authentication')
   }
-  const memberSnapshot = memberKrx && createIndexSnapshot(undefined, memberKrx, 'KRX OPEN API')
+  if (memberUs && (!membership || privateOnly)) throw new Error('Member US market requires membership authentication')
+  const memberSnapshot = (memberKrx || memberUs) && createIndexSnapshot(undefined, memberKrx,
+    memberUs ? 'Market indices' : 'KRX OPEN API', memberUs)
   const krxFor = request => localKrx && isLocalResearchRequest(request) ? localKrx : memberKrx
   if (getEconomyIndicators && !/^[a-f0-9]{64}$/.test(privateAccessToken ?? '')) {
     throw new Error('Private FRED access token is missing or invalid')
@@ -290,6 +294,29 @@ export async function buildApp({
     return krx.overview()
   })
 
+  const usStockSchema = {
+    querystring: noQuery,
+    params: { type: 'object', required: ['symbol'], properties: { symbol: usTickerSchema } },
+  }
+  app.get('/api/v1/market/us/stocks/:symbol/history', { schema: usStockSchema }, async request =>
+    memberUs ? memberUs.stock(request.params.symbol) : { status: 'unavailable', reason: 'provider-not-configured' })
+  const limitUsRequests = memberUs && app.createRateLimit({
+    max: 3, keyGenerator: request => 'us-collection:' + request.memberUser.id,
+  })
+  app.post('/api/v1/market/us/stocks/:symbol/requests', { schema: usStockSchema }, async (request, reply) => {
+    if (!memberUs) return { status: 'unavailable', reason: 'provider-not-configured' }
+    const limit = await limitUsRequests(request)
+    if (limit.isExceeded) return reply.header('retry-after', Math.max(1, Math.ceil(limit.ttl / 1000)))
+      .code(429).send({ code: 'US_COLLECTION_RATE_LIMITED' })
+    return memberUs.request(request.params.symbol)
+  })
+
+  app.get('/api/v1/market/us/indices/:id/history', {
+    schema: { querystring: noQuery, params: { type: 'object', required: ['id'],
+      properties: { id: { enum: marketIndices.filter(index => index.market === 'US').map(index => index.id) } } } },
+  }, async request => memberUs ? memberUs.indexAnalysis(marketIndices.find(index => index.id === request.params.id).symbol)
+    : { status: 'unavailable', reason: 'provider-not-configured' })
+
   app.get('/api/v1/market/history', {
     schema: {
       querystring: {
@@ -307,6 +334,10 @@ export async function buildApp({
     const quote = marketIndices.find(item => item.id === symbolId)
     if (!quote) return reply.code(404).send({ error: 'Index not found' })
 
+    if (quote.market === 'US' && memberUs) {
+      return sendMarket(reply, `history:us:${symbolId}:${period}`, policies.history,
+        () => memberUs.history(quote.symbol, period))
+    }
     if (!provider?.history) return []
     return sendMarket(reply, `history:${symbolId}:${period}`, policies.history,
       signal => provider.history(quote, period, signal))
@@ -332,6 +363,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       memberFred: configureMemberFred(),
       localKrx: krx,
       memberKrx,
+      memberUs: configureMemberUsMarket(),
       localIndexResearch: research || krx ? createIndexSnapshot(research?.createResearchProvider(), krx) : undefined,
     })
     let timer

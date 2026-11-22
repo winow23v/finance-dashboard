@@ -43,7 +43,7 @@ def calculate(frame):
     macd = ema(close, 12) - ema(close, 26)
     signal = ema(macd, 9)
     return {
-        "sma": {str(period): last(close.rolling(period).mean()) for period in (20, 50, 200)},
+        "sma": {str(period): last(close.rolling(period).mean()) for period in (20, 50, 100, 200)},
         "ema": {str(period): last(ema(close, period)) for period in (20, 50, 100, 200)},
         "rsi14": rsi(close),
         "macd": {"line": last(macd), "signal": last(signal), "histogram": last(macd - signal)},

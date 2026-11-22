@@ -1,3 +1,4 @@
+import type { DailyOhlcvBar, MarketDailyHistory } from '../types/marketDataProvider'
 import type { EconomyIndicators, FredIndicator, KrxAnalysis, KrxMarket, KrxMarketRow, KrxOverview, KrxStock, KrxStocks, MarketIndex, Period, SeriesPoint } from '../types/finance'
 import type { FinanceService } from './financeService'
 import { fetchMemberApi } from './memberTransport'
@@ -53,7 +54,7 @@ function isMarketIndex(value: unknown): value is MarketIndex {
   if (!isRecord(value) || !isText(value.id) || !isText(value.symbol) || !isText(value.name)
     || (value.market !== 'KR' && value.market !== 'US')) return false
   if (value.status === 'unavailable') {
-    return ['provider-not-configured', 'no-observation', 'provider-error', 'not-published'].includes(String(value.reason))
+    return ['provider-not-configured', 'no-observation', 'provider-error', 'not-published', 'rate-limited'].includes(String(value.reason))
       && value.price === null && value.change === null && value.changePercent === null
       && value.source === null && value.observedAt === null && value.collectedAt === null && value.tradingDate === null
   }
@@ -144,12 +145,14 @@ export function marketRequestMessage(error: unknown, fallback: string): string {
   if (error.status === 401) return '로그인이 필요합니다. 세션이 만료됐다면 다시 로그인해 주세요.'
   if (error.status === 403) return '시장 데이터 조회에는 승인된 회원 권한이 필요합니다.'
   if (error.code === 'KRX_LOCAL_PROVIDER_DISABLED' || error.code === 'KRX_NOT_CONFIGURED') return 'KRX 공급자 미연결'
+  if (error.status === 429) return '요청 한도에 도달했습니다. 잠시 후 다시 시도해 주세요.'
   if (error.status === 503) return '시장 데이터 공급자를 일시적으로 이용할 수 없습니다.'
   return fallback
 }
 
-export async function getJson(path: string, allowMissingIndex = false, signal?: AbortSignal, timeoutMs = 15_000): Promise<unknown> {
+export async function getJson(path: string, allowMissingIndex = false, signal?: AbortSignal, timeoutMs = 15_000, method: 'GET' | 'POST' = 'GET'): Promise<unknown> {
   const response = await fetchMemberApi(path, {
+    method,
     signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]),
   }).catch(error => {
     if (!signal?.aborted && !(error instanceof DOMException && error.name === 'AbortError')) recordProviderStatus(path, 'error')
@@ -219,4 +222,38 @@ export const apiFinanceService: Pick<FinanceService, 'getPriceHistory' | 'getKey
   async getKeywordTrend() {
     return []
   },
+}
+
+const usReasons = ['provider-not-configured', 'not-published', 'collecting', 'provider-error', 'rate-limited', 'unsupported'] as const
+type UsReason = typeof usReasons[number]
+type UsAnalysis = { status: 'unavailable'; reason: UsReason } | {
+  status: 'available' | 'stale'; reason: UsReason | null; source: string; collectedAt: string;
+  analysisStatus: 'available' | 'insufficient-history';
+  quote: DailyOhlcvBar & { change: number | null; changePercent: number | null };
+  history: MarketDailyHistory;
+}
+
+function isUsBar(value: unknown): value is DailyOhlcvBar {
+  return isRecord(value) && isDate(value.tradingDate)
+    && [value.open, value.high, value.low, value.close, value.volume].every(isNumber)
+}
+
+export async function getUsAnalysis(symbol: string, signal: AbortSignal, request = false, indexId?: string): Promise<UsAnalysis> {
+  const path = indexId ? '/api/v1/market/us/indices/' + encodeURIComponent(indexId) + '/history'
+    : '/api/v1/market/us/stocks/' + encodeURIComponent(symbol) + (request ? '/requests' : '/history')
+  const value = await getJson(path, false, signal, 15_000, request ? 'POST' : 'GET')
+  if (!isRecord(value)) throw new Error('Invalid US market response')
+  const reason = usReasons.find(reason => reason === value.reason)
+  if (value.status === 'unavailable' && reason) return { status: 'unavailable', reason }
+  const { status, source, collectedAt, quote, history, analysisStatus } = value
+  if ((status !== 'available' && status !== 'stale') || !isText(source) || !isDate(collectedAt)
+    || (analysisStatus !== 'available' && analysisStatus !== 'insufficient-history')
+    || !isRecord(quote) || !isNullableNumber(quote.change) || !isNullableNumber(quote.changePercent) || !isUsBar(quote)
+    || !isRecord(history) || history.currency !== 'USD' || history.timeZone !== 'America/New_York'
+    || history.adjustment !== (indexId ? 'unadjusted' : 'total-return-adjusted') || history.completeness !== 'complete'
+    || !Array.isArray(history.bars) || history.bars.length > 550 || !history.bars.every(isUsBar)) throw new Error('Invalid US stock history')
+  return { status, reason: reason ?? null, source, collectedAt, analysisStatus,
+    quote: { ...quote, change: quote.change as number | null, changePercent: quote.changePercent as number | null },
+    history: { currency: history.currency, timeZone: history.timeZone, adjustment: indexId ? 'unadjusted' : 'total-return-adjusted',
+      completeness: history.completeness, bars: history.bars } }
 }

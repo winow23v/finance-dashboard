@@ -1,0 +1,119 @@
+Finance Dashboard US market collector
+
+Scope and prerequisites
+- Use the approved Yahoo Finance source for daily US index and equity/ETF market
+  data in authenticated, approved-member views. The interface labels quoted
+  closes as Yahoo-provided. Stock indicators use the separate adjusted series.
+- Record the approved audience, permitted instruments and raw/derived fields,
+  attribution, history length, retention, backup and deletion terms in the
+  operator's approval record before activating. The code retains the last
+  validated snapshot per symbol on failure; it requests two years of daily
+  history on refresh. Queue subscriptions expire after 30 days. The queue expiry
+  does not delete cached market data. This release has no automated retention
+  purge. If the actual permission is narrower than the implemented scope or
+  storage behavior, leave member delivery disabled until the release conforms.
+- Python 3.12 with venv/pip, compatible binary wheels, systemd, curl, and the
+  host's normal administrative privileges are required. Python and its virtual
+  environment are separate from Node.js. No production secrets belong in these
+  files or the artifact.
+
+Release sequence
+1. From a clean checkout, use the same full SHA for the collector artifact,
+   Oracle validate/deploy and Pages publication. Dispatch package on main
+   and download us-market-collector-SHA. The package-only job runs without
+   Oracle access or SSH keys.
+
+     gh workflow run oracle-vps.yml --ref main -f mode=package -f expected_sha="$SHA"
+
+2. Transfer the reviewed artifact files to an operator-owned temporary location
+   on Oracle, with the checksums from the selected Actions run. Use the full SHA
+   for SHA below. Verify before invoking the trusted installer with sudo.
+
+     sha256sum -c SHA256SUMS
+     sudo bash install.sh stage "us-market-$SHA.tar.gz" "$SHA"
+     systemctl show finance-dashboard-api.service -p User -p DynamicUser
+     sudo bash install.sh check-access FASTIFY_USER
+
+   Staging builds and tests the isolated venv and creates dedicated directories.
+   It does not select a version, start any service, or change existing market
+   observations. Use check-access only with the existing unprivileged Fastify
+   user. Confirm its actual systemd sandbox can access the proposed paths.
+3. For updates, disable and stop only the collector timer, then wait for an active collection
+   to finish before selecting the new release. On the first installation keep
+   the timer disabled during the manual run. The marker is a separate collector
+   activation control.
+
+     sudo bash install.sh select "$SHA"
+     sudo install -d -m 0755 /etc/finance-dashboard
+     sudo touch /etc/finance-dashboard/us-market-enabled
+     sudo systemctl start finance-us-market.service
+     sudo journalctl -u finance-us-market.service -n 60 --no-pager
+     sudo -u finance-us-collector /opt/finance-us-market/current/venv/bin/python \
+       /opt/finance-us-market/current/collect_us.py --check --cache /var/lib/finance-us-market/data
+
+   INFO shows successful ticker/date/count; WARNING shows sanitized failure
+   categories. Check all 13 initial symbols have the last completed session and
+   sufficient consecutive bars before enabling the timer. A failed initial
+   import or missing observations should be resolved with the timer disabled.
+
+     sudo systemctl enable --now finance-us-market.timer
+     systemctl list-timers --all finance-us-market.timer
+
+4. Validate the API candidate on Oracle without restarting Fastify.
+
+     gh workflow run oracle-vps.yml --ref main -f mode=validate -f expected_sha="$SHA"
+
+   In the separately approved API cutover, have the operator use the existing
+   system configuration process to set these values and the unit's
+   SupplementaryGroups=finance-us-market. If filesystem sandboxing is enabled,
+   preserve the existing paths and grant only the required data-read and queue
+   write access. Do not change KRX configuration.
+
+     FINANCE_MEMBER_US_MARKET=1
+     US_MARKET_CACHE_DIR=/var/lib/finance-us-market/data
+     US_MARKET_QUEUE_DIR=/var/lib/finance-us-market/queue
+
+   The current Oracle API deploy stops and starts Fastify. Enabling its startup
+   flag or group requires a process restart. Do not deploy or restart while
+   service interruption is prohibited. The collector can be staged and verified
+   independently. Once an approved cutover is possible, use Oracle deploy for
+   the same validated SHA and confirm /health and approved-member endpoints.
+   Dispatch GitHub Pages for that same SHA after API validation. Verify the
+   Pages run SHA before publishing if main has advanced.
+
+     gh workflow run oracle-vps.yml --ref main -f mode=deploy -f expected_sha="$SHA"
+     gh workflow run pages.yml --ref main -f expected_sha="$SHA"
+
+Verification
+- Use the browser with a real approved test account to check the three index
+  cards, ten stock/ETF detail pages, both trading date and KST collection time,
+  latest confirmed close versus stale status, and the adjusted history used for
+  indicators. Check anonymous requests return 401 and pending members return
+  403. Avoid putting JWTs in shell history or logs.
+- Recheck KRX, FRED, ECOS, OPEN DART, Frankfurter, and the Supabase sign-in.
+  Require at least 260 valid bars for analysis; 501 bars was the verified sample
+  size and varies with the rolling window. Verify no current-session close is
+  displayed before publication.
+- Fastify GET/POST routes never launch the collector. The approved-member POST
+  is subject to per-member limits and has write access only to its bounded queue.
+
+Rollback
+- To return to the previous collector SHA, stop only its timer, allow any
+  active oneshot to finish, select the previous SHA, manually verify, then
+  re-enable the timer.
+
+     sudo systemctl disable --now finance-us-market.timer
+     systemctl show finance-us-market.service -p ActiveState
+     sudo bash install.sh select "$PREVIOUS_SHA"
+     sudo systemctl start finance-us-market.service
+     sudo systemctl enable --now finance-us-market.timer
+
+- For a first-install failure, leave the timer disabled and remove the
+  /etc/finance-dashboard/us-market-enabled marker. Do not remove the data
+  directory. Collector selection and its rollback leave the API running.
+- The existing Oracle API deploy automatically restores the previous API tree
+  if its health check fails. For a later rollback, redeploy the reviewed prior
+  API source through the existing approved deployment process. Any API restart
+  requires a separate approved service-interruption window. The operator can
+  disable the US feature via the existing configuration process at that
+  cutover. A Pages rollback is a manual publish of the reviewed prior source.

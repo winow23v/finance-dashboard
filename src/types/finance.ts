@@ -52,14 +52,14 @@ export type MarketIndex = IndexFields & ({
   price: number
   change: number | null
   changePercent: number | null
-  reason?: KrxReason | null
+  reason?: KrxReason | 'rate-limited' | null
   observedAt: string
   tradingDate: string
   collectedAt: string
   source: string
 } | {
   status: 'unavailable'
-  reason: KrxReason | 'no-observation'
+  reason: KrxReason | 'no-observation' | 'rate-limited'
   price: null
   change: null
   changePercent: null

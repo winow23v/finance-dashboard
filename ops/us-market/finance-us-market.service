@@ -1,0 +1,19 @@
+[Unit]
+Description=Finance Dashboard US daily market collection
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=/etc/finance-dashboard/us-market-enabled
+
+[Service]
+Type=oneshot
+User=finance-us-collector
+Group=finance-us-market
+UMask=0027
+Environment=XDG_CACHE_HOME=/var/lib/finance-us-market
+ExecStart=/opt/finance-us-market/current/venv/bin/python /opt/finance-us-market/current/collect_us.py --cache /var/lib/finance-us-market/data --queue /var/lib/finance-us-market/queue
+TimeoutStartSec=30min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/finance-us-market

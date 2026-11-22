@@ -3,13 +3,18 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Validate the release on Oracle, or deploy it to production
+        description: Build the collector package, validate the API on Oracle, or deploy the API
         type: choice
         options:
+          - package
           - validate
           - deploy
         default: validate
         required: true
+      expected_sha:
+        description: Optional full commit SHA to require for this run
+        type: string
+        required: false
 
 permissions:
   contents: read
@@ -19,8 +24,42 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
+  collector-package:
     if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Package and verify the collector from the workflow commit
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          if [[ -n $EXPECTED_SHA && $EXPECTED_SHA != "$GITHUB_SHA" ]]; then
+            echo 'main has advanced since the selected release commit.' >&2
+            exit 1
+          fi
+          export US_MARKET_PYTHON=python
+          mkdir collector-artifact
+          ops/us-market/package.sh "collector-artifact/us-market-$GITHUB_SHA.tar.gz"
+          ops/us-market/install.sh verify "collector-artifact/us-market-$GITHUB_SHA.tar.gz" "$GITHUB_SHA"
+          cp ops/us-market/install.sh collector-artifact/
+          (cd collector-artifact && sha256sum -- *.tar.gz install.sh > SHA256SUMS)
+          printf 'Collector artifact commit `%s`\n' "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: us-market-collector-${{ github.sha }}
+          path: collector-artifact
+          if-no-files-found: error
+  release:
+    needs: collector-package
+    if: github.ref == 'refs/heads/main' && inputs.mode != 'package'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: oracle-production
@@ -35,6 +74,10 @@ jobs:
           cache-dependency-path: vps-api/package-lock.json
       - run: npm ci --prefix vps-api
       - run: npm test
+      - name: Record API release identity
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          printf 'Oracle API candidate commit `%s`\n' "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Send tracked API release to Oracle
         env:
           ORACLE_SSH_PRIVATE_KEY: ${{ secrets.ORACLE_SSH_PRIVATE_KEY }}

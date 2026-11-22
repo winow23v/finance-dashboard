@@ -11,6 +11,7 @@ import { providerStatuses } from './services/providerStatus'
 import { DataStatus } from './components/DataStatus'
 import { Economics } from './components/Economics'
 import { informationPages, SiteInformation, type InformationPage } from './components/SiteInformation'
+import { UsAnalysis } from './components/UsAnalysis'
 import { findMarketListing, parseStockPage } from './services/marketListings'
 import { StockDetail } from './components/StockDetail'
 import { KrxStocks, krxStateLabels } from './components/KrxStocks'
@@ -49,6 +50,7 @@ type Page = Tab | 'members' | 'trends' | 'economy/fx-settings' | InformationPage
 
 const marketIndices: readonly { id: string; name: string; market: EquityMarket }[] = [
   { id: 'kospi', name: 'KOSPI', market: 'KR' }, { id: 'kosdaq', name: 'KOSDAQ', market: 'KR' },
+  { id: 'dow', name: 'Dow Jones Industrial Average', market: 'US' },
   { id: 'spx', name: 'S&P 500', market: 'US' }, { id: 'nasdaq', name: 'NASDAQ Composite', market: 'US' },
 ]
 const indexPage = (path: string) => marketIndices.find(index => path === 'index/' + index.id)
@@ -60,6 +62,7 @@ const indexUnavailable = {
   'no-observation': '유효한 관측값 없음',
   'provider-error': '지수 공급자 조회 실패',
   'not-published': '기준일 자료 미확인',
+  'rate-limited': '공급자 요청 제한',
   weekend: '주말 휴장',
   'before-collection': '당일 수집 대기',
 }
@@ -72,7 +75,7 @@ function MarketIndexValue({ quote, message }: { quote?: MarketIndex; message?: s
     <strong>{indexPrice.format(quote.price)}</strong>
     {quote.change !== null && quote.changePercent !== null && <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
     <small className="index-source"><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 거래 종가
-      {quote.reason ? ' · ' + krxStateLabels[quote.reason] : quote.status === 'stale' ? ' · 갱신 지연' : ''}
+      {quote.reason ? ' · ' + (quote.market === 'KR' && quote.reason !== 'rate-limited' ? krxStateLabels[quote.reason] : indexUnavailable[quote.reason]) : quote.status === 'stale' ? ' · 갱신 지연' : ''}
       {quote.reason === 'provider-error' && ' (마지막 유효값)'}</small>
     <details className="index-metadata">
       <summary>출처·수집 시각</summary>
@@ -292,12 +295,13 @@ export function App({ member, signOut, accountBusy, accountError }: {
         </div>
         {information ? <SiteInformation page={information} /> : stock ?
           <StockDetail listing={stock} saved={watchlist.some(item => marketSymbolKey(item) === marketSymbolKey(stock))}
-            onToggle={() => toggle(stock)} liveQuote={isApi && stock.market === 'KR' && stock.exchange === 'XKRX'} />
+            onToggle={() => toggle(stock)} usQuote={isApi && stock.market === 'US'} liveQuote={isApi && stock.market === 'KR' && stock.exchange === 'XKRX'} />
           : index ? <section className="panel stock-detail" aria-label="지수 상세">
             <div className="section-heading"><h2>지수 추이</h2>
               <a href={index.market === 'KR' ? '#domestic' : '#global'}>시장으로 돌아가기</a>
             </div>
-            <p className="state" role="status">지수 시계열 공급자 미연결</p>
+            {isApi && index.market === 'US' ? <UsAnalysis key={index.id} symbol={index.name} indexId={index.id} />
+              : <p className="state" role="status">지수 시계열 공급자 미연결</p>}
           </section> : <>
         {(storageFailures.favorites || storageFailures.settings) && <p className="notice" role="status">브라우저에 변경사항을 저장하지 못했습니다. 현재 화면에서만 유지됩니다.</p>}
         {pending && (!isApi || !economyPage) && <p className={snapshot ? 'refresh-status' : 'panel state'} role="status">데이터를 불러오는 중입니다.</p>}

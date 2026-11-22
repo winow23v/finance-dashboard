@@ -148,3 +148,53 @@ def test_connection_failure_retries_without_changing_mode(monkeypatch):
     monkeypatch.setattr(collect.yf, "Ticker", Ticker)
     assert len(collect.Downloader().history("KO", False)) == 10
     assert calls == [False, False]
+
+
+@pytest.mark.parametrize("utc, date", [
+    ("2026-07-06T20:30:00Z", "2026-07-06"),  # summer close at 20:00 UTC
+    ("2026-11-30T20:30:00Z", "2026-11-27"),  # winter close at 21:00 UTC
+    ("2026-11-28T22:00:00Z", "2026-11-27"),  # Saturday
+    ("2026-11-26T22:00:00Z", "2026-11-25"),  # Thanksgiving
+])
+def test_us_completed_session_boundaries(utc, date):
+    assert completed_session(pd.Timestamp(utc), CALENDAR) == pd.Timestamp(date)
+
+
+def test_us_collector_persists_history_and_preserves_it_when_refresh_fails(tmp_path):
+    from types import SimpleNamespace
+    from collect import RateLimited
+    from collect_us import check_cache, collect
+
+    class FixtureDownloader:
+        calls = 0
+        offline = False
+        ticker = SimpleNamespace(history_metadata={
+            "currency": "USD", "exchangeTimezoneName": "America/New_York", "instrumentType": "EQUITY",
+        })
+
+        def history(self, symbol, adjusted):
+            self.calls += 1
+            if self.offline:
+                raise RateLimited("rate-limited")
+            frame = normalize(bars(), symbol)
+            if adjusted:
+                frame.loc[:, ["Open", "High", "Low", "Close"]] *= 0.9
+            return frame
+
+    downloader = FixtureDownloader()
+    symbols = ("^GSPC", "ABCD")
+    assert collect(tmp_path, symbols, downloader, CALENDAR, NOW) == 0
+    assert downloader.calls == 3
+    path = tmp_path / "stocks" / "ABCD.json"
+    previous = json.loads(path.read_text())
+    assert len(previous["snapshot"]["adjusted"]) == 300
+    assert previous["snapshot"]["adjusted"][-1]["close"] != previous["snapshot"]["raw"][-1]["close"]
+    assert check_cache(tmp_path, symbols, CALENDAR, NOW) == 0
+    assert check_cache(tmp_path, ("MISSING",), CALENDAR, NOW) == 1
+    assert collect(tmp_path, symbols, downloader, CALENDAR, NOW) == 0
+    assert downloader.calls == 3
+    downloader.offline = True
+    assert collect(tmp_path, ("ABCD",), downloader, CALENDAR, NOW + pd.Timedelta(days=1)) == 1
+    failed = json.loads(path.read_text())
+    assert failed["snapshot"] == previous["snapshot"]
+    assert failed["attempt"]["reason"] == "rate-limited"

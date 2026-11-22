@@ -98,7 +98,8 @@ class Downloader:
             sleep(max(0, self.next_request - monotonic()))
             try:
                 # One ticker at a time. Ticker.history propagates classified provider errors.
-                frame = yf.Ticker(symbol).history(
+                self.ticker = yf.Ticker(symbol)
+                frame = self.ticker.history(
                     interval="1d", period="2y", auto_adjust=adjusted, keepna=True,
                     timeout=12,
                 )
@@ -127,8 +128,9 @@ def completed_session(now, calendar):
     return expected
 
 
-def prepare(symbol, raw, adjusted, now, calendar):
-    expected = completed_session(now, calendar)
+def prepare(symbol, raw, adjusted, now, calendar, *, exchange=None, expected=None):
+    if expected is None:
+        expected = completed_session(now, calendar)
     raw = raw.loc[:expected]
     adjusted = adjusted.loc[:expected]
     if raw.empty or not raw.index.equals(adjusted.index):
@@ -149,7 +151,7 @@ def prepare(symbol, raw, adjusted, now, calendar):
                                  "adjustedClose": float(adjusted.at[sample, "Close"])}
     status = {
         "source": "Yahoo Finance via yfinance", "symbol": symbol, "currency": "USD",
-        "exchange": SYMBOLS[symbol], "observedAt": calendar.session_close(observed).isoformat(),
+        "exchange": exchange or SYMBOLS[symbol], "observedAt": calendar.session_close(observed).isoformat(),
         "tradingDate": observed.date().isoformat(), "collectedAt": now.isoformat(),
         "isDelayed": None, "timing": "end-of-day", "dataStatus": "available",
         "nextSessionClose": calendar.session_close(calendar.next_session(observed)).isoformat(),

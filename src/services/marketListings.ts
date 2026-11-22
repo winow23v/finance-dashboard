@@ -8,7 +8,12 @@ export const marketListings: readonly { listing: MarketSymbol; name: string; cur
   { listing: { market: 'US', exchange: 'XNAS', symbol: 'MSFT' }, currency: 'USD', name: 'Microsoft' },
   { listing: { market: 'US', exchange: 'XNAS', symbol: 'NVDA' }, currency: 'USD', name: 'NVIDIA' },
   { listing: { market: 'US', exchange: 'XNAS', symbol: 'GOOGL' }, currency: 'USD', name: 'Alphabet Class A' },
+  { listing: { market: 'US', exchange: 'XNAS', symbol: 'AMZN' }, currency: 'USD', name: 'Amazon' },
+  { listing: { market: 'US', exchange: 'XNYS', symbol: 'DELL' }, currency: 'USD', name: 'Dell Technologies' },
+  { listing: { market: 'US', exchange: 'XNYS', symbol: 'V' }, currency: 'USD', name: 'Visa' },
+  { listing: { market: 'US', exchange: 'XNYS', symbol: 'BRK-B' }, currency: 'USD', name: 'Berkshire Hathaway Class B' },
   { listing: { market: 'US', exchange: 'ARCX', symbol: 'VOO' }, currency: 'USD', name: 'Vanguard S&P 500 ETF' },
+  { listing: { market: 'US', exchange: 'ARCX', symbol: 'SCHD' }, currency: 'USD', name: 'Schwab U.S. Dividend Equity ETF' },
 ]
 
 export function findMarketListing(listing: MarketSymbol) {

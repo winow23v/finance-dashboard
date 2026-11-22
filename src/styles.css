@@ -186,7 +186,7 @@ dialog::backdrop { background: #04080bcc; }
 }
 @media (min-width: 1360px) {
   @container dashboard (min-width: 1050px) {
-    .overview-quotes { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .overview-quotes { grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); }
   }
 }
 @media (min-width: 1024px) { .chart-body { height: 300px; } }
@@ -495,3 +495,8 @@ dialog::backdrop { background: #04080bcc; }
 .krx-analysis-card dd small { display: block; color: var(--muted); }
 .market-heatmap { scroll-margin-top: 5rem; }
 .krx-quote-price { display: block; font-size: 1.75rem; margin-top: 4px; }
+
+.us-history-scroll { overflow-x: auto; }
+.us-history-table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+.us-history-table :is(th, td) { padding: 8px; text-align: end; border-bottom: 1px solid var(--line); }
+.us-history-table th:first-child { text-align: start; }

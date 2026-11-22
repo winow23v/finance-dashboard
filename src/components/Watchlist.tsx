@@ -39,6 +39,9 @@ export function Watchlist({ selected, onToggle, market }: Props) {
     const fields = [name, listing.symbol, listing.exchange, currency].join(' ').toLocaleLowerCase('ko-KR')
     return inMarket(listing) && words.every(word => fields.includes(word))
   })
+  const ticker = query.trim().toUpperCase().replace('.', '-')
+  const tickerMatch = /^[A-Z][A-Z0-9]{0,9}(-[A-Z0-9]{1,5})?$/.test(ticker)
+    && !matches.some(({ listing }) => listing.market === 'US' && listing.symbol === ticker)
   const title = market === 'KR' ? '국내 관심종목' : market === 'US' ? '해외 관심종목' : '관심종목'
 
   return <section className="panel watch-panel">
@@ -59,8 +62,10 @@ export function Watchlist({ selected, onToggle, market }: Props) {
         <input ref={input} value={query} onChange={event => setQuery(event.target.value)}
           placeholder="기업명, 종목 코드, 거래소, 통화" aria-label="기업명, 종목 코드, 거래소, 통화 검색" />
       </label>
+      {market === 'US' && tickerMatch &&
+        <StockList listings={[{ market: 'US', exchange: 'US', symbol: ticker }]} saved={saved} onToggle={onToggle} label="미국 티커 조회" />}
       {matches.length ? <StockList listings={matches.map(item => item.listing)} saved={saved} onToggle={onToggle} label="종목 검색 결과" />
-        : <p className="state" role="status">검색 결과가 없습니다.</p>}
+        : !(market === 'US' && tickerMatch) && <p className="state" role="status">검색 결과가 없습니다.</p>}
     </dialog>
   </section>
 }

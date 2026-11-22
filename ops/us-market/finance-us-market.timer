@@ -1,0 +1,11 @@
+[Unit]
+Description=Collect US daily market data after regular trading
+
+[Timer]
+OnCalendar=*-*-* 06,07,08,10:00:00 Asia/Seoul
+OnBootSec=5min
+Persistent=true
+Unit=finance-us-market.service
+
+[Install]
+WantedBy=timers.target

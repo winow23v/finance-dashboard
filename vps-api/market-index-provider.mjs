@@ -3,6 +3,7 @@ export const marketIndices = [
   { id: 'kosdaq', symbol: 'KOSDAQ', name: 'KOSDAQ', market: 'KR' },
   { id: 'spx', symbol: '^GSPC', name: 'S&P 500', market: 'US' },
   { id: 'nasdaq', symbol: '^IXIC', name: 'NASDAQ Composite', market: 'US' },
+  { id: 'dow', symbol: '^DJI', name: 'Dow Jones Industrial Average', market: 'US' },
 ]
 
 function unavailable(index, reason) {
@@ -10,7 +11,7 @@ function unavailable(index, reason) {
     changePercent: null, observedAt: null, tradingDate: null, collectedAt: null, source: null }
 }
 
-export function createIndexSnapshot(research, krx, label = research || krx ? 'Local market research' : 'Market indices') {
+export function createIndexSnapshot(research, krx, label = research || krx ? 'Local market research' : 'Market indices', memberUs) {
   return async function snapshot() {
     const quotes = await Promise.all(marketIndices.map(async index => {
       if (index.market === 'KR') {
@@ -20,6 +21,14 @@ export function createIndexSnapshot(research, krx, label = research || krx ? 'Lo
           return quote.price ? { ...index, ...quote } : { ...unavailable(index, quote.reason), errorCode: quote.errorCode }
         } catch {
           return { ...unavailable(index, 'provider-error'), errorCode: 'KRX_UNAVAILABLE' }
+        }
+      }
+      if (memberUs) {
+        try {
+          const quote = await memberUs.index(index.symbol)
+          return quote.price ? { ...index, ...quote } : unavailable(index, quote.reason)
+        } catch {
+          return unavailable(index, 'provider-error')
         }
       }
       if (!research) return unavailable(index, 'provider-not-configured')

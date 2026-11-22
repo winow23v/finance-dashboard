@@ -27,7 +27,7 @@ test('market routes report absent providers without simulated observations', asy
   assert.equal(market.json().source.simulated, false)
   assert.equal(market.json().updatedAt, null)
   assert.equal(market.headers['x-market-as-of'], undefined)
-  assert.equal(market.json().quotes.length, 4)
+  assert.equal(market.json().quotes.length, 5)
   assert.ok(market.json().quotes.every(quote => quote.price === null && quote.status === 'unavailable'))
   const series = await app.inject(`${history}?symbolId=kospi`)
   assert.equal(series.statusCode, 200)
