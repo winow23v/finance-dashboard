@@ -74,6 +74,8 @@ test('Frankfurter errors and schema changes produce sanitized provider statuses'
   for (const [response, status, code] of [
     [Response.json({}, { status: 429 }), 503, 'PROVIDER_RATE_LIMITED'],
     [Response.json({}, { status: 500 }), 502, 'PROVIDER_UNAVAILABLE'],
+    [new Response('{'), 502, 'PROVIDER_INVALID_JSON'],
+    [new Response('x'.repeat(384 * 1024 + 1)), 502, 'PROVIDER_RESPONSE_TOO_LARGE'],
     [Response.json({ rates: [] }), 502, 'INVALID_PROVIDER_RESPONSE'],
     [Response.json([fxRow('2026-04-31', 'USD', 1.2)]), 502, 'INVALID_PROVIDER_RESPONSE'],
   ]) {
@@ -82,6 +84,27 @@ test('Frankfurter errors and schema changes produce sanitized provider statuses'
     assert.equal(result.statusCode, status)
     assert.equal(result.json().code, code)
     assert.equal(result.headers['cache-control'], 'no-store')
+  }
+})
+
+test('Frankfurter timeout and connection failures differ and cold failures are throttled', async t => {
+  for (const [fetchImpl, status, code] of [
+    [async () => { throw new Error('private upstream error') }, 502, 'PROVIDER_CONNECTION_ERROR'],
+    [async (_url, { signal }) => {
+      await new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
+    }, 504, 'PROVIDER_TIMEOUT'],
+  ]) {
+    let calls = 0
+    const fx = createFxProvider({ timeoutMs: 20, fetchImpl: (...args) => { calls++; return fetchImpl(...args) } })
+    const app = await appFor(t, { fx })
+    const latest = await app.inject('/api/v1/fx/latest')
+    const history = await app.inject('/api/v1/fx/history?base=JPY&quote=KRW&period=1Y')
+    for (const result of [latest, history]) {
+      assert.equal(result.statusCode, status)
+      assert.equal(result.json().code, code)
+      assert.ok(!result.body.includes('private upstream error'))
+    }
+    assert.equal(calls, 1)
   }
 })
 
@@ -253,4 +276,100 @@ test('DART maps the exact stock code, preserves corrections and labels consolida
   assert.equal(partial.json().financialsError, 'PROVIDER_UNAVAILABLE')
   assert.equal(catalogCalls, 1)
   assert.equal(filingCalls, 1)
+})
+
+test('Frankfurter 2,040-row weekend response is shared across UTC midnight and all history periods', async t => {
+  const lastDay = Date.parse('2026-11-20T00:00:00Z')
+  const quotes = { AUD: 1.6, CAD: 1.5, CHF: 0.9, CNY: 8, GBP: 0.8, JPY: 160, KRW: 1500, USD: 1.25 }
+  const published = []
+  for (let time = lastDay; time >= Date.parse('2025-11-22') && published.length < 254; time -= 86_400_000) {
+    const cursor = new Date(time)
+    if (![0, 6].includes(cursor.getUTCDay())) {
+      published.push(cursor.toISOString().slice(0, 10))
+    }
+  }
+  const rows = ['2025-11-21', ...published].flatMap(day =>
+    Object.entries(quotes).map(([quote, rate]) => fxRow(day, quote, rate)))
+  const raw = JSON.stringify(rows)
+  assert.equal(rows.length, 2040)
+  assert.ok(Buffer.byteLength(raw) > 120_000 && Buffer.byteLength(raw) < 384 * 1024)
+  let now = Date.parse('2026-11-22T23:59:59Z')
+  let calls = 0
+  let started
+  let finish
+  const firstRequest = new Promise(resolve => { started = resolve })
+  const response = new Promise(resolve => { finish = resolve })
+  const fx = createFxProvider({ clock: () => now, fetchImpl: async url => {
+    calls++
+    if (calls === 1) {
+      assert.equal(new URL(url).searchParams.get('from'), '2025-11-22')
+      started()
+      return response
+    }
+    return new Response(JSON.stringify(rows.filter(row => row.date > '2025-11-21')))
+  } })
+  const app = await appFor(t, { fx })
+  const latest = app.inject('/api/v1/fx/latest')
+  await firstRequest
+  now += 2000
+  // Invoke history while the first response is pending under the previous UTC date.
+  const histories = ['1W', '1M', '3M', '1Y'].map(period => fx.history('JPY/KRW', period))
+  finish(new Response(raw))
+  const rate = (await latest).json()
+  assert.equal(rate.reference.observationDate, '2026-11-20')
+  assert.equal(rate.reference.rates.USD.KRW, 1200)
+  assert.equal(rate.reference.rates.EUR.KRW, 1500)
+  assert.equal(rate.reference.rates.JPY.KRW, 1500 / 160)
+  const results = await Promise.all(histories)
+  for (const result of results) {
+    assert.equal(result.points.at(-1).observationDate, '2026-11-20')
+    assert.equal(result.points.at(-1).rate, 1500 / 160)
+    assert.ok(result.points.every(point => point.observationDate >= result.from))
+  }
+  assert.deepEqual(results.map(item => item.points.length), [4, 21, 65, 254])
+  assert.equal(calls, 1)
+  assert.equal((await app.inject('/api/v1/fx/history?base=JPY&quote=KRW&period=1Y')).statusCode, 200)
+  assert.equal((await app.inject('/api/v1/fx/latest')).statusCode, 200)
+  assert.equal(calls, 2)
+})
+
+test('failed refresh preserves the last publication for both routes and defers retry', async t => {
+  let now = Date.parse('2026-11-20T18:00:00Z')
+  let calls = 0
+  const initial = ['USD', 'JPY', 'KRW'].map((quote, index) => fxRow('2026-11-20', quote, [1.25, 160, 1500][index]))
+  const fx = createFxProvider({ clock: () => now, fetchImpl: async () => {
+    calls++
+    if (calls === 2) return Response.json([...initial, initial[0]])
+    if (calls === 3) return Response.json({}, { status: 502 })
+    return Response.json(initial)
+  } })
+  const app = await appFor(t, { fx })
+  const old = (await app.inject('/api/v1/fx/latest')).json()
+  assert.equal(old.reference.status, 'published_today')
+  now += 16 * 60_000
+  const [latest, history] = await Promise.all([
+    app.inject('/api/v1/fx/latest'),
+    app.inject('/api/v1/fx/history?base=JPY&quote=KRW&period=1W'),
+  ])
+  assert.equal(latest.statusCode, 200)
+  assert.equal(history.statusCode, 200)
+  for (const result of [latest.json(), history.json()]) {
+    assert.equal(result.refreshError, 'INVALID_PROVIDER_RESPONSE')
+    assert.equal((result.reference ?? result).status, 'previous_publication')
+    assert.equal((result.reference ?? result).collectedAt, old.reference.collectedAt)
+  }
+  assert.deepEqual(latest.json().reference.rates, old.reference.rates)
+  assert.equal(history.json().points.at(-1).rate, 1500 / 160)
+  await fx.latest()
+  assert.equal(calls, 2)
+  now += 60_000
+  const unavailable = await fx.latest()
+  assert.equal(unavailable.refreshError, 'PROVIDER_UNAVAILABLE')
+  assert.equal(unavailable.reference.collectedAt, old.reference.collectedAt)
+  assert.equal(calls, 3)
+  now += 60_000
+  const recovered = await fx.latest()
+  assert.equal(recovered.refreshError, undefined)
+  assert.equal(recovered.reference.status, 'published_today')
+  assert.equal(calls, 4)
 })

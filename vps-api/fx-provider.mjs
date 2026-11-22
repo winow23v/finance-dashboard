@@ -1,4 +1,3 @@
-import { createMarketCache } from './market-cache.mjs'
 import { invalidResponse, isDay, providerClient } from './public-provider.mjs'
 
 export const pairs = ['USD/KRW', 'EUR/KRW', 'USD/JPY']
@@ -26,29 +25,60 @@ function startDate(end, period) {
   return start.toISOString().slice(0, 10)
 }
 
-export function createFxProvider({ fetchImpl = fetch, clock = Date.now } = {}) {
-  const get = providerClient(fetchImpl, 500, { maxBytes: 384 * 1024 })
-  const cache = createMarketCache({ maxEntries: 2, maxPending: 2, timeoutMs: 7000, wallClock: clock })
-  async function load() {
-    const today = new Date(clock()).toISOString().slice(0, 10)
-    const result = await cache.get(today, { ttlMs: 15 * 60_000, staleAfterMs: 0 }, async () => {
-      const from = startDate(today, '1Y')
-      const query = new URLSearchParams({ base: 'EUR', quotes: ecbQuotes.join(','), providers: 'ecb', from, to: today })
-      const rows = await get(`https://api.frankfurter.dev/v2/rates?${query}`)
-      if (!Array.isArray(rows) || !rows.length || rows.length > 367 * ecbQuotes.length) throw invalidResponse()
-      const byDate = new Map()
-      for (const row of rows) {
-        if (!row || row.base !== 'EUR' || !ecbQuotes.includes(row.quote)
-          || !isDay(row.date) || row.date < from || row.date > today
-          || !Number.isFinite(row.rate) || row.rate <= 0) throw invalidResponse()
-        const rates = byDate.get(row.date) ?? { EUR: 1 }
-        if (Object.hasOwn(rates, row.quote)) throw invalidResponse()
-        rates[row.quote] = row.rate
-        byDate.set(row.date, rates)
+const freshnessMs = 15 * 60_000
+const retryDelayMs = 60_000
+
+export function createFxProvider({ fetchImpl = fetch, clock = Date.now, timeoutMs = 6000 } = {}) {
+  const get = providerClient(fetchImpl, 500, { queue: true, maxBytes: 384 * 1024, timeoutMs, detailedErrors: true })
+  let lastGood
+  let failure
+  let pending
+
+  async function refresh(today) {
+    const from = startDate(today, '1Y')
+    const earliestAnchor = new Date(Date.parse(from) - 7 * 86_400_000).toISOString().slice(0, 10)
+    const query = new URLSearchParams({ base: 'EUR', quotes: ecbQuotes.join(','), providers: 'ecb', from, to: today })
+    const rows = await get(`https://api.frankfurter.dev/v2/rates?${query}`)
+    if (!Array.isArray(rows) || !rows.length || rows.length > 367 * ecbQuotes.length) throw invalidResponse()
+    const byDate = new Map()
+    let anchor
+    for (const row of rows) {
+      if (!row || row.base !== 'EUR' || !ecbQuotes.includes(row.quote)
+        || !isDay(row.date) || row.date < earliestAnchor || row.date > today
+        || !Number.isFinite(row.rate) || row.rate <= 0) throw invalidResponse()
+      if (row.date < from) {
+        // Frankfurter can include the preceding publication for a non-trading start date.
+        if (anchor && anchor !== row.date) throw invalidResponse()
+        anchor = row.date
       }
-      return { asOf: today, data: { today, observations: [...byDate].sort(([a], [b]) => a.localeCompare(b)) } }
-    })
-    return { ...JSON.parse(result.body), collectedAt: result.storedAt }
+      const rates = byDate.get(row.date) ?? { EUR: 1 }
+      if (Object.hasOwn(rates, row.quote)) throw invalidResponse()
+      rates[row.quote] = row.rate
+      byDate.set(row.date, rates)
+    }
+    if (anchor) byDate.delete(anchor)
+    const observations = [...byDate].sort(([a], [b]) => a.localeCompare(b))
+    const reference = observations.findLast(([, rates]) => ['USD', 'KRW', 'JPY'].every(code => Object.hasOwn(rates, code)))
+    if (!reference || (lastGood && reference[0] < lastGood.reference[0])) throw invalidResponse()
+
+    const time = clock()
+    lastGood = { observations, reference, requestedDay: today, collectedAt: new Date(time).toISOString(), expires: time + freshnessMs }
+    failure = undefined
+  }
+
+  async function load() {
+    const now = clock()
+    const today = new Date(now).toISOString().slice(0, 10)
+    if (lastGood?.requestedDay !== today || now >= lastGood.expires) {
+      if (!failure || now >= failure.retryAt) {
+        pending ??= refresh(today).catch(error => {
+          failure = { error, retryAt: clock() + retryDelayMs }
+        }).finally(() => { pending = undefined })
+        await pending
+      }
+      if (!lastGood) throw failure.error
+    }
+    return { ...lastGood, today, refreshError: failure?.error.code }
   }
 
   function crossRate(rates, base, quote) {
@@ -64,26 +94,26 @@ export function createFxProvider({ fetchImpl = fetch, clock = Date.now } = {}) {
     })
   }
 
-  function metadata(pair, point, { today, collectedAt }) {
+  function metadata(pair, point, { today, collectedAt, refreshError }) {
     const [base, quote] = pair.split('/')
     return {
       base, quote, unit: `${quote} / 1 ${base}`, source, collectedAt,
       kind: 'reference', calculated: base !== 'EUR',
-      status: !point ? 'unavailable' : point.observationDate === today ? 'published_today' : 'previous_publication',
+      status: !point ? 'unavailable' : !refreshError && point.observationDate === today ? 'published_today' : 'previous_publication',
     }
   }
 
   return {
     async latest() {
       const data = await load()
-      const [observationDate, eurRates] = data.observations.at(-1)
+      const [observationDate, eurRates] = data.reference
       const rates = pairs.map(pair => {
         const point = series(data.observations, pair).at(-1)
         return { ...metadata(pair, point, data), observationDate: point?.observationDate ?? null, rate: point?.rate ?? null }
       })
-      return { rates, reference: {
+      return { rates, ...(data.refreshError && { refreshError: data.refreshError }), reference: {
         observationDate, collectedAt: data.collectedAt, kind: 'reference',
-        status: observationDate === data.today ? 'published_today' : 'previous_publication',
+        status: !data.refreshError && observationDate === data.today ? 'published_today' : 'previous_publication',
         rates: Object.fromEntries(fxCurrencies.map(base => [base, Object.fromEntries(
           fxCurrencies.filter(quote => quote !== base).map(quote => [quote, crossRate(eurRates, base, quote)]),
         )])),
@@ -93,7 +123,7 @@ export function createFxProvider({ fetchImpl = fetch, clock = Date.now } = {}) {
       const data = await load()
       const from = startDate(data.today, period)
       const points = series(data.observations.filter(([date]) => date >= from), pair)
-      return { ...metadata(pair, points.at(-1), data), period, from, to: data.today, points }
+      return { ...metadata(pair, points.at(-1), data), period, from, to: data.today, points, ...(data.refreshError && { refreshError: data.refreshError }) }
     },
   }
 }

@@ -18,11 +18,12 @@ export function isDay(value) {
 }
 
 export function providerClient(fetchImpl, intervalMs, {
-  binary = false, maxBytes = 16 * 1024 * 1024, queue = false, dailyLimit = 0, timeoutMs = 6000,
+  binary = false, maxBytes = 16 * 1024 * 1024, queue = false, dailyLimit = 0, timeoutMs = 6000, detailedErrors = false,
 } = {}) {
   let next = 0
   let active = 0
   const recent = []
+  const bodyError = code => detailedErrors ? new ProviderError(502, code) : invalidResponse()
   return async (url, headers = {}, requestTimeoutMs = timeoutMs) => {
     if (active >= 2 || (!queue && performance.now() < next)) throw new ProviderError(503, 'PROVIDER_BUSY')
     active++
@@ -42,23 +43,29 @@ export function providerClient(fetchImpl, intervalMs, {
       try {
         let size = 0
         const chunks = []
-        if (!response.body) throw invalidResponse()
+        if (!response.body) throw bodyError('PROVIDER_BODY_ERROR')
         for await (const chunk of response.body) {
           size += chunk.length
-          if (size > maxBytes) throw invalidResponse()
+          if (size > maxBytes) throw bodyError('PROVIDER_RESPONSE_TOO_LARGE')
           chunks.push(chunk)
         }
         const body = Buffer.concat(chunks, size)
-        return binary ? body : JSON.parse(body.toString('utf8'))
-      } catch {
+        if (binary) return body
+        try {
+          return JSON.parse(body.toString('utf8'))
+        } catch {
+          throw bodyError('PROVIDER_INVALID_JSON')
+        }
+      } catch (error) {
         if (signal.aborted) throw new ProviderError(504, 'PROVIDER_TIMEOUT')
-        throw invalidResponse()
+        if (error instanceof ProviderError) throw error
+        throw bodyError('PROVIDER_BODY_ERROR')
       }
     } catch (error) {
       if (error instanceof ProviderError) throw error
       throw signal.aborted
         ? new ProviderError(504, 'PROVIDER_TIMEOUT')
-        : new ProviderError(502, 'PROVIDER_UNAVAILABLE')
+        : new ProviderError(502, detailedErrors ? 'PROVIDER_CONNECTION_ERROR' : 'PROVIDER_UNAVAILABLE')
     } finally {
       active--
     }

@@ -61,12 +61,30 @@ function isRate(value: unknown): value is Rate {
     : (value.status === 'published_today' || value.status === 'previous_publication') && isPoint(value)
 }
 
+const refreshErrors: Readonly<Record<string, string>> = {
+  PROVIDER_UNAVAILABLE: '공급자 HTTP 오류',
+  PROVIDER_CONNECTION_ERROR: '공급자 연결 실패',
+  PROVIDER_TIMEOUT: '응답 시간 초과',
+  PROVIDER_RATE_LIMITED: '공급자 요청 제한',
+  PROVIDER_BUSY: '공급자 처리 중',
+  PROVIDER_INVALID_JSON: 'JSON 형식 오류',
+  PROVIDER_BODY_ERROR: '응답 본문 오류',
+  PROVIDER_RESPONSE_TOO_LARGE: '응답 크기 한도 초과',
+  INVALID_PROVIDER_RESPONSE: '관측값 검증 실패',
+}
+
+function refreshError(code: unknown) {
+  if (typeof code !== 'string') return undefined
+  return Object.hasOwn(refreshErrors, code) ? refreshErrors[code] : '공급자 갱신 오류'
+}
+
 function parseLatest(data: unknown) {
   if (!isRecord(data) || !Array.isArray(data.rates) || !data.rates.every(isRate)
     || new Set(data.rates.map(rate => `${rate.base}/${rate.quote}`)).size !== pairs.length
     || data.rates.length !== pairs.length) throw new Error('Invalid reference rates')
   const reference = data.reference
-  if (reference === undefined) return { rates: data.rates }
+  const error = refreshError(data.refreshError)
+  if (reference === undefined) return { rates: data.rates, refreshError: error }
   if (!isRecord(reference) || reference.kind !== 'reference' || !isDate(reference.observationDate)
     || typeof reference.collectedAt !== 'string' || !Number.isFinite(Date.parse(reference.collectedAt))
     || (reference.status !== 'published_today' && reference.status !== 'previous_publication') || !isRecord(reference.rates)) {
@@ -85,17 +103,17 @@ function parseLatest(data: unknown) {
     }
     table[base] = values
   }
-  return { rates: data.rates, reference: {
+  return { rates: data.rates, refreshError: error, reference: {
     observationDate: reference.observationDate, collectedAt: reference.collectedAt, status: reference.status, table,
   } }
 }
 function parseHistory(data: unknown) {
   if (!isRecord(data) || !Array.isArray(data.points) || !data.points.every(isPoint)) throw new Error('Invalid rate history')
-  return data.points
+  return { points: data.points, refreshError: refreshError(data.refreshError) }
 }
 
 const latestCache = createRequestCache<ReturnType<typeof parseLatest>>(3, 15 * 60_000)
-const historyCache = createRequestCache<Point[]>(25, 15 * 60_000)
+const historyCache = createRequestCache<ReturnType<typeof parseHistory>>(25, 15 * 60_000)
 
 function latestRate(latest: ReturnType<typeof parseLatest> | null | undefined, base: Currency, quote: Currency) {
   if (latest?.reference) return {
@@ -130,7 +148,7 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
   const pair = availablePairs.includes(selection) ? selection : pairs[0]
   const [base, quote] = pair.split('/')
   const chartResult = usePublicData(detailed ? '/api/v1/fx/history?' + new URLSearchParams({ base, quote, period }) : undefined, revision, parseHistory, undefined, true, historyCache)
-  const chart = chartResult?.data
+  const chart = chartResult?.data === null ? null : chartResult?.data?.points
   const ready = latestResult?.revision === revision && (!detailed || chartResult?.revision === revision)
   useEffect(() => { onRefreshReady(ready) }, [onRefreshReady, ready])
   const chartMultiplier = base === 'JPY' && yen100 ? 100 : 1
@@ -170,8 +188,9 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
         const details = infoId + '-' + code
         const rate = row?.rate
         const unit = reference === 'KRW' ? '원' : reference
-        const status = latestResult?.refreshFailed && latestResult.revision === revision ? '갱신 실패 · 이전 값'
-          : rate != null && row?.status === 'previous_publication' ? '이전 공표값' : undefined
+        const status = latest?.refreshError ? '갱신 실패 · 이전 공표값'
+          : latestResult?.refreshFailed && latestResult.revision === revision ? '갱신 실패 · 이전 값'
+          : rate != null && row?.status === 'previous_publication' ? '이전 공표값' : refreshError(latestResult?.errorCode)
         return <article className="panel quote-card fx-quote" key={name}>
           <div className="fx-quote-heading">
             <h3>{name}{multiplier === 100 && <small>100엔 기준</small>}</h3>
@@ -191,6 +210,7 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
             <dl className="observation-dates">
               <div><dt>관측일</dt><dd>{row?.observationDate ? <time dateTime={row.observationDate}>{row.observationDate}</time> : '확인 불가'}</dd></div>
               <div><dt>공표 상태</dt><dd>{row ? row.status === 'previous_publication' ? '이전 공표 기준환율' : '최근 공표 기준환율' : '확인 불가'}</dd></div>
+              {latest?.refreshError && <div><dt>갱신 실패 원인</dt><dd>{latest.refreshError}</dd></div>}
               <div><dt>수집 시각 (KST)</dt><dd>{row ? <time dateTime={row.collectedAt}>{time.format(new Date(row.collectedAt))}</time> : '확인 불가'}</dd></div>
               <div><dt>계산 방식</dt><dd>{rate == null ? '확인 불가' : row?.calculated ? '같은 관측일의 교차환율' : 'ECB 공표 기준환율'}</dd></div>
               {rate != null && <div><dt>상세 수치</dt><dd>1 {code} = {detailFormat.format(rate)} {unit}
@@ -213,8 +233,11 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
         {(Object.keys(periods) as (keyof typeof periods)[]).map(value =>
           <button key={value} aria-pressed={value === period} onClick={() => setPeriod(value)}>{periods[value]}</button>)}
       </div></div>
+      {chartResult?.data?.refreshError && <p className="chart-note" role="status">
+        갱신 실패 · 이전 공표 이력 ({chartResult.data.refreshError})
+      </p>}
       <div className="chart-body">
-        {!chart?.length ? <p className="state" role="status">{chart === undefined ? '조회 중' : chart === null ? '조회 불가' : '표시할 관측값 없음'}</p>
+        {!chart?.length ? <p className="state" role="status">{chart === undefined ? '조회 중' : chart === null ? refreshError(chartResult?.errorCode) ?? '조회 불가' : '표시할 관측값 없음'}</p>
           : <ResponsiveContainer width="100%" height="100%" minWidth={0}>
             <AreaChart data={chart.map(point => ({ ...point, rate: point.rate * chartMultiplier, dateTime: Date.parse(point.observationDate) }))} margin={{ top: 10, right: 12, left: 12, bottom: 8 }}>
               <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="4 5" />
