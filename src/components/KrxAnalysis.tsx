@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FinanceApiError, getKrxAnalysis } from '../services/apiFinanceService'
+import { FinanceApiError, getKrxAnalysis, marketRequestMessage } from '../services/apiFinanceService'
 import { calculatePriceReturns, calculateTechnicalIndicators } from '../services/technicalIndicators'
 import type { KrxAnalysis as Analysis } from '../types/finance'
 import { Change } from './QuoteDisplay'
@@ -20,7 +20,7 @@ export function KrxAnalysis({ symbol }: { symbol: string }) {
       if (controller.signal.aborted) return
       const code = error instanceof FinanceApiError ? error.code : undefined
       setResult({ message: code === 'KRX_LISTING_NOT_FOUND' ? '현재 상장 목록에 이 종목이 없습니다.'
-        : code === 'KRX_LOCAL_PROVIDER_DISABLED' ? 'KRX 공급자 미연결' : 'KRX 일별 시계열 조회 실패' })
+        : marketRequestMessage(error, 'KRX 일별 시계열 조회 실패') })
     })
     return () => controller.abort()
   }, [symbol])

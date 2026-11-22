@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Activity, BarChart3, ChevronDown, FileSearch, Globe2, Landmark, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Settings, ShieldCheck, Star, Sun, TrendingUp, X } from 'lucide-react'
 import { dataMode } from './services/financeService'
-import { getKrxOverview, getMarketIndices } from './services/apiFinanceService'
+import { getKrxOverview, getMarketIndices, marketRequestMessage } from './services/apiFinanceService'
 import { mockFinanceService } from './mocks/mockFinance'
 import type { MemberSession } from './services/membership'
 import { MemberAdmin } from './components/MemberAdmin'
@@ -64,8 +64,8 @@ const indexUnavailable = {
   'before-collection': '당일 수집 대기',
 }
 
-function MarketIndexValue({ quote, failed }: { quote?: MarketIndex; failed: boolean }) {
-  if (failed) return <small role="status">시장지수 API 조회 실패</small>
+function MarketIndexValue({ quote, message }: { quote?: MarketIndex; message?: string }) {
+  if (message) return <small role="status">{message}</small>
   if (!quote) return <small role="status">지수 시세를 불러오는 중입니다.</small>
   if (quote.status === 'unavailable') return <small>{indexUnavailable[quote.reason]}</small>
   return <>
@@ -99,8 +99,8 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const [watchlist, setWatchlist] = useState(() => guestStorage.favorites.load())
   const [storageFailures, setStorageFailures] = useState({ favorites: false, settings: false })
   const [snapshot, setSnapshot] = useState<FinanceSnapshot>()
-  const [indexResult, setIndexResult] = useState<{ request: number; quotes: MarketIndex[] | null }>()
-  const [krxResult, setKrxResult] = useState<{ request: number; data: KrxOverview | null }>()
+  const [indexResult, setIndexResult] = useState<{ request: number; quotes: MarketIndex[] | null; message?: string }>()
+  const [krxResult, setKrxResult] = useState<{ request: number; data: KrxOverview | null; message?: string }>()
   const [revision, setRevision] = useState(0)
   const [request, setRequest] = useState(0)
   const [dartRevision, setDartRevision] = useState(0)
@@ -139,7 +139,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const isMarket = tab === 'overview' || market !== undefined
   const marketResult = indexResult?.request === request ? indexResult : undefined
   const showKrxOverview = isMarket && market !== 'US'
-  const krxOverview = krxResult?.request === request ? krxResult.data : undefined
+  const krxOverview = krxResult?.request === request ? krxResult : undefined
   const section = economyPage ? 'economy' : tab
   const providerValues = Object.values(statuses)
   const dataLabel = !isApi ? 'DEMO 모드' : !providerValues.length ? '연결 확인되지 않음'
@@ -193,19 +193,19 @@ export function App({ member, signOut, accountBusy, accountError }: {
   useEffect(() => {
     if (!isApi || !isMarket) return
     const controller = new AbortController()
-    const finish = (quotes: MarketIndex[] | null) => {
-      if (!controller.signal.aborted) setIndexResult({ request, quotes })
+    const finish = (quotes: MarketIndex[] | null, message?: string) => {
+      if (!controller.signal.aborted) setIndexResult({ request, quotes, message })
     }
-    void getMarketIndices(controller.signal).then(finish, () => finish(null))
+    void getMarketIndices(controller.signal).then(finish, error => finish(null, marketRequestMessage(error, '시장지수 API 조회 실패')))
     return () => controller.abort()
   }, [isMarket, request])
   useEffect(() => {
     if (!isApi || !showKrxOverview) return
     const controller = new AbortController()
-    const finish = (data: KrxOverview | null) => {
-      if (!controller.signal.aborted) setKrxResult({ request, data })
+    const finish = (data: KrxOverview | null, message?: string) => {
+      if (!controller.signal.aborted) setKrxResult({ request, data, message })
     }
-    void getKrxOverview(controller.signal).then(finish, () => finish(null))
+    void getKrxOverview(controller.signal).then(finish, error => finish(null, marketRequestMessage(error, 'KRX 시장 데이터 조회 실패')))
     return () => controller.abort()
   }, [showKrxOverview, request])
 
@@ -313,13 +313,14 @@ export function App({ member, signOut, accountBusy, accountError }: {
                   {isApi && marketResult?.quotes && !marketResult.quotes.some(quote => quote.id === index.id)
                     ? <small>지수 응답 없음</small>
                     : isApi ? <MarketIndexValue quote={marketResult?.quotes?.find(quote => quote.id === index.id)}
-                      failed={marketResult?.quotes === null} /> : <small>지수 시세 공급자 미연결</small>}
+                      message={marketResult?.message} /> : <small>지수 시세 공급자 미연결</small>}
                 </article>)}
             </div>
           </section>
-          {tab === 'overview' && <KrxMovers data={isApi ? krxOverview : null} />}
+          {tab === 'overview' && <KrxMovers data={isApi ? krxOverview?.data : null}
+            message={isApi ? krxOverview?.message : 'KRX 공급자 미연결'} />}
           <div className={market === 'US' ? 'market-sections overseas-panels' : 'market-sections'}>
-            {(!market || market === 'KR') && (isApi ? <KrxHeatmap data={krxOverview} summary={!market} />
+            {(!market || market === 'KR') && (isApi ? <KrxHeatmap data={krxOverview?.data} message={krxOverview?.message} summary={!market} />
               : <MarketHeatmap market="KR" favorites={watchlist} summary={!market} />)}
             {(!market || market === 'US') && <MarketHeatmap market="US" favorites={watchlist} summary={!market} />}
             {market === 'US' && <Watchlist key={'watchlist:' + tab} {...watchlistProps} market={market} />}

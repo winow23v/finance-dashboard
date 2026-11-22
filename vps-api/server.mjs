@@ -12,7 +12,7 @@ import { createDartProvider, dartPeriods } from './dart-provider.mjs'
 import { createMembership, memberStatuses, uuidPattern } from './membership-provider.mjs'
 import { ProviderError } from './public-provider.mjs'
 import { createIndexSnapshot, marketIndices } from './market-index-provider.mjs'
-import { createKrxProvider } from './krx-provider.mjs'
+import { configureMemberKrx, createKrxProvider } from './krx-provider.mjs'
 
 const periods = ['1D', '1W', '1M', '3M', '1Y']
 const policies = {
@@ -33,6 +33,7 @@ export async function buildApp({
   provider,
   localIndexResearch,
   localKrx,
+  memberKrx,
   cache = createMarketCache(),
   logger = true,
   getEconomyIndicators,
@@ -45,6 +46,11 @@ export async function buildApp({
   ecos = createEcosProvider(),
   dart = createDartProvider(),
 } = {}) {
+  if (memberKrx && (!membership || privateOnly)) {
+    throw new Error('Member KRX requires membership authentication')
+  }
+  const memberSnapshot = memberKrx && createIndexSnapshot(undefined, memberKrx, 'KRX OPEN API')
+  const krxFor = request => localKrx && isLocalResearchRequest(request) ? localKrx : memberKrx
   if (getEconomyIndicators && !/^[a-f0-9]{64}$/.test(privateAccessToken ?? '')) {
     throw new Error('Private FRED access token is missing or invalid')
   }
@@ -244,6 +250,7 @@ export async function buildApp({
     if (localIndexResearch && isLocalResearchRequest(request)) {
       return sendMarket(reply, 'snapshot:local', policies.snapshot, localIndexResearch)
     }
+    if (memberSnapshot) return sendMarket(reply, 'snapshot:member', policies.snapshot, memberSnapshot)
     return sendMarket(reply, 'snapshot', policies.snapshot, provider?.snapshot ?? unavailableSnapshot)
   })
 
@@ -258,26 +265,29 @@ export async function buildApp({
       },
     } },
   }, async (request, reply) => {
-    if (!localKrx || !isLocalResearchRequest(request)) {
+    const krx = krxFor(request)
+    if (!krx) {
       return reply.code(503).send({ code: 'KRX_LOCAL_PROVIDER_DISABLED' })
     }
-    return localKrx.stocks(request.query)
+    return krx.stocks(request.query)
   })
 
   app.get('/api/v1/market/kr/stocks/:symbol/history', {
     schema: { querystring: noQuery, params: { type: 'object', required: ['symbol'],
       properties: { symbol: { type: 'string', pattern: '^[0-9A-Z]{6}$' } } } },
   }, async (request, reply) => {
-    if (!localKrx || !isLocalResearchRequest(request)) return reply.code(503).send({ code: 'KRX_LOCAL_PROVIDER_DISABLED' })
-    const result = await localKrx.stockHistory(request.params.symbol)
+    const krx = krxFor(request)
+    if (!krx) return reply.code(503).send({ code: 'KRX_LOCAL_PROVIDER_DISABLED' })
+    const result = await krx.stockHistory(request.params.symbol)
     return result ?? reply.code(404).send({ code: 'KRX_LISTING_NOT_FOUND' })
   })
 
   app.get('/api/v1/market/kr/overview', {
     schema: { querystring: noQuery },
   }, async (request, reply) => {
-    if (!localKrx || !isLocalResearchRequest(request)) return reply.code(503).send({ code: 'KRX_LOCAL_PROVIDER_DISABLED' })
-    return localKrx.overview()
+    const krx = krxFor(request)
+    if (!krx) return reply.code(503).send({ code: 'KRX_LOCAL_PROVIDER_DISABLED' })
+    return krx.overview()
   })
 
   app.get('/api/v1/market/history', {
@@ -311,6 +321,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const research = !privateFred && process.env.FINANCE_LOCAL_INDEX_RESEARCH === '1'
       ? await import('../research/market-data/provider.mjs') : null
     const krx = !privateFred && process.env.FINANCE_LOCAL_KRX === '1' ? createKrxProvider() : undefined
+    const memberKrx = privateFred ? undefined : configureMemberKrx()
+    if (krx && memberKrx) throw new Error('Local and member KRX modes are mutually exclusive')
     const app = await buildApp(privateFred ? {
       privateOnly: true,
       getEconomyIndicators: createFredProvider(),
@@ -319,6 +331,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       membership: createMembership(),
       memberFred: configureMemberFred(),
       localKrx: krx,
+      memberKrx,
       localIndexResearch: research || krx ? createIndexSnapshot(research?.createResearchProvider(), krx) : undefined,
     })
     let timer

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Star } from 'lucide-react'
-import { FinanceApiError, getKrxStocks } from '../services/apiFinanceService'
+import { getKrxStocks, marketRequestMessage } from '../services/apiFinanceService'
 import { stockHref } from '../services/marketListings'
 import type { KrxMarket, KrxReason, KrxStocks as StockResults } from '../types/finance'
 import { marketSymbolKey, type MarketSymbol } from '../types/marketSymbol'
@@ -26,7 +26,7 @@ export function KrxStocks({ selected, onToggle, symbol }: {
   const [input, setInput] = useState('')
   const [query, setQuery] = useState('')
   const [revision, setRevision] = useState(0)
-  const [result, setResult] = useState<{ market: KrxMarket; query: string; revision: number; data: StockResults[] | null; unconfigured?: boolean }>()
+  const [result, setResult] = useState<{ market: KrxMarket; query: string; revision: number; data: StockResults[] | null; message: string }>()
   const current = result?.market === market && result.query === query && result.revision === revision ? result : undefined
 
   useEffect(() => {
@@ -39,7 +39,7 @@ export function KrxStocks({ selected, onToggle, symbol }: {
       const data = outcomes.flatMap(outcome => outcome.status === 'fulfilled' ? [outcome.value] : [])
       const failure = outcomes.find(outcome => outcome.status === 'rejected')
       setResult({ market, query, revision, data: data.length ? data : null,
-        unconfigured: failure?.reason instanceof FinanceApiError && failure.reason.code === 'KRX_LOCAL_PROVIDER_DISABLED' })
+        message: marketRequestMessage(failure?.reason, '국내 종목 조회 실패') })
     })
     return () => controller.abort()
   }, [market, query, revision, symbol])
@@ -58,7 +58,7 @@ export function KrxStocks({ selected, onToggle, symbol }: {
       <button type="submit" className="button">검색</button>
     </form>}
     {!symbol && !query ? null : !current ? <p className="state" role="status">국내 종목을 불러오는 중입니다.</p> : current.data === null
-      ? <p className="state" role="status">{current.unconfigured ? 'KRX 공급자 미연결' : '국내 종목 조회 실패'}</p>
+      ? <p className="state" role="status">{current.message}</p>
       : current.data.map(dataset => {
         const details = [...new Set([dataset.listings.reason, dataset.trades.reason].filter(reason => reason !== null))]
         return <div key={dataset.market}>

@@ -3,11 +3,85 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { createKrxProvider } from './krx-provider.mjs'
+import { configureMemberKrx, createKrxProvider } from './krx-provider.mjs'
 import { createIndexSnapshot } from './market-index-provider.mjs'
 import { buildApp } from './server.mjs'
 
 const response = rows => Response.json({ OutBlock_1: rows })
+
+test('member KRX is opt-in and cannot be mounted without membership', async t => {
+  const fetchImpl = () => assert.fail('disabled provider must not call KRX')
+  assert.equal(configureMemberKrx({ enabled: '0', key: 'fixture', fetchImpl }), undefined)
+  await assert.rejects(buildApp({ memberKrx: {}, logger: false }), /requires membership/)
+  const app = await buildApp({ logger: false, membership: {
+    verify: () => ({ id: 'member' }), read: () => ({ status: 'approved' }),
+  } })
+  t.after(() => app.close())
+  const headers = { host: 'public.example', authorization: 'Bearer test.good.token' }
+  const overview = await app.inject({ url: '/api/v1/market/kr/overview', headers })
+  assert.equal(overview.statusCode, 503)
+  assert.equal(overview.json().code, 'KRX_LOCAL_PROVIDER_DISABLED')
+  const snapshot = await app.inject({ url: '/api/v1/market/snapshot', headers })
+  assert.equal(snapshot.statusCode, 200)
+  assert.ok(snapshot.json().quotes.every(quote => quote.status === 'unavailable'
+    && quote.reason === 'provider-not-configured' && quote.price === null))
+})
+
+test('member KRX checks current approval before accessing or reusing the daily close cache', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'member-krx-test-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const calls = []
+  const memberKrx = configureMemberKrx({
+    enabled: '1', key: 'fixture', root, clock: () => Date.parse('2026-11-21T08:00:00Z'),
+    fetchImpl(url, request) {
+      calls.push(url.pathname)
+      assert.equal(url.searchParams.get('basDd'), '20261120')
+      assert.equal(request.headers.AUTH_KEY, 'fixture')
+      if (url.pathname.endsWith('/kospi_dd_trd')) return response([
+        { IDX_CLSS: 'KOSPI', IDX_NM: '코스피', BAS_DD: '20261120', CLSPRC_IDX: '4869.96' },
+      ])
+      return new Response('', { status: 403 })
+    },
+  })
+  let status = 'pending'
+  const app = await buildApp({ logger: false, memberKrx, membership: {
+    verify: token => token === 'test.good.token' ? { id: 'member' } : null,
+    read: () => ({ status }),
+  } })
+  t.after(() => app.close())
+  const urls = ['/api/v1/market/snapshot', '/api/v1/market/kr/overview',
+    '/api/v1/market/kr/stocks?market=KOSPI', '/api/v1/market/kr/stocks/005930/history']
+  const headers = { host: 'public.example', authorization: 'Bearer test.good.token' }
+  for (const url of urls) {
+    assert.equal((await app.inject({ url, headers: { host: headers.host } })).statusCode, 401)
+    assert.equal((await app.inject({ url, headers })).statusCode, 403)
+  }
+  assert.deepEqual(calls, [])
+  status = 'approved'
+  const [snapshot, shared] = await Promise.all([app.inject({ url: urls[0], headers }), app.inject({ url: urls[0], headers })])
+  assert.equal(snapshot.statusCode, 200)
+  assert.deepEqual(snapshot.json(), shared.json())
+  const [kospi, kosdaq, spx] = snapshot.json().quotes
+  assert.equal(kospi.price, 4869.96)
+  assert.equal(kospi.tradingDate, '2026-11-20')
+  assert.equal(kosdaq.status, 'unavailable')
+  assert.equal(kosdaq.reason, 'provider-error')
+  assert.equal(kosdaq.errorCode, 'KRX_ACCESS_DENIED')
+  assert.equal(spx.reason, 'provider-not-configured')
+  assert.equal(calls.length, 2)
+  const overview = await app.inject({ url: urls[1], headers })
+  assert.equal(overview.statusCode, 200)
+  assert.equal(overview.json().reason, 'provider-error')
+  const stocks = await app.inject({ url: urls[2], headers })
+  assert.equal(stocks.statusCode, 200)
+  assert.equal(stocks.json().listings.reason, 'provider-error')
+  assert.equal((await app.inject({ url: urls[3], headers })).statusCode, 503)
+  const uniqueCalls = new Set(calls)
+  assert.equal(calls.length, uniqueCalls.size)
+  status = 'suspended'
+  assert.equal((await app.inject({ url: urls[0], headers })).statusCode, 403)
+  assert.equal(calls.length, uniqueCalls.size)
+})
 
 test('selects the named index, persists it, and keeps the actual trade date during retries', async t => {
   const root = await mkdtemp(join(tmpdir(), 'krx-test-'))

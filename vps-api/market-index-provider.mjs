@@ -10,13 +10,17 @@ function unavailable(index, reason) {
     changePercent: null, observedAt: null, tradingDate: null, collectedAt: null, source: null }
 }
 
-export function createIndexSnapshot(research, krx) {
+export function createIndexSnapshot(research, krx, label = research || krx ? 'Local market research' : 'Market indices') {
   return async function snapshot() {
     const quotes = await Promise.all(marketIndices.map(async index => {
       if (index.market === 'KR') {
         if (!krx) return unavailable(index, 'provider-not-configured')
-        const quote = await krx.indices(index.symbol)
-        return quote.price ? { ...index, ...quote } : { ...unavailable(index, quote.reason), errorCode: quote.errorCode }
+        try {
+          const quote = await krx.indices(index.symbol)
+          return quote.price ? { ...index, ...quote } : { ...unavailable(index, quote.reason), errorCode: quote.errorCode }
+        } catch {
+          return { ...unavailable(index, 'provider-error'), errorCode: 'KRX_UNAVAILABLE' }
+        }
       }
       if (!research) return unavailable(index, 'provider-not-configured')
       let quote
@@ -47,7 +51,7 @@ export function createIndexSnapshot(research, krx) {
       quote[field] && (time === null || Date.parse(quote[field]) > Date.parse(time)) ? quote[field] : time, null)
     const updatedAt = latest('collectedAt')
     return { asOf: latest('observedAt'), data: {
-      source: { label: research || krx ? 'Local market research' : 'Market indices', simulated: false },
+      source: { label, simulated: false },
       updatedAt, quotes,
     } }
   }

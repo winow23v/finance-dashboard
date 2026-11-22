@@ -96,6 +96,14 @@ function normalize(path, rows, date) {
   }))
 }
 
+export function configureMemberKrx({
+  enabled = process.env.FINANCE_MEMBER_KRX,
+  root = process.env.KRX_MEMBER_CACHE_DIR?.trim() || fileURLToPath(new URL('.krx-cache/member/', import.meta.url)),
+  ...options
+} = {}) {
+  if (enabled === '1') return createKrxProvider({ ...options, root })
+}
+
 export function createKrxProvider({
   key = process.env.KRX_API_KEY,
   root = fileURLToPath(new URL('.krx-cache/', import.meta.url)),
@@ -219,7 +227,14 @@ export function createKrxProvider({
     const newestCatalogDate = catalogs.map(state => state.data?.date ?? '').sort().at(-1)
     const matches = catalogs.flatMap(state => state.data?.date === newestCatalogDate
       ? state.data.rows.filter(row => row.symbol === symbol) : [])
-    if (matches.length !== 1) return null
+    if (matches.length !== 1) {
+      if (catalogs.some(state => !state.data)) {
+        const reasons = catalogs.map(state => metadata(state, target).reason)
+        if (reasons.includes('provider-not-configured')) throw new ProviderError(503, 'KRX_NOT_CONFIGURED')
+        if (reasons.includes('provider-error')) throw new ProviderError(503, 'KRX_UNAVAILABLE')
+      }
+      return null
+    }
     const [{ market, name, listedOn }] = matches
     const trades = await load(endpoint[market].trades, target)
     const latest = trades.data?.date <= newestCatalogDate ? trades.data : null
@@ -287,7 +302,10 @@ export function createKrxProvider({
     const datasets = await Promise.all(markets.map(market => load(endpoint[market].trades, target)))
     const date = datasets[0].data?.date
     if (!date || datasets.some(state => state.data?.date !== date)) {
-      return { source, tradingDate: null, collectedAt: null, reason: 'same-date-data-unavailable',
+      const reasons = datasets.map(state => metadata(state, target).reason)
+      const reason = ['provider-not-configured', 'provider-error'].find(value => reasons.includes(value))
+        ?? 'same-date-data-unavailable'
+      return { source, tradingDate: null, collectedAt: null, reason,
         leaders: null, tiles: [], marketTiles: { KOSPI: [], KOSDAQ: [] } }
     }
     const catalogs = await Promise.all(markets.map(market => load(endpoint[market].listings, target)))

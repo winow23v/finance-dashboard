@@ -11,17 +11,18 @@ const link = (row: KrxMarketRow) => stockHref({ market: 'KR', exchange: 'XKRX', 
 const rate = (row: KrxMarketRow) => row.changePercent === null ? '등락률 미확인' : percent.format(row.changePercent) + '%'
 const state = (data?: KrxOverview | null) => data === undefined ? 'KRX 시장 데이터를 불러오는 중입니다.'
   : data === null ? 'KRX 시장 데이터를 조회하지 못했습니다.'
-    : '두 시장의 동일 거래일 자료를 확인할 수 없습니다.'
+    : data.reason && data.reason !== 'same-date-data-unavailable' ? krxStateLabels[data.reason]
+      : '두 시장의 동일 거래일 자료를 확인할 수 없습니다.'
 const description = (data: KrxOverview) => [
   data.tradingDate && '거래일 ' + data.tradingDate, data.source,
   data.collectedAt && '수집 ' + time.format(new Date(data.collectedAt)) + ' (KST)',
   data.reason && data.reason !== 'same-date-data-unavailable' ? krxStateLabels[data.reason] : null,
 ].filter(Boolean).join(' · ')
 
-export function KrxMovers({ data }: { data?: KrxOverview | null }) {
+export function KrxMovers({ data, message }: { data?: KrxOverview | null; message?: string }) {
   return <section className="panel movers-panel" aria-label="주요 등락 현황">
     <div className="section-heading"><h2>주요 등락 현황</h2></div>
-    {!data?.leaders ? <p className="state" role="status">{state(data)}</p> : <>
+    {!data?.leaders ? <p className="state" role="status">{message ?? state(data)}</p> : <>
       <p className="heatmap-meta">{description(data)}</p>
       <div className="krx-rankings">
         {([['상승률 상위', data.leaders.advances], ['하락률 상위', data.leaders.declines], ['거래량 상위', data.leaders.volume]] as const)
@@ -39,7 +40,7 @@ export function KrxMovers({ data }: { data?: KrxOverview | null }) {
   </section>
 }
 
-export function KrxHeatmap({ data, summary }: { data?: KrxOverview | null; summary?: boolean }) {
+export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | null; message?: string; summary?: boolean }) {
   const [filter, setFilter] = useState<KrxMarket | ''>('')
   const [active, setActive] = useState<{ key: string; pinned: boolean }>()
   const touch = useRef(false)
@@ -110,7 +111,7 @@ export function KrxHeatmap({ data, summary }: { data?: KrxOverview | null; summa
           </> : <p className="heatmap-meta">타일을 가리키거나 선택하면 종목 정보를 볼 수 있습니다.</p>}
         </aside>
       </div>
-    </> : <p className="state" role="status">{state(data)}</p>}
+    </> : <p className="state" role="status">{message ?? state(data)}</p>}
   </section>
 }
 

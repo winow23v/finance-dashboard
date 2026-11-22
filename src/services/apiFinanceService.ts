@@ -134,9 +134,18 @@ export async function getMarketIndices(signal: AbortSignal): Promise<MarketIndex
 }
 
 export class FinanceApiError extends Error {
-  constructor(status: number, readonly code?: string) {
+  constructor(readonly status: number, readonly code?: string) {
     super(`Finance API request failed: ${status}`)
   }
+}
+
+export function marketRequestMessage(error: unknown, fallback: string): string {
+  if (!(error instanceof FinanceApiError)) return fallback
+  if (error.status === 401) return '로그인이 필요합니다. 세션이 만료됐다면 다시 로그인해 주세요.'
+  if (error.status === 403) return '시장 데이터 조회에는 승인된 회원 권한이 필요합니다.'
+  if (error.code === 'KRX_LOCAL_PROVIDER_DISABLED' || error.code === 'KRX_NOT_CONFIGURED') return 'KRX 공급자 미연결'
+  if (error.status === 503) return '시장 데이터 공급자를 일시적으로 이용할 수 없습니다.'
+  return fallback
 }
 
 export async function getJson(path: string, allowMissingIndex = false, signal?: AbortSignal, timeoutMs = 15_000): Promise<unknown> {
