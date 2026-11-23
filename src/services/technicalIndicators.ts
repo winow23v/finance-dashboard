@@ -1,13 +1,16 @@
 import type { DailyOhlcvBar, MarketDailyHistory } from '../types/marketDataProvider'
 
-const windows = [20, 50, 100, 200] as const
+export const smaWindows = [5, 20, 50, 60, 100, 120, 200, 365] as const
+export const emaWindows = [20, 50, 100, 200] as const
+const wilderPeriod = 14
+const finite = (value: number) => Number.isFinite(value) ? value : null
 
 function validBars(bars: readonly DailyOhlcvBar[]) {
   return bars.every(({ tradingDate, open, high, low, close, volume }, index) => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(tradingDate) || (index && tradingDate <= bars[index - 1].tradingDate)) return false
     const utc = new Date(tradingDate)
     return Number.isFinite(+utc) && utc.toISOString().slice(0, 10) === tradingDate
-      && [open, high, low, close, volume].every(Number.isFinite)
+      && [open, high, low, close, volume].every(value => Number.isFinite(value) && value <= Number.MAX_SAFE_INTEGER)
       && low > 0 && low <= Math.min(open, close) && high >= Math.max(open, close) && volume >= 0
   })
 }
@@ -29,8 +32,58 @@ function smoothed(values: readonly number[], period: number, alpha: number): num
 }
 
 const ema = (values: readonly number[], period: number) => smoothed(values, period, 2 / (period + 1))
-const wilder = (values: readonly number[]) => smoothed(values, 14, 1 / 14).at(-1)
+const wilder = (values: readonly number[]) => smoothed(values, wilderPeriod, 1 / wilderPeriod).at(-1)
 const latest = (values: number[]) => values.at(-1) ?? null
+
+function directionalMovement(bars: readonly DailyOhlcvBar[], ranges: readonly number[]) {
+  const period = wilderPeriod
+  if (ranges.length < period) return { adx: null, plus: null, minus: null }
+  const plusMoves: number[] = []
+  const minusMoves: number[] = []
+  for (let i = 1; i < bars.length; i++) {
+    const up = bars[i].high - bars[i - 1].high
+    const down = bars[i - 1].low - bars[i].low
+    plusMoves.push(up > down && up > 0 ? up : 0)
+    minusMoves.push(down > up && down > 0 ? down : 0)
+  }
+  // DMI uses the first 13 transitions as a sum, then applies Wilder's update
+  // from transition 14, following TA-Lib's DMI/ADX initialization.
+  const seed = (values: readonly number[]) => values.slice(0, period - 1).reduce((sum, value) => sum + value, 0)
+  let tr = seed(ranges)
+  let plusSum = seed(plusMoves)
+  let minusSum = seed(minusMoves)
+  let plus = 0
+  let minus = 0
+  const dx: number[] = []
+  for (let i = period - 1; i < ranges.length; i++) {
+    tr += ranges[i] - tr / period
+    plusSum += plusMoves[i] - plusSum / period
+    minusSum += minusMoves[i] - minusSum / period
+    plus = tr > 0 ? 100 * (plusSum / tr) : 0
+    minus = tr > 0 ? 100 * (minusSum / tr) : 0
+    dx.push(plus + minus > 0 ? 100 * Math.abs(plus - minus) / (plus + minus) : 0)
+  }
+  return { adx: wilder(dx) ?? null, plus, minus }
+}
+
+function movingAverageCross(bars: readonly DailyOhlcvBar[]) {
+  let fast = 0
+  let slow = 0
+  let previous = 0
+  let event: { type: 'golden' | 'dead'; tradingDate: string } | null = null
+  for (const [index, { close, tradingDate }] of bars.entries()) {
+    fast += close - (bars[index - 50]?.close ?? 0)
+    slow += close - (bars[index - 200]?.close ?? 0)
+    if (index < 199) continue
+    const diff = fast / 50 - slow / 200
+    const tolerance = 1e-12 * Math.max(Math.abs(fast / 50), Math.abs(slow / 200))
+    if (Math.abs(diff) <= tolerance) continue
+    const direction = Math.sign(diff)
+    if (previous && previous !== direction) event = { type: direction > 0 ? 'golden' : 'dead', tradingDate }
+    previous = direction
+  }
+  return { lastEvent: event }
+}
 
 export function calculatePriceReturns(history: MarketDailyHistory) {
   const { bars } = history
@@ -46,11 +99,12 @@ export function calculatePriceReturns(history: MarketDailyHistory) {
     cutoff.setUTCDate(Math.min(date, new Date(end).getUTCDate()))
     const boundary = cutoff.toISOString().slice(0, 10)
     const previous = newestFirst.find(bar => bar.tradingDate <= boundary)
-    return [months, previous ? { percent: (last.close / previous.close - 1) * 100, tradingDate: previous.tradingDate } : null]
+    const percent = previous ? finite((last.close / previous.close - 1) * 100) : null
+    return [months, previous && percent !== null ? { percent, tradingDate: previous.tradingDate } : null]
   }))
 }
 
-export function calculateTechnicalIndicators(history: MarketDailyHistory) {
+export function calculateTechnicalIndicators(history: MarketDailyHistory, options: { volumeSpikeThreshold?: number } = {}) {
   const { bars } = history
   if (history.completeness !== 'complete' || !bars.length || !validBars(bars)) return null
   const closes = bars.map(bar => bar.close)
@@ -65,14 +119,45 @@ export function calculateTechnicalIndicators(history: MarketDailyHistory) {
   const macdSeries = ema(closes, 26).map((slow, index) => fast[index + 14] - slow)
   const line = latest(macdSeries)
   const signal = latest(ema(macdSeries, 9))
+  const last = bars[bars.length - 1]
+  const sma = Object.fromEntries(smaWindows.map(period => [period, average(closes, period)]))
+  const priorCloses = closes.slice(0, -1)
+  const previousSma = Object.fromEntries([20, 50, 200].map(period => [period, average(priorCloses, period)]))
+  const previousSma20 = previousSma[20]
+  const middle = sma[20]
+  // Bollinger Bands use population variance over the 20 observed closes.
+  const bands = middle === null ? null : (() => {
+    const deviation = Math.sqrt(closes.slice(-20).reduce((sum, close) => sum + (close - middle) ** 2, 0) / 20)
+    const upper = middle + 2 * deviation
+    const lower = middle - 2 * deviation
+    const width = upper - lower
+    return { middle, lower, upper,
+      percentB: width > 0 ? finite((last.close - lower) / width * 100) : null,
+      bandwidth: finite(width / middle * 100) }
+  })()
+  const volumes = bars.map(bar => bar.volume)
+  const volumeSma20 = average(volumes, 20)
+  const prior20 = average(volumes.slice(0, -1), 20)
+  const volumeRatio = prior20 !== null && prior20 > 0 ? finite(last.volume / prior20) : null
+  const supplied = options.volumeSpikeThreshold ?? 1.5
+  const spikeThreshold = Number.isFinite(supplied) && supplied > 1 ? supplied : 1.5
   return {
-    tradingDate: bars[bars.length - 1].tradingDate,
-    sma: Object.fromEntries(windows.map(period => [period, average(closes, period)])),
-    ema: Object.fromEntries(windows.map(period => [period, latest(ema(closes, period))])),
-    sma20Slope: closes.length < 21 ? null : (closes[closes.length - 1] - closes[closes.length - 21]) / 20,
+    tradingDate: last.tradingDate,
+    close: last.close,
+    sma,
+    ema: Object.fromEntries(emaWindows.map(period => [period, latest(ema(closes, period))])),
+    sma20Slope: middle === null || previousSma20 === null ? null : middle - previousSma20,
     rsi14,
     macd: { line, signal, histogram: line === null || signal === null ? null : line - signal },
-    volumeSma20: average(bars.map(bar => bar.volume), 20),
+    volumeSma20,
+    volume: { latest: last.volume, sma5: average(volumes, 5), prior20, ratio: volumeRatio,
+      spikeThreshold, spike: volumeRatio === null ? null : volumeRatio >= spikeThreshold },
     atr14: wilder(ranges) ?? null,
+    prior: { sma: previousSma, atr14: wilder(ranges.slice(0, -1)) ?? null },
+    dmi: directionalMovement(bars, ranges),
+    bands,
+    cross: movingAverageCross(bars),
   }
 }
+
+export type TechnicalIndicators = NonNullable<ReturnType<typeof calculateTechnicalIndicators>>

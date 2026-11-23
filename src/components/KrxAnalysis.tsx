@@ -1,10 +1,11 @@
 import { Activity, BarChart3, ChevronDown, Clock, TrendingUp, type LucideIcon } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { FinanceApiError, getKrxAnalysis, marketRequestMessage } from '../services/apiFinanceService'
-import { calculatePriceReturns, calculateTechnicalIndicators } from '../services/technicalIndicators'
+import { calculatePriceReturns, calculateTechnicalIndicators, emaWindows, smaWindows } from '../services/technicalIndicators'
 import type { KrxAnalysis as Analysis } from '../types/finance'
 import { Change } from './QuoteDisplay'
 import { krxStateLabels } from './KrxStocks'
+import { TechnicalSummary } from './TechnicalSummary'
 
 const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
 const signed = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2, signDisplay: 'exceptZero' })
@@ -27,6 +28,7 @@ function AnalysisMetric({ icon: Icon, label, value, status }: {
 
 export function KrxAnalysis({ symbol }: { symbol: string }) {
   const [result, setResult] = useState<{ data: Analysis } | { message: string }>()
+  const [revision, retry] = useState(0)
   useEffect(() => {
     const controller = new AbortController()
     void getKrxAnalysis(symbol, controller.signal).then(data => {
@@ -38,12 +40,14 @@ export function KrxAnalysis({ symbol }: { symbol: string }) {
         : marketRequestMessage(error, 'KRX 일별 시계열 조회 실패') })
     })
     return () => controller.abort()
-  }, [symbol])
+  }, [symbol, revision])
 
   const data = result && 'data' in result ? result.data : undefined
   const quote = data?.quote
-  const indicator = data ? calculateTechnicalIndicators(data.history) : null
-  const returns = data ? calculatePriceReturns(data.history) : {}
+  const history = data?.history
+  const aligned = history && quote && history.bars.at(-1)?.tradingDate === quote.tradingDate && quote.tradingDate === data?.latestDate
+  const indicator = useMemo(() => aligned && history ? calculateTechnicalIndicators(history) : null, [aligned, history])
+  const returns = useMemo(() => indicator && history ? calculatePriceReturns(history) : {}, [indicator, history])
   const bars = data?.history.bars ?? []
   const lastClose = bars.at(-1)?.close
   const sma20 = indicator?.sma[20]
@@ -51,8 +55,7 @@ export function KrxAnalysis({ symbol }: { symbol: string }) {
   const rsi = indicator?.rsi14
   const macd = indicator?.macd
 
-  const volumeRatio = quote?.volume != null && indicator?.volumeSma20 != null && indicator.volumeSma20 > 0
-    ? quote.volume / indicator.volumeSma20 : null
+  const volumeRatio = indicator?.volume.ratio ?? null
   const relative = (average: number | null | undefined) => average == null || lastClose == null ? ''
     : lastClose > average ? '종가가 평균 위' : lastClose < average ? '종가가 평균 아래' : '종가와 같음'
 
@@ -63,7 +66,8 @@ export function KrxAnalysis({ symbol }: { symbol: string }) {
 
   return <section className="panel stock-detail krx-analysis" aria-label="기술적 분석">
     {!result ? <p className="state" role="status">KRX 시세를 불러오는 중입니다.</p>
-      : 'message' in result || !data ? <p className="state" role="status">{'message' in result ? result.message : '자료 없음'}</p>
+      : 'message' in result || !data ? <div className="state"><p role="status">{'message' in result ? result.message : '자료 없음'}</p>
+        <button className="button" onClick={() => { setResult(undefined); retry(value => value + 1) }}>다시 조회</button></div>
         : <>
           <header className="analysis-quote">
             <div>
@@ -88,11 +92,12 @@ export function KrxAnalysis({ symbol }: { symbol: string }) {
             <small>{bars.length ? `${bars.length}거래일 · ${bars[0].tradingDate} ~ ${bars.at(-1)?.tradingDate}`
               : '연속 일봉 부족'}</small>
           </div>
+          <TechnicalSummary indicators={indicator} history={data.history} stale={data.reason === 'provider-error' || data.reason === 'not-published'} />
           <dl className="analysis-metrics">
             <AnalysisMetric icon={TrendingUp} label="SMA 20 방향" value={trend} status={relative(sma20)} />
             <AnalysisMetric icon={Activity} label="RSI 14" value={format(rsi)} status={rsiStatus} />
             <AnalysisMetric icon={Activity} label="MACD 12·26·9" value={format(macd?.line)} status={macdStatus} />
-            <AnalysisMetric icon={BarChart3} label="거래량 / 20일 평균"
+            <AnalysisMetric icon={BarChart3} label="거래량 / 직전 20일 평균"
               value={volumeRatio === null ? '자료 부족' : number.format(volumeRatio) + '배'} />
           </dl>
           <div className="analysis-details">
@@ -100,7 +105,8 @@ export function KrxAnalysis({ symbol }: { symbol: string }) {
               <summary>추세 · 이동평균 <ChevronDown size={16} aria-hidden="true" /></summary>
               <p className="heatmap-meta">EMA는 첫 전체 구간의 SMA에서 시작합니다.</p>
               <dl className="stock-detail-fields">
-                {(['sma', 'ema'] as const).flatMap(kind => [20, 50, 100, 200].map(period => {
+                {(['sma', 'ema'] as const).flatMap(kind => (kind === 'sma' ? smaWindows : emaWindows)
+                  .filter(period => period !== 365 || indicator?.sma[365] != null).map(period => {
                   const value = indicator?.[kind][period]
                   return <div key={kind + period}><dt>{kind.toUpperCase()} {period}</dt><dd>{format(value)}
                     {value != null && <small>{relative(value)}</small>}</dd></div>
@@ -118,15 +124,8 @@ export function KrxAnalysis({ symbol }: { symbol: string }) {
               </dl>
             </details>
             <details>
-              <summary>거래량 · 20일 평균 <ChevronDown size={16} aria-hidden="true" /></summary>
-              <dl className="stock-detail-fields">
-                <div><dt>최신 거래량</dt><dd>{quote?.volume == null ? '미확인' : number.format(quote.volume) + '주'}</dd></div>
-                <div><dt>20일 평균</dt><dd>{indicator?.volumeSma20 == null ? '자료 부족' : format(indicator.volumeSma20) + '주'}</dd></div>
-              </dl>
-            </details>
-            <details>
               <summary>기간별 성과 · 1 / 3 / 6개월 <ChevronDown size={16} aria-hidden="true" /></summary>
-              <p className="heatmap-meta">배당을 제외한 미수정 종가 수익률입니다.</p>
+              <p className="heatmap-meta">미수정 종가 수익률입니다. 분할 등 기업행위에 따른 가격 변동이 반영될 수 있습니다.</p>
               <dl className="stock-detail-fields">
                 {[1, 3, 6].map(months => <div key={months}><dt>{months}개월</dt>
                   <dd>{returns[months] ? <>{signed.format(returns[months].percent)}%

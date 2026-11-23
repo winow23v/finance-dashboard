@@ -558,3 +558,26 @@ dialog::backdrop { background: #04080bcc; }
 .watchlist-import-items { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin: 0.4rem 0; padding-inline-start: 1rem; }
 .watchlist-quote { display: block; }
 .stock-list .favorite-button { flex-shrink: 0; }
+
+.technical-summary { min-width: 0; padding-block: 12px; border-block: 1px solid var(--line); }
+.technical-summary h3 { margin: 0; }
+.technical-status { display: flex; flex-wrap: wrap; gap: 10px 20px; margin: 12px 0; }
+.technical-status div { min-width: 0; flex: 1 1 145px; }
+.technical-status dt { color: var(--muted); font-size: .8rem; }
+.technical-status dd { margin: 2px 0 0; font-weight: 650; overflow-wrap: anywhere; }
+.technical-evidence, .technical-zones { margin: 8px 0; padding-inline-start: 1.25rem; }
+.technical-evidence li + li, .technical-zones li + li { margin-top: 4px; }
+.technical-zones small, .analysis-details dd small { display: block; color: var(--muted); }
+.technical-scenarios { border-top: 0; }
+.scenario-perspectives { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; padding: 0; border: 0; }
+.scenario-perspectives label { display: inline-flex; gap: 6px; align-items: center; min-height: 44px; padding-inline: 10px; border: 1px solid var(--line); border-radius: var(--radius-control); cursor: pointer; }
+.scenario-perspectives label:has(:checked) { border-color: var(--accent); color: var(--accent); }
+.scenario-body p { margin-block: 6px; overflow-wrap: anywhere; }
+.scenario-body dd small { display: block; color: var(--muted); }
+.scenario-calculator { margin-top: 12px; border-top: 1px solid var(--line); }
+.scenario-calculator summary { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 44px; cursor: pointer; }
+.scenario-calculator[open] summary svg { transform: rotate(180deg); }
+.scenario-inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr)); gap: 8px; }
+.scenario-inputs label { display: grid; gap: 4px; min-width: 0; }
+.scenario-inputs input { min-width: 0; min-height: 44px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--control); color: inherit; }
+.scenario-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 10px; }

@@ -1,8 +1,9 @@
 import { ChevronDown } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { getUsAnalysis, marketRequestMessage } from '../services/apiFinanceService'
-import { calculatePriceReturns, calculateTechnicalIndicators } from '../services/technicalIndicators'
+import { calculatePriceReturns, calculateTechnicalIndicators, emaWindows, smaWindows } from '../services/technicalIndicators'
 import { Change } from './QuoteDisplay'
+import { TechnicalSummary } from './TechnicalSummary'
 
 const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
 const dateTime = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
@@ -19,6 +20,7 @@ const messages = {
 export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: string }) {
   const [state, setState] = useState<{ data: Awaited<ReturnType<typeof getUsAnalysis>> } | { error: string }>()
   const [requested, setRequested] = useState(false)
+  const [revision, retry] = useState(0)
   useEffect(() => {
     const controller = new AbortController()
     void getUsAnalysis(symbol, controller.signal, requested, indexId).then(data => {
@@ -27,17 +29,19 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
       if (!controller.signal.aborted) setState({ error: marketRequestMessage(error, '미국시장 일봉 조회 실패') })
     })
     return () => controller.abort()
-  }, [symbol, requested, indexId])
+  }, [symbol, requested, indexId, revision])
 
   const data = state && 'data' in state ? state.data : null
   const quote = data && data.status !== 'unavailable' ? data.quote : null
-  const history = data && data.status !== 'unavailable' && data.analysisStatus === 'available' ? data.history : null
-  const indicators = history && calculateTechnicalIndicators(history)
-  const returns = history ? calculatePriceReturns(history) : {}
+  const history = data && data.status !== 'unavailable' ? data.history : null
+  const aligned = !!quote && history?.bars.at(-1)?.tradingDate === quote.tradingDate
+  const indicators = useMemo(() => history && aligned ? calculateTechnicalIndicators(history) : null, [history, aligned])
+  const returns = useMemo(() => history && indicators ? calculatePriceReturns(history) : {}, [history, indicators])
   return <section className="panel stock-detail krx-analysis" aria-label="기술적 분석">
     <h2>기술적 분석</h2>
     {!state ? <p role="status">미국시장 일봉을 불러오는 중입니다.</p>
-      : 'error' in state ? <p role="status">{state.error}</p>
+      : 'error' in state ? <div><p role="status">{state.error}</p>
+        <button className="button" onClick={() => { setState(undefined); setRequested(false); retry(value => value + 1) }}>다시 조회</button></div>
       : !data || data.status === 'unavailable' || !quote ? <>
         <p role="status">{data?.reason ? messages[data.reason] : '자료 없음'}</p>
         {!indexId && !requested && data?.reason === 'not-published' &&
@@ -59,6 +63,7 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
               <div key={label}><dt>{label}</dt><dd>{indexId && label === '거래량' && value === 0 ? '미제공' : format(Number(value))}</dd></div>)}
           </dl>
         </section>
+        {history && <TechnicalSummary indicators={indicators} history={history} index={!!indexId} stale={data.status === 'stale'} />}
         <details>
           <summary>최근 20거래일 OHLCV {indexId ? '' : '(기업행위 조정)'}</summary>
           <div className="us-history-scroll">
@@ -73,12 +78,12 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
             </table>
           </div>
         </details>
-        {data.analysisStatus === 'insufficient-history' ? <p role="status">기술적 분석에는 유효한 260거래일 이력이 필요합니다.</p>
-          : indicators && <div className="analysis-details">
+        {indicators && <div className="analysis-details">
             <details>
               <summary>추세 분석 <ChevronDown size={16} aria-hidden="true" /></summary><p>{indexId ? 'Yahoo 제공 지수 종가 기준' : 'Yahoo 배당·분할 조정 종가 기준'}</p>
               <dl className="stock-detail-fields">
-                {(['sma', 'ema'] as const).flatMap(kind => [20, 50, 100, 200].map(period =>
+                {(['sma', 'ema'] as const).flatMap(kind => (kind === 'sma' ? smaWindows : emaWindows)
+                  .filter(period => period !== 365 || indicators.sma[365] !== null).map(period =>
                   <div key={kind + period}><dt>{kind.toUpperCase()} {period}</dt><dd>{format(indicators[kind][period])}</dd></div>))}
               </dl>
             </details>
