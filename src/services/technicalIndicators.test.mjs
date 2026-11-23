@@ -3,6 +3,8 @@ import { test } from 'node:test'
 import { assessTechnicalTrend } from './technicalAssessment.ts'
 import { buildTechnicalScenarios, calculateRewardRisk } from './technicalScenarios.ts'
 import { calculatePriceReturns, calculateTechnicalIndicators } from './technicalIndicators.ts'
+import { confirmedKrxTick, krxTickSize, displayZone, displayScenarioPrices, formatAnalysisPrice, formatPercent, formatVolume } from './analysisPrices.ts'
+import { technicalRisk } from './technicalRisk.ts'
 
 function history(closes) {
   return {
@@ -312,4 +314,84 @@ test('insufficient history and zero ATR do not create stop or reward/risk candid
   assert.equal(plan.entry.stop, null)
   assert.equal(plan.entry.rewardRisk, null)
   assert.equal(plan.holding.mediumStop, null)
+})
+
+test('official KRX stock tick boundaries and verified catalog identity, class and effective date', () => {
+  assert.deepEqual([1999, 2000, 4999, 5000, 19999, 20000, 49999, 50000, 199999, 200000, 499999, 500000]
+    .map(krxTickSize), [1, 5, 5, 10, 10, 50, 50, 100, 100, 500, 500, 1000])
+  const stock = { symbol: '263860', market: 'KOSDAQ', listedOn: '2017-08-02', shareClass: '보통주' }
+  const listing = { market: 'KOSDAQ', listingDate: '2026-11-20', listings: { status: 'available' }, items: [stock] }
+  assert.equal(confirmedKrxTick(listing, 'KOSDAQ', '263860', '2026-11-20'), 'stock')
+  assert.equal(confirmedKrxTick(listing, 'KOSDAQ', '263860', '2023-01-24'), undefined)
+  assert.equal(confirmedKrxTick(listing, 'KOSDAQ', '263860', '2026-11-21'), undefined)
+  assert.equal(confirmedKrxTick(listing, 'KOSPI', '263860', '2026-11-20'), undefined)
+  assert.equal(confirmedKrxTick(listing, 'KOSDAQ', '005930', '2026-11-20'), undefined)
+  assert.equal(confirmedKrxTick({ ...listing, items: [stock, stock] }, 'KOSDAQ', '263860', '2026-11-20'), undefined)
+  for (const market of ['KOSPI', 'KOSDAQ']) {
+    for (const shareClass of ['보통주', '우선주', '구형우선주', '신형우선주', '종류주권']) {
+      const confirmed = { ...listing, market, items: [{ ...stock, market, shareClass }] }
+      const tick = confirmedKrxTick(confirmed, market, '263860', '2026-11-20')
+      assert.equal(tick, 'stock')
+      assert.deepEqual(displayZone({ low: 49999.99, high: 50000.01 }, { unit: 'KRW', tick }),
+        { low: 49950, high: 50100 })
+    }
+  }
+  for (const shareClass of ['ETF', 'ETN', '', '주식워런트증권']) {
+    assert.equal(confirmedKrxTick({ ...listing, items: [{ ...stock, shareClass }] }, 'KOSDAQ', '263860', '2026-11-20'), undefined)
+  }
+})
+
+test('display zones round outward, use verified ticks only, and leave raw values unchanged', () => {
+  const raw = Object.freeze({ low: 34556.0162, high: 35843.9838 })
+  assert.deepEqual(displayZone(raw, { unit: 'KRW', tick: 'stock' }), { low: 34550, high: 35850 })
+  assert.deepEqual(displayZone(raw, { unit: 'KRW' }), { low: 34556, high: 35844 })
+  assert.deepEqual(displayZone({ low: 49999.99, high: 50000.01 }, { unit: 'KRW', tick: 'stock' }), { low: 49950, high: 50100 })
+  assert.deepEqual(displayZone({ low: 0.99501, high: 1.001 }, { unit: 'USD' }), { low: 0.995, high: 1.01 })
+  assert.deepEqual(raw, { low: 34556.0162, high: 35843.9838 })
+  assert.equal(displayZone({ low: 1.2, high: 1.1 }, { unit: 'USD' }), null)
+  assert.equal(formatAnalysisPrice(34556.0162, 'KRW'), '34,556.0162원')
+  assert.equal(formatAnalysisPrice(95.4, 'USD'), '95.40 USD')
+  assert.equal(formatPercent(1.2), '1.20%')
+  assert.equal(formatVolume(1234567), '1,234,567')
+})
+
+test('displayed price candidates drive reward/risk and ordering is checked after rounding', () => {
+  const raw = Object.freeze({ stop: 32023.44, entry: 35000.2, target: 41043.98 })
+  const shown = displayScenarioPrices(raw, { unit: 'KRW', tick: 'stock' })
+  assert.deepEqual(shown.prices, { stop: 32000, entry: 35050, target: 41000 })
+  assert.notEqual(calculateRewardRisk(shown.prices).ratio, calculateRewardRisk(raw).ratio)
+  assert.equal(calculateRewardRisk(shown.prices).ratio, 5950 / 3050)
+  const collapsed = displayScenarioPrices({ stop: 19999, entry: 20001, target: 20049 }, { unit: 'KRW', tick: 'stock' })
+  assert.equal(calculateRewardRisk(collapsed.prices), null)
+  for (const invalid of [-1, 0, NaN, Infinity]) {
+    assert.equal(krxTickSize(invalid), null)
+    assert.equal(displayScenarioPrices({ ...raw, stop: invalid }, { unit: 'KRW', tick: 'stock' }).prices, null)
+  }
+})
+
+test('risk separates overheating, lack of volume, support loss, stale and insufficient data', () => {
+  const rising = history(ramp(220))
+  const indicators = calculateTechnicalIndicators(rising)
+  const assessment = assess(rising)
+  assert.equal(assessment.trend, 'up')
+  assert.ok(technicalRisk(assessment, indicators, false).signals.includes('과열 주의'))
+  assert.equal(technicalRisk(assessment, indicators, true).status, '최신 위험 상태 확인 불가')
+  assert.equal(technicalRisk(null, null, false).status, '위험 분석 자료 부족')
+  const normal = { ...indicators, close: indicators.sma[20], rsi14: 50 }
+  assert.equal(technicalRisk(assessment, normal, false).status, '현재 감지된 주요 기술적 위험 신호 없음')
+  const noVolume = { ...normal, volume: { ...normal.volume, ratio: null } }
+  assert.equal(technicalRisk(assessment, noVolume, false).status, '거래량 확인 부족')
+  const broken = { ...assessment, breakVolumeConfirmed: false, zones: { ...assessment.zones, breakDown: scenarioZone(320, 330) } }
+  assert.ok(technicalRisk(broken, normal, false).signals.includes('주요 지지 이탈 주의'))
+  const shock = { ...normal, atr14: normal.prior.atr14 * 1.3 }
+  assert.ok(technicalRisk(assessment, shock, false).signals.includes('변동성 확대'))
+})
+
+test('one rebound session in a downtrend still keeps the entry perspective on watch', () => {
+  const prices = ramp(220).reverse()
+  const data = history([...prices, prices.at(-1) + 1])
+  const indicators = calculateTechnicalIndicators(data)
+  const assessment = assess(data)
+  assert.equal(assessment.trend, 'down')
+  assert.equal(buildTechnicalScenarios(assessment, indicators).entry.mode, 'watch')
 })

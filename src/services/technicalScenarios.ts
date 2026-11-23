@@ -54,7 +54,7 @@ export function buildTechnicalScenarios(assessment: Assessment, indicators: Tech
   const shortStop = usable ? bufferedStop(shortLevel, atr14) : null
   const mediumStop = usable ? bufferedStop(mediumLevel ?? mediumReference, atr14) : null
   return {
-    entry: { mode, candidate, stop, targetZone, rewardRisk, prices: rewardRisk ? prices : null,
+    entry: { mode, candidate, entryPrice, stop, targetZone, rewardRisk, prices: rewardRisk ? prices : null,
       breakoutZone, support, volumeThreshold: volume.spikeThreshold, breakoutPassed: !!zones.breakUp && volume.spike === true },
     holding: {
       state, brokenSupport, shortLevel, shortStop, shortBreached: shortStop !== null && close <= shortStop,

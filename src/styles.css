@@ -504,12 +504,6 @@ dialog::backdrop { background: #04080bcc; }
 .analysis-meta span { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 0 4px; }
 .analysis-meta time, .analysis-details time { white-space: nowrap; }
 .analysis-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
-.analysis-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 128px), 1fr)); gap: var(--space-control); }
-.analysis-metric { min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--background); overflow-wrap: anywhere; }
-.analysis-metric dt { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: var(--text-caption); }
-.analysis-metric dt svg { flex: none; color: var(--accent); }
-.analysis-metric dd { margin-top: 4px; }
-.analysis-metric strong { font-size: 1.05rem; }
 .analysis-details { display: grid; gap: var(--space-control); align-items: start; }
 .analysis-details details { min-width: 0; padding-inline: 12px; border: 1px solid var(--line); border-radius: var(--radius-control); }
 .analysis-details summary { display: flex; align-items: center; justify-content: space-between; min-height: 44px; gap: 8px; cursor: pointer; font-weight: 650; font-size: .875rem; }
@@ -523,7 +517,6 @@ dialog::backdrop { background: #04080bcc; }
   .analysis-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @container dashboard (max-width: 295px) {
-  .analysis-metrics { grid-template-columns: minmax(0, 1fr); }
 }
 
 .us-quote-price { display: block; font-size: clamp(1.5rem, 5vw, 2rem); }
@@ -581,3 +574,19 @@ dialog::backdrop { background: #04080bcc; }
 .scenario-inputs label { display: grid; gap: 4px; min-width: 0; }
 .scenario-inputs input { min-width: 0; min-height: 44px; padding: 6px 8px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--control); color: inherit; }
 .scenario-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 10px; }
+
+.technical-status > div { padding: 6px 10px; border-inline-start: 2px solid var(--line); }
+.technical-risk-attention { color: var(--text); text-decoration: underline; text-underline-offset: 4px; }
+.technical-risk-checks summary, .technical-zones summary { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px 10px; min-height: 44px; cursor: pointer; }
+.technical-risk-checks[open] summary svg { transform: rotate(180deg); }
+.technical-risk-checks ul { margin: 4px 0; padding-inline-start: 1.25rem; }
+.technical-price-zones { min-width: 0; padding-block: 6px 10px; }
+.technical-price-zones h3, .technical-zone-grid h4 { margin: 0; }
+.technical-zone-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 6px 18px; margin-block: 8px; }
+.technical-zone-grid > div { min-width: 0; }
+.technical-zone-grid .technical-zones { padding: 0; list-style: none; }
+.technical-zones li { border-bottom: 1px solid var(--line); }
+.technical-zones strong, .scenario-price-cards dd { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.scenario-price-cards > div { min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius-control); }
+.scenario-price-cards dd { font-weight: 650; }
+.scenario-price-cards small { font-weight: 400; }

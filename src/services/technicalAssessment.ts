@@ -65,7 +65,7 @@ function buildZones(prior: readonly DailyOhlcvBar[], confirmation: readonly Dail
 function structure(bars: readonly DailyOhlcvBar[], indicators: TechnicalIndicators) {
   const last = bars.at(-1)
   const previous = bars.at(-2)
-  const empty = { support: [], resistance: [], testing: [], breakUp: null, breakDown: null }
+  const empty = { structureAvailable: false, support: [], resistance: [], testing: [], breakUp: null, breakDown: null }
   const { atr14: atr, sma } = indicators.prior
   if (!last || !previous || bars.length <= 20 || atr === null || atr <= 0) return empty
   const prior = bars.slice(0, -1)
@@ -75,6 +75,7 @@ function structure(bars: readonly DailyOhlcvBar[], indicators: TechnicalIndicato
   const previousZones = buildZones(prior, prior, atr, sma, threshold)
   const historical = (zone: PriceZone) => zone.evidence.some(label => !label.startsWith('직전 SMA'))
   return {
+    structureAvailable: true,
     support: zones.filter(zone => zone.high < last.close).reverse().slice(0, 2),
     resistance: zones.filter(zone => zone.low > last.close).slice(0, 2),
     testing: zones.filter(zone => zone.low <= last.close && zone.high >= last.close),

@@ -4,6 +4,7 @@ import { getUsAnalysis, marketRequestMessage } from '../services/apiFinanceServi
 import { calculatePriceReturns, calculateTechnicalIndicators, emaWindows, smaWindows } from '../services/technicalIndicators'
 import { Change } from './QuoteDisplay'
 import { TechnicalSummary } from './TechnicalSummary'
+import { formatAnalysisPrice, formatPercent, formatVolume } from '../services/analysisPrices'
 
 const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
 const dateTime = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
@@ -34,22 +35,25 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
   const data = state && 'data' in state ? state.data : null
   const quote = data && data.status !== 'unavailable' ? data.quote : null
   const history = data && data.status !== 'unavailable' ? data.history : null
+  const unit = indexId ? 'pt' : 'USD'
   const aligned = !!quote && history?.bars.at(-1)?.tradingDate === quote.tradingDate
   const indicators = useMemo(() => history && aligned ? calculateTechnicalIndicators(history) : null, [history, aligned])
   const returns = useMemo(() => history && indicators ? calculatePriceReturns(history) : {}, [history, indicators])
   return <section className="panel stock-detail krx-analysis" aria-label="기술적 분석">
     <h2>기술적 분석</h2>
     {!state ? <p role="status">미국시장 일봉을 불러오는 중입니다.</p>
-      : 'error' in state ? <div><p role="status">{state.error}</p>
+      : 'error' in state ? <div><p role="status">{state.error}</p><p>최신 위험 상태 확인 불가</p>
         <button className="button" onClick={() => { setState(undefined); setRequested(false); retry(value => value + 1) }}>다시 조회</button></div>
       : !data || data.status === 'unavailable' || !quote ? <>
         <p role="status">{data?.reason ? messages[data.reason] : '자료 없음'}</p>
+        <p>{data?.reason === 'provider-error' || data?.reason === 'provider-not-configured'
+          ? '최신 위험 상태 확인 불가' : '위험 분석 자료 부족'}</p>
         {!indexId && !requested && data?.reason === 'not-published' &&
           <button className="button" type="button" onClick={() => { setState(undefined); setRequested(true) }}>수집 요청</button>}
       </> : <>
         <section className="analysis-quote us-analysis-quote">
           <h3>{symbol} 일별 종가</h3>
-          <strong className="us-quote-price">{format(quote.close)} {indexId ? 'pt' : 'USD'}</strong>
+          <strong className="us-quote-price" title={String(quote.close)}>{formatAnalysisPrice(quote.close, unit)}</strong>
           {quote.change !== null && quote.changePercent !== null && <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
           <p className="heatmap-meta">{quote.tradingDate} · {data.source} · Yahoo 제공 종가 (Adj Close 미적용)
             {' · 수집 '}{dateTime.format(new Date(data.collectedAt))} (KST)</p>
@@ -58,10 +62,6 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
             {!indexId && !requested && data.reason === 'not-published' &&
               <button className="button" type="button" onClick={() => setRequested(true)}>갱신 요청</button>}
           </>}
-          <dl className="stock-detail-fields">
-            {[['시가', quote.open], ['고가', quote.high], ['저가', quote.low], ['종가', quote.close], ['거래량', quote.volume]].map(([label, value]) =>
-              <div key={label}><dt>{label}</dt><dd>{indexId && label === '거래량' && value === 0 ? '미제공' : format(Number(value))}</dd></div>)}
-          </dl>
         </section>
         {history && <TechnicalSummary indicators={indicators} history={history} index={!!indexId} stale={data.status === 'stale'} />}
         <details>
@@ -73,7 +73,7 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
               <tbody>{data.history.bars.slice(-20).reverse().map(bar => <tr key={bar.tradingDate}>
                 <th scope="row">{bar.tradingDate}</th>
                 {[bar.open, bar.high, bar.low, bar.close, bar.volume].map((value, index) =>
-                  <td key={index}>{indexId && index === 4 && value === 0 ? '미제공' : format(value)}</td>)}
+                  <td key={index} title={index === 4 ? undefined : String(value)}>{index === 4 ? (indexId && value === 0 ? '미제공' : formatVolume(value)) : formatAnalysisPrice(value, unit)}</td>)}
               </tr>)}</tbody>
             </table>
           </div>
@@ -89,6 +89,7 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
             </details>
             <details>
               <summary>모멘텀 분석 <ChevronDown size={16} aria-hidden="true" /></summary>
+              <p className="heatmap-meta">RSI는 상승·하락의 상대적 강도입니다. 70 이상과 30 이하는 과매수·과매도의 참고 구간입니다. MACD선은 단기·장기 이동평균의 차이입니다. 시그널선과의 간격을 나타내는 히스토그램을 추세·거래량과 함께 보세요.</p>
               <dl className="stock-detail-fields">
                 <div><dt>RSI 14</dt><dd>{format(indicators.rsi14)}</dd></div>
                 <div><dt>MACD 12·26</dt><dd>{format(indicators.macd.line)}</dd></div>
@@ -101,7 +102,7 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
               <summary>기간별 성과 <ChevronDown size={16} aria-hidden="true" /></summary>
               <dl className="stock-detail-fields">
                 {[1, 3, 6].map(months => <div key={months}><dt>{months}개월</dt>
-                  <dd>{returns[months] ? format(returns[months].percent) + '% · ' + returns[months].tradingDate : '자료 부족'}</dd></div>)}
+                  <dd>{returns[months] ? formatPercent(returns[months].percent) + ' · ' + returns[months].tradingDate : '자료 부족'}</dd></div>)}
               </dl>
             </details>
           </div>}
