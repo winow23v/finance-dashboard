@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Landmark } from 'lucide-react'
+import { ChartNoAxesCombined } from 'lucide-react'
 import { FinanceApiError, getEconomyIndicators } from '../services/apiFinanceService'
 import type { EconomyIndicators, Indicator } from '../types/finance'
 
@@ -48,7 +48,7 @@ export function Economics({ api, demo, detailed, revision, onRefreshReady }: {
   const rows = api ? live?.indicators : demo
   return <section className="panel economy-panel">
     <div className="panel-heading">
-      <div><h2><Landmark size={17} aria-hidden="true" /> 주요 경제지표</h2><p>미국 거시경제 지표</p></div>
+      <div><h2><ChartNoAxesCombined size={17} aria-hidden="true" /> 주요 경제지표</h2><p>미국 거시경제 지표</p></div>
       {(!api || live) && <span className="badge">{api ? 'FRED · 실데이터' : 'DEMO · 샘플 데이터'}</span>}
     </div>
     {api && !current && <p className="state" role="status">경제지표를 불러오는 중입니다.</p>}

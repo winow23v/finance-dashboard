@@ -1,3 +1,4 @@
+import { ChevronDown } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { getUsAnalysis, marketRequestMessage } from '../services/apiFinanceService'
 import { calculatePriceReturns, calculateTechnicalIndicators } from '../services/technicalIndicators'
@@ -33,7 +34,7 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
   const history = data && data.status !== 'unavailable' && data.analysisStatus === 'available' ? data.history : null
   const indicators = history && calculateTechnicalIndicators(history)
   const returns = history ? calculatePriceReturns(history) : {}
-  return <section className="panel stock-detail" aria-label="기술적 분석">
+  return <section className="panel stock-detail krx-analysis" aria-label="기술적 분석">
     <h2>기술적 분석</h2>
     {!state ? <p role="status">미국시장 일봉을 불러오는 중입니다.</p>
       : 'error' in state ? <p role="status">{state.error}</p>
@@ -42,9 +43,9 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
         {!indexId && !requested && data?.reason === 'not-published' &&
           <button className="button" type="button" onClick={() => { setState(undefined); setRequested(true) }}>수집 요청</button>}
       </> : <>
-        <section className="panel krx-analysis-card">
+        <section className="analysis-quote us-analysis-quote">
           <h3>{symbol} 일별 종가</h3>
-          <strong className="krx-quote-price">{format(quote.close)} {indexId ? 'pt' : 'USD'}</strong>
+          <strong className="us-quote-price">{format(quote.close)} {indexId ? 'pt' : 'USD'}</strong>
           {quote.change !== null && quote.changePercent !== null && <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
           <p className="heatmap-meta">{quote.tradingDate} · {data.source} · Yahoo 제공 종가 (Adj Close 미적용)
             {' · 수집 '}{dateTime.format(new Date(data.collectedAt))} (KST)</p>
@@ -73,16 +74,16 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
           </div>
         </details>
         {data.analysisStatus === 'insufficient-history' ? <p role="status">기술적 분석에는 유효한 260거래일 이력이 필요합니다.</p>
-          : indicators && <div className="krx-analysis-grid">
-            <section className="panel krx-analysis-card">
-              <h3>추세 분석</h3><p>{indexId ? 'Yahoo 제공 지수 종가 기준' : 'Yahoo 배당·분할 조정 종가 기준'}</p>
+          : indicators && <div className="analysis-details">
+            <details>
+              <summary>추세 분석 <ChevronDown size={16} aria-hidden="true" /></summary><p>{indexId ? 'Yahoo 제공 지수 종가 기준' : 'Yahoo 배당·분할 조정 종가 기준'}</p>
               <dl className="stock-detail-fields">
                 {(['sma', 'ema'] as const).flatMap(kind => [20, 50, 100, 200].map(period =>
                   <div key={kind + period}><dt>{kind.toUpperCase()} {period}</dt><dd>{format(indicators[kind][period])}</dd></div>))}
               </dl>
-            </section>
-            <section className="panel krx-analysis-card">
-              <h3>모멘텀 분석</h3>
+            </details>
+            <details>
+              <summary>모멘텀 분석 <ChevronDown size={16} aria-hidden="true" /></summary>
               <dl className="stock-detail-fields">
                 <div><dt>RSI 14</dt><dd>{format(indicators.rsi14)}</dd></div>
                 <div><dt>MACD 12·26</dt><dd>{format(indicators.macd.line)}</dd></div>
@@ -90,14 +91,14 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
                 <div><dt>히스토그램</dt><dd>{format(indicators.macd.histogram)}</dd></div>
                 <div><dt>20일 평균 거래량</dt><dd>{indexId && indicators.volumeSma20 === 0 ? '미제공' : format(indicators.volumeSma20)}</dd></div>
               </dl>
-            </section>
-            <section className="panel krx-analysis-card">
-              <h3>기간별 성과</h3>
+            </details>
+            <details>
+              <summary>기간별 성과 <ChevronDown size={16} aria-hidden="true" /></summary>
               <dl className="stock-detail-fields">
                 {[1, 3, 6].map(months => <div key={months}><dt>{months}개월</dt>
                   <dd>{returns[months] ? format(returns[months].percent) + '% · ' + returns[months].tradingDate : '자료 부족'}</dd></div>)}
               </dl>
-            </section>
+            </details>
           </div>}
       </>}
   </section>

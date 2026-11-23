@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { useEffect, useState } from 'react'
-import { Activity, LogIn, LogOut, ShieldCheck } from 'lucide-react'
+import { Activity, UserRound, LogOut, ShieldCheck } from 'lucide-react'
 import { App } from '../App'
 import { dataMode } from '../services/financeService'
 import { invalidateMemberData, setMemberSession } from '../services/memberTransport'
@@ -159,7 +159,7 @@ function MemberGate() {
             </div>
           </> : <>
             <p>Google 계정으로 로그인하면 관리자 승인 후 금융 데이터를 이용할 수 있습니다.</p>
-            <button className="button" disabled={busy} onClick={signIn}><LogIn size={16} /> Google로 로그인</button>
+            <button className="button" disabled={busy} onClick={signIn}><UserRound size={16} /> Google로 로그인</button>
           </>}
       {error && <p className="notice" role="alert">{error}</p>}
     </section>

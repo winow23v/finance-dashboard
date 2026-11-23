@@ -9,19 +9,19 @@ export function StockDetail({ listing, saved, onToggle, liveQuote, usQuote }: {
 }) {
   const metadata = findMarketListing(listing)
   return <>
-    <section className="panel stock-detail" aria-label="종목 정보">
+    <section className={liveQuote ? "stock-actions" : "panel stock-detail"} aria-label={liveQuote ? "종목 작업" : "종목 정보"}>
       <div className="section-heading">
         <a href={listing.market === 'KR' ? '#domestic' : '#global'}>시장으로 돌아가기</a>
         <button type="button" className="button" aria-pressed={saved} onClick={onToggle}>
           <Star size={16} aria-hidden="true" /> {saved ? '관심종목 삭제' : '관심종목 추가'}
         </button>
       </div>
-      <dl className="stock-detail-fields">
+      {!liveQuote && <dl className="stock-detail-fields">
         <div><dt>종목 코드</dt><dd>{listing.symbol}</dd></div>
         <div><dt>거래소</dt><dd>{listing.exchange === 'US' ? '미국 · 개별 거래소 미확인' : listing.exchange}</dd></div>
-        <div><dt>통화</dt><dd>{liveQuote ? 'KRW' : usQuote ? 'USD' : metadata?.currency ?? '미확인'}</dd></div>
-        {!liveQuote && !usQuote && <div><dt>시세 상태</dt><dd>데이터 미연결</dd></div>}
-      </dl>
+        <div><dt>통화</dt><dd>{usQuote ? 'USD' : metadata?.currency ?? '미확인'}</dd></div>
+        {!usQuote && <div><dt>시세 상태</dt><dd>데이터 미연결</dd></div>}
+      </dl>}
     </section>
     {liveQuote ? <KrxAnalysis key={listing.symbol} symbol={listing.symbol} /> : usQuote ? <UsAnalysis key={listing.symbol} symbol={listing.symbol} /> : <section className="panel stock-detail" aria-label="기술적 분석">
       <h2>기술적 분석</h2>

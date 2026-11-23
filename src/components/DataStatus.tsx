@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import type { KrxOverview, MarketIndex } from '../types/finance'
 import { providerStatuses } from '../services/providerStatus'
 
 const labels = {
@@ -6,14 +7,21 @@ const labels = {
   error: '조회 실패', unavailable: '공표값 없음', partial: '일부 자료 조회 불가',
 }
 
-export function DataStatus({ api }: { api: boolean }) {
+export function DataStatus({ api, indices, krx }: {
+  api: boolean; indices?: MarketIndex[] | null; krx?: KrxOverview | null
+}) {
   const statuses = useSyncExternalStore(providerStatuses.subscribe, providerStatuses.read)
+  const indexStatus = indices === null ? '조회 실패' : !indices?.length ? '확인되지 않음'
+    : indices.every(index => index.status === 'available') ? '공표값 확인'
+      : indices.some(index => index.status !== 'unavailable') ? '이전 수집값 또는 일부 자료 미확인' : '유효한 관측값 미확인'
+  const heatmapStatus = krx === null ? '조회 실패' : !krx ? '확인되지 않음'
+    : krx.tiles.length ? '종가·시가총액 확인' : '표시 가능한 자료 없음'
   return <div className="data-status">
     <h3>데이터 연결</h3>
     <dl>
-      <div><dt>시장 지수</dt><dd>데이터 미연결</dd></div>
-      <div><dt>개별 주식·ETF</dt><dd>데이터 미연결</dd></div>
-      <div><dt>시장 히트맵</dt><dd>시세·시가총액·업종 데이터 미연결</dd></div>
+      <div><dt>시장 지수</dt><dd>{api ? indexStatus : '데이터 미연결'}</dd></div>
+      <div><dt>개별 주식·ETF</dt><dd>{api ? '종목 상세에서 확인' : '데이터 미연결'}</dd></div>
+      <div><dt>국내 시장 히트맵</dt><dd>{api ? heatmapStatus : '데이터 미연결'}</dd></div>
       {api && <>
         <div><dt>한국은행 ECOS</dt><dd>{statuses.ecos ? labels[statuses.ecos] : '확인되지 않음'}</dd></div>
         <div><dt>Frankfurter · ECB</dt><dd>{statuses.fx ? statuses.fx === 'published' ? '실제 공표 기준환율' : labels[statuses.fx] : '확인되지 않음'}</dd></div>

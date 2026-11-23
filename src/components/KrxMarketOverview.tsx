@@ -66,7 +66,7 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
         }}><option value="">전체</option><option>KOSPI</option><option>KOSDAQ</option></select></label>
         <div className="heatmap-legend" aria-label="등락률 색상 범례">
           {([[-3, '하락'], [0, '보합'], [3, '상승']] as const).map(([value, label]) => <span key={value}>
-            <i aria-hidden="true" style={{ background: heatmapColor('KR', value) }} />{label}
+            <i aria-hidden="true" style={{ background: heatmapColor('KR', value) }} />{label} {percent.format(value)}%
           </span>)}
         </div>
       </div>
@@ -101,6 +101,15 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
             })}
           </div>)}
         </div>
+        <details className="krx-heatmap-list">
+          <summary>종목 목록으로 보기</summary>
+          <ul className="stock-list">
+            {groups.flatMap(group => group.tiles.map(({ row }) => <li key={key(row)}>
+              <a className="stock-detail-link" href={link(row)}>{row.shortName}<small>{row.market} · {row.symbol}</small></a>
+              <span>{rate(row)}</span>
+            </li>))}
+          </ul>
+        </details>
         <aside className="panel krx-heatmap-detail" aria-label="히트맵 종목 정보">
           {focused ? <>
             <div id={tooltip} role={active?.pinned ? undefined : 'tooltip'}><KrxTileInfo row={focused} /></div>

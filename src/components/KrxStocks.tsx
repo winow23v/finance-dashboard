@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Star } from 'lucide-react'
+import { Search, SlidersHorizontal, Star, X } from 'lucide-react'
 import { getKrxStocks, marketRequestMessage } from '../services/apiFinanceService'
 import { stockHref } from '../services/marketListings'
 import type { KrxMarket, KrxReason, KrxStocks as StockResults } from '../types/finance'
@@ -45,19 +45,25 @@ export function KrxStocks({ selected, onToggle, symbol }: {
   }, [market, query, revision, symbol])
 
   return <section className="panel watch-panel" aria-label="국내 종목 시세">
-    <div className="panel-heading"><h2>국내 종목 시세</h2></div>
-    {!symbol && <form className="disclosure-controls" onSubmit={event => {
+    <div className="panel-heading"><h2><Search size={18} aria-hidden="true" /> 국내 종목 시세</h2></div>
+    {!symbol && <form className="disclosure-controls krx-search-controls" onSubmit={event => {
       event.preventDefault()
+      if (!input.trim() || (input.trim() === query && current?.data !== null)) return
       setQuery(input.trim())
       setRevision(value => value + 1)
     }}>
-      <label>시장 <select value={market} onChange={event => setMarket(event.target.value as KrxMarket)}>
+      <label><span><SlidersHorizontal size={14} aria-hidden="true" /> 시장</span><select value={market} onChange={event => setMarket(event.target.value as KrxMarket)}>
         <option>KOSPI</option><option>KOSDAQ</option>
       </select></label>
-      <label>종목명 또는 단축코드 <input type="search" value={input} maxLength={64} onChange={event => setInput(event.target.value)} /></label>
-      <button type="submit" className="button">검색</button>
+      <label>종목명 또는 단축코드 <input type="search" placeholder="예: 삼성전자 또는 005930" value={input} maxLength={64} onChange={event => setInput(event.target.value)} /></label>
+      <button type="submit" className="button" disabled={!input.trim()}>검색</button>
+      {(input || query) && <button type="button" className="button" onClick={() => {
+        setInput('')
+        setQuery('')
+        setMarket('KOSPI')
+      }}><X size={16} aria-hidden="true" /> 초기화</button>}
     </form>}
-    {!symbol && !query ? null : !current ? <p className="state" role="status">국내 종목을 불러오는 중입니다.</p> : current.data === null
+    {!symbol && !query ? <p className="state">KOSPI 또는 KOSDAQ을 선택하고 종목명이나 코드를 입력하세요.</p> : !current ? <p className="state" role="status">국내 종목을 불러오는 중입니다.</p> : current.data === null
       ? <p className="state" role="status">{current.message}</p>
       : current.data.map(dataset => {
         const details = [...new Set([dataset.listings.reason, dataset.trades.reason].filter(reason => reason !== null))]

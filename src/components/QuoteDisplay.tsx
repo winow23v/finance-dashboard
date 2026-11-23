@@ -1,4 +1,4 @@
-import { ArrowDownRight, ArrowUpRight } from 'lucide-react'
+import { TrendingDown, TrendingUp } from 'lucide-react'
 import type { Quote } from '../types/finance'
 import type { SettingsState } from '../storage/guestStorage'
 
@@ -15,9 +15,9 @@ export function price(quote: Quote, units: SettingsState['units']) {
 }
 
 export function Change({ quote, detailed = false }: { quote: Pick<Quote, 'percent' | 'change'>; detailed?: boolean }) {
-  const Icon = quote.percent < 0 ? ArrowDownRight : ArrowUpRight
+  const Icon = quote.percent < 0 ? TrendingDown : TrendingUp
   return <span className={'change ' + (quote.percent > 0 ? 'up' : quote.percent < 0 ? 'down' : '')}>
-    {quote.percent !== 0 && <Icon size={15} aria-hidden="true" />}
+    {quote.percent !== 0 && <Icon size={15} strokeWidth={1.75} aria-hidden="true" />}
     {detailed ? signed(quote.change) + ' (' + signed(quote.percent) + '%)' : signed(quote.percent) + '%'}
   </span>
 }

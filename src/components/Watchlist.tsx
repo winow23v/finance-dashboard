@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import { Plus, Search, Star, X } from 'lucide-react'
 import { marketSymbolKey, type EquityMarket, type MarketSymbol } from '../types/marketSymbol'
 import { findMarketListing, marketListings, stockHref } from '../services/marketListings'
@@ -17,7 +17,7 @@ function StockList({ listings, saved, onToggle, label }: {
       return <li key={key}>
         <div>
           <a className="stock-detail-link" href={stockHref(listing)}>{name}</a>
-          <small>{listing.symbol} · {listing.exchange} · {metadata?.currency ?? '통화 미확인'}</small>
+          <small>{listing.symbol} · {listing.market === 'KR' ? '국내' : '미국'} · {listing.exchange} · {metadata?.currency ?? '통화 미확인'}</small>
         </div>
         <button type="button" className="favorite-button" aria-pressed={active}
           aria-label={name + ' 관심종목'} title={active ? '관심종목에서 삭제' : '관심종목에 추가'}
@@ -29,6 +29,8 @@ function StockList({ listings, saved, onToggle, label }: {
 
 export function Watchlist({ selected, onToggle, market }: Props) {
   const [query, setQuery] = useState('')
+  const titleId = useId()
+  const inputId = useId()
   const editor = useRef<HTMLDialogElement>(null)
   const input = useRef<HTMLInputElement>(null)
   const saved = new Set(selected.map(marketSymbolKey))
@@ -55,17 +57,27 @@ export function Watchlist({ selected, onToggle, market }: Props) {
     </div>
     {rows.length ? <StockList listings={rows} saved={saved} onToggle={onToggle} label={title} />
       : <p className="state">등록된 관심종목이 없습니다.</p>}
-    <dialog ref={editor} aria-label="종목 검색">
-      <div className="panel-heading"><h2>종목 검색</h2><button type="button" className="icon-button" aria-label="닫기"
+    <dialog className="stock-search-dialog" ref={editor} aria-labelledby={titleId} onClick={event => {
+      if (event.target instanceof Element && event.target.closest("a")) editor.current?.close()
+    }}>
+      <div className="panel-heading"><h2 id={titleId}>종목 검색</h2><button type="button" className="icon-button" aria-label="닫기"
         onClick={() => editor.current?.close()}><X size={20} /></button></div>
-      <label className="search"><Search size={18} aria-hidden="true" />
-        <input ref={input} value={query} onChange={event => setQuery(event.target.value)}
-          placeholder="기업명, 종목 코드, 거래소, 통화" aria-label="기업명, 종목 코드, 거래소, 통화 검색" />
-      </label>
+      <p className="search-scope">{market === 'KR' ? '국내 등록 종목' : market === 'US'
+        ? '미국 등록 종목 또는 티커 직접 입력' : '국내·미국 등록 종목'}</p>
+      <label className="sr-only" htmlFor={inputId}>기업명 또는 종목 코드</label>
+      <div className="search">
+        <Search size={18} aria-hidden="true" />
+        <input id={inputId} ref={input} type="search" value={query} onChange={event => setQuery(event.target.value)}
+          placeholder={market === 'US' ? '예: Apple 또는 AAPL' : '기업명 또는 종목 코드'} />
+        {query && <button type="button" className="icon-button search-clear" aria-label="검색어 초기화" onClick={() => {
+          setQuery('')
+          input.current?.focus()
+        }}><X size={18} aria-hidden="true" /></button>}
+      </div>
       {market === 'US' && tickerMatch &&
         <StockList listings={[{ market: 'US', exchange: 'US', symbol: ticker }]} saved={saved} onToggle={onToggle} label="미국 티커 조회" />}
       {matches.length ? <StockList listings={matches.map(item => item.listing)} saved={saved} onToggle={onToggle} label="종목 검색 결과" />
-        : !(market === 'US' && tickerMatch) && <p className="state" role="status">검색 결과가 없습니다.</p>}
+        : !(market === 'US' && tickerMatch) && <p className="state" role="status">검색 결과가 없습니다. 검색어를 지우고 다시 검색할 수 있습니다.</p>}
     </dialog>
   </section>
 }

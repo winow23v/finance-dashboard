@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { Activity, BarChart3, ChevronDown, FileSearch, Globe2, Landmark, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Settings, ShieldCheck, Star, Sun, TrendingUp, X } from 'lucide-react'
+import { Activity, ArrowLeftRight, BarChart3, ChevronDown, Clock, FileSearch, Globe2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Settings, ShieldCheck, Star, Sun, TrendingUp, UserRound, X } from 'lucide-react'
 import { dataMode } from './services/financeService'
 import { getKrxOverview, getMarketIndices, marketRequestMessage } from './services/apiFinanceService'
 import { mockFinanceService } from './mocks/mockFinance'
@@ -32,7 +32,7 @@ const tabs = [
   { id: 'domestic', label: '국내시장', icon: BarChart3 },
   { id: 'global', label: '해외시장', icon: Globe2 },
   { id: 'companies', label: '기업 검색·공시', icon: FileSearch },
-  { id: 'economy', label: '환율·경제지표', icon: Landmark },
+  { id: 'economy', label: '환율·경제지표', icon: ArrowLeftRight },
   { id: 'watchlist', label: '관심종목', icon: Star },
   { id: 'settings', label: '설정', icon: Settings },
 ] as const
@@ -74,12 +74,11 @@ function MarketIndexValue({ quote, message }: { quote?: MarketIndex; message?: s
   return <>
     <strong>{indexPrice.format(quote.price)}</strong>
     {quote.change !== null && quote.changePercent !== null && <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
-    <small className="index-source"><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 거래 종가
+    <small className="index-source"><Clock size={14} aria-hidden="true" /> <time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가
       {quote.reason ? ' · ' + (quote.market === 'KR' && quote.reason !== 'rate-limited' ? krxStateLabels[quote.reason] : indexUnavailable[quote.reason]) : quote.status === 'stale' ? ' · 갱신 지연' : ''}
       {quote.reason === 'provider-error' && ' (마지막 유효값)'}</small>
     <details className="index-metadata">
-      <summary>출처·수집 시각</summary>
-      <small>{quote.source}</small>
+      <summary>{quote.source} · 수집 정보</summary>
       {quote.observedAt.includes('T') && <small>관측 <time dateTime={quote.observedAt}>{timestamp.format(new Date(quote.observedAt))}</time> (KST)</small>}
       <small>수집 <time dateTime={quote.collectedAt}>{timestamp.format(new Date(quote.collectedAt))}</time> (KST)</small>
     </details>
@@ -249,7 +248,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const navigationLinks = (items: readonly (typeof tabs[number] | typeof trends | typeof memberAdminTab | typeof mobileTabs[number])[]) =>
     items.map(({ id, label, icon: Icon }) => <a key={id} href={'#' + id} title={label} aria-label={label}
       aria-current={id === navSection ? (id === section ? 'page' : 'location') : undefined}>
-      <Icon size={19} aria-hidden="true" /><span>{label}</span>
+      <Icon size={19} strokeWidth={1.75} aria-hidden="true" /><span>{label}</span>
     </a>)
   const themeLabel = settings.theme === 'dark' ? '라이트 테마로 전환' : '다크 테마로 전환'
   const refreshLabel = refreshing || refreshUntil ? '데이터 새로고침 대기 중'
@@ -277,7 +276,10 @@ export function App({ member, signOut, accountBusy, accountError }: {
           onClick={() => setSettings(previous => ({ ...previous, theme: previous.theme === 'dark' ? 'light' : 'dark' }))}>
           {settings.theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
         </button>
-        <a className="icon-button" href="#settings" aria-label="설정" title="설정"><Settings size={18} /></a>
+        <a className="icon-button" href="#settings" aria-label={member ? '승인 회원 계정 및 설정' : '설정'}
+          title={member ? '승인 회원 계정 및 설정' : '설정'}>
+          {member ? <UserRound size={18} aria-hidden="true" /> : <Settings size={18} aria-hidden="true" />}
+        </a>
       </div>
     </header>
     <aside className="sidebar">
@@ -321,7 +323,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
                 </article>)}
             </div>
           </section>
-          {tab === 'overview' && <KrxMovers data={isApi ? krxOverview?.data : null}
+          {(tab === 'overview' || market === 'KR') && <KrxMovers data={isApi ? krxOverview?.data : null}
             message={isApi ? krxOverview?.message : 'KRX 공급자 미연결'} />}
           <div className={market === 'US' ? 'market-sections overseas-panels' : 'market-sections'}>
             {(!market || market === 'KR') && (isApi ? <KrxHeatmap data={krxOverview?.data} message={krxOverview?.message} summary={!market} />
@@ -383,7 +385,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
             {isApi && <div className="setting"><strong>환율 설정</strong><a href="#economy/fx-settings" className="button">환율 설정 열기</a></div>}
           </section>
           <section className="panel settings-panel">
-            <DataStatus api={isApi} />
+            <DataStatus api={isApi} indices={indexResult?.quotes} krx={krxResult?.data} />
           </section>
           <section className="panel settings-panel">
             <div className="panel-heading"><h2>관심종목 및 설정 저장</h2></div>
