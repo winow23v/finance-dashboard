@@ -11,6 +11,11 @@ export function setMemberSession(accessToken?: string, userId?: string) {
 export function invalidateMemberData() { epoch++ }
 export function memberDataEpoch() { return epoch }
 
+export function fetchForMember(userId: string, path: string, options: RequestInit) {
+  if (!token || identity !== userId) throw new DOMException('Membership changed', 'AbortError')
+  return fetchMemberApi(path, options)
+}
+
 export function requestUrl(path: string): string {
   const configured = import.meta.env.VITE_API_BASE_URL?.trim()
   if (import.meta.env.DEV && !configured) return path

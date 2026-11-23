@@ -1,29 +1,28 @@
+import { fetchForMember } from '../services/memberTransport'
+import { isWatchlistSymbol } from '../services/watchlist'
 import type { MarketSymbol } from '../types/marketSymbol'
-import type { FavoriteRepository } from './favorites'
 
-export interface AuthenticatedSession {
-  readonly userId: string
+async function request(userId: string, path: string, signal: AbortSignal, options?: RequestInit) {
+  const response = await fetchForMember(userId, '/api/v1/watchlist' + path, {
+    ...options, signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]),
+  })
+  if (!response.ok) throw new Error('Watchlist request failed: ' + response.status)
+  return response
 }
 
-// The future adapter must use the authenticated client and enforce ownership through RLS.
-export class CloudFavoriteRepository implements FavoriteRepository<Promise<MarketSymbol[]>, Promise<boolean>> {
-  constructor(readonly session: AuthenticatedSession) {
-    if (!session?.userId.trim()) throw new Error('인증된 세션이 필요합니다.')
-  }
-
-  async load(): Promise<MarketSymbol[]> {
-    throw new Error('클라우드 관심종목 저장소가 연결되지 않았습니다.')
-  }
-
-  async save(_items: readonly MarketSymbol[]): Promise<boolean> {
-    throw new Error('클라우드 관심종목 저장소가 연결되지 않았습니다.')
-  }
-}
-
-export interface CloudStorage {
-  openFavorites(session: AuthenticatedSession): FavoriteRepository<Promise<MarketSymbol[]>, Promise<boolean>>
-}
-
-export const cloudStorage: CloudStorage = {
-  openFavorites: session => new CloudFavoriteRepository(session),
+export const cloudFavorites = {
+  async load(userId: string, signal: AbortSignal) {
+    const { items } = await (await request(userId, '', signal)).json()
+    if (!Array.isArray(items) || !items.every(isWatchlistSymbol)) throw new Error('Invalid watchlist response')
+    return items as MarketSymbol[]
+  },
+  async add(userId: string, items: MarketSymbol[], signal: AbortSignal) {
+    await request(userId, '', signal, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }),
+    })
+  },
+  async remove(userId: string, item: MarketSymbol, signal: AbortSignal) {
+    const path = [item.market, item.exchange, item.symbol].map(encodeURIComponent).join('/')
+    await request(userId, '/' + path, signal, { method: 'DELETE' })
+  },
 }

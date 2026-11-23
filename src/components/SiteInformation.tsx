@@ -57,7 +57,7 @@ export function SiteInformation({ page }: { page: InformationPage }) {
     {page === 'sources' && <DataSources />}
     {page === 'privacy' && <>
       <p>회원 인증은 Google과 Supabase Auth를 사용합니다. 가입 및 접근 권한 관리를 위해 계정 식별자, 이메일, 승인 상태와 처리 기록을 Supabase에 저장합니다. 관리자는 승인 처리를 위해 계정 목록을 볼 수 있습니다.</p>
-      <p>관심종목, 화면 설정과 로그인 세션은 브라우저에 저장됩니다. 브라우저 데이터를 지우면 로컬 저장값이 삭제됩니다. 계정 관련 문의는 문의 페이지를 이용해 주세요.</p>
+      <p>회원 관심종목은 Supabase에 계정별로 저장되며 같은 계정의 다른 기기에서 확인할 수 있습니다. 화면 설정, 로그인 세션과 예전에 저장한 비회원 관심종목은 브라우저에 저장됩니다. 브라우저 데이터를 지우면 이 기기의 로컬 저장값이 삭제됩니다. 계정 관련 문의는 문의 페이지를 이용해 주세요.</p>
       <p>API는 과도한 요청을 제한하기 위해 요청 IP를 메모리의 요청 카운터에 사용합니다. API 접속 정보는 서버 접근 로그에 기록될 수 있습니다.</p>
       <p>페이지는 GitHub Pages에서 제공됩니다. GitHub에서 처리하는 접속 정보는 <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub 개인정보처리방침</a>에서 확인할 수 있습니다.</p>
       <p>서비스에 현재 광고 스크립트가 연결되어 있지 않습니다.</p>

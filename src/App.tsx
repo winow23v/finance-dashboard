@@ -18,9 +18,12 @@ import { KrxStocks, krxStateLabels } from './components/KrxStocks'
 import { KrxHeatmap, KrxMovers } from './components/KrxMarketOverview'
 import { MarketHeatmap } from './components/MarketHeatmap'
 import { Watchlist } from './components/Watchlist'
+import { useWatchlist } from './storage/useWatchlist'
+import { favoriteKey, isWatchlistSymbol } from './services/watchlist'
+import { WatchlistStatus } from './components/WatchlistStatus'
 import { Change, marketNames, price } from './components/QuoteDisplay'
 import { guestStorage, type SettingsState } from './storage/guestStorage'
-import { marketSymbolKey, type EquityMarket, type MarketSymbol } from './types/marketSymbol'
+import { type EquityMarket } from './types/marketSymbol'
 import type { FinanceSnapshot, KrxOverview, MarketIndex } from './types/finance'
 
 const FxDashboard = lazy(() => import('./components/FxDashboard'))
@@ -98,8 +101,8 @@ export function App({ member, signOut, accountBusy, accountError }: {
 } = {}) {
   const [settings, setSettings] = useState(guestStorage.loadSettings)
   const [tab, setTab] = useState<Page>(() => hashPage() ?? settings.market)
-  const [watchlist, setWatchlist] = useState(() => guestStorage.favorites.load())
-  const [storageFailures, setStorageFailures] = useState({ favorites: false, settings: false })
+  const { selected: watchlist, toggle, localError, blocked, sync } = useWatchlist(member?.userId)
+  const [settingsFailure, setSettingsFailure] = useState(false)
   const [snapshot, setSnapshot] = useState<FinanceSnapshot>()
   const [indexResult, setIndexResult] = useState<{ request: number; quotes: MarketIndex[] | null; message?: string }>()
   const [krxResult, setKrxResult] = useState<{ request: number; data: KrxOverview | null; message?: string }>()
@@ -171,12 +174,8 @@ export function App({ member, signOut, accountBusy, accountError }: {
     document.documentElement.dataset.theme = settings.theme
     document.documentElement.dataset.colors = settings.colors
     const saved = guestStorage.saveSettings(settings)
-    setStorageFailures(current => ({ ...current, settings: !saved }))
+    setSettingsFailure(!saved)
   }, [settings])
-  useEffect(() => {
-    const saved = guestStorage.favorites.save(watchlist)
-    setStorageFailures(current => ({ ...current, favorites: !saved }))
-  }, [watchlist])
   useEffect(() => {
     if (isApi) return
     let active = true
@@ -211,13 +210,6 @@ export function App({ member, signOut, accountBusy, accountError }: {
     return () => controller.abort()
   }, [showKrxOverview, request])
 
-  const toggle = (symbol: MarketSymbol) => {
-    const key = marketSymbolKey(symbol)
-    setWatchlist(previous => previous.some(item => marketSymbolKey(item) === key)
-      ? previous.filter(item => marketSymbolKey(item) !== key)
-      : [...previous, { market: symbol.market, exchange: symbol.exchange, symbol: symbol.symbol }])
-  }
-
   const canRefresh = isApi ? isMarket || showEconomy || companyPage : showEconomy || tab === 'trends'
   const refreshing = pending || (isApi && ((isMarket && !marketResult) || (showEconomy && !(fxReady && ecosReady && fredReady))))
   const refreshDisabled = !canRefresh || refreshing || !!refreshUntil || (tab === 'companies' && !dartReady)
@@ -244,7 +236,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const pageLabel = stock ? (findMarketListing(stock)?.name ?? stock.symbol)
     : tab === 'members' ? '회원 승인 관리' : index?.name ?? current?.label ?? (information && informationPages[information])
   const fx = snapshot?.quotes.find(quote => quote.kind === 'fx')
-  const watchlistProps = { selected: watchlist, onToggle: toggle }
+  const watchlistProps = { selected: watchlist, onToggle: toggle, blocked, loading: sync?.status === 'loading' || sync?.failure === 'load', live: isApi }
   const navigationLinks = (items: readonly (typeof tabs[number] | typeof trends | typeof memberAdminTab | typeof mobileTabs[number])[]) =>
     items.map(({ id, label, icon: Icon }) => <a key={id} href={'#' + id} title={label} aria-label={label}
       aria-current={id === navSection ? (id === section ? 'page' : 'location') : undefined}>
@@ -295,8 +287,9 @@ export function App({ member, signOut, accountBusy, accountError }: {
         <div className="page-heading">
           <h1>{pageLabel}</h1>
         </div>
+        {sync && !information && <WatchlistStatus sync={sync} email={member?.email} />}
         {information ? <SiteInformation page={information} /> : stock ?
-          <StockDetail listing={stock} saved={watchlist.some(item => marketSymbolKey(item) === marketSymbolKey(stock))}
+          <StockDetail favoriteDisabled={blocked || !!member && !isWatchlistSymbol(stock)} listing={stock} saved={watchlist.some(item => favoriteKey(item) === favoriteKey(stock))}
             onToggle={() => toggle(stock)} usQuote={isApi && stock.market === 'US'} liveQuote={isApi && stock.market === 'KR' && stock.exchange === 'XKRX'} />
           : index ? <section className="panel stock-detail" aria-label="지수 상세">
             <div className="section-heading"><h2>지수 추이</h2>
@@ -305,7 +298,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
             {isApi && index.market === 'US' ? <UsAnalysis key={index.id} symbol={index.name} indexId={index.id} />
               : <p className="state" role="status">지수 시계열 공급자 미연결</p>}
           </section> : <>
-        {(storageFailures.favorites || storageFailures.settings) && <p className="notice" role="status">브라우저에 변경사항을 저장하지 못했습니다. 현재 화면에서만 유지됩니다.</p>}
+        {(localError || settingsFailure) && <p className="notice" role="status">브라우저에 변경사항을 저장하지 못했습니다. 현재 화면에서만 유지됩니다.</p>}
         {pending && (!isApi || !economyPage) && <p className={snapshot ? 'refresh-status' : 'panel state'} role="status">데이터를 불러오는 중입니다.</p>}
         {error && (!isApi || !economyPage) && <div className="panel state"><p role="alert">{isApi ? 'API 데이터를 불러오지 못했습니다.' : '데이터 갱신에 실패했습니다.'}</p><button className="button" onClick={refresh} disabled={!!refreshUntil}>다시 시도</button></div>}
         <Suspense fallback={<p className="panel state" role="status">차트를 준비하는 중입니다.</p>}>
@@ -389,8 +382,8 @@ export function App({ member, signOut, accountBusy, accountError }: {
           </section>
           <section className="panel settings-panel">
             <div className="panel-heading"><h2>관심종목 및 설정 저장</h2></div>
-            <div className="setting"><strong>게스트 · 이 브라우저</strong><span>브라우저에 저장됨</span></div>
-            <p className="storage-note">공유 기기에서는 같은 브라우저 프로필의 사용자가 저장된 목록을 볼 수 있습니다. 사이트 데이터를 지우면 저장값이 삭제됩니다.</p>
+            <div className="setting"><strong>관심종목</strong><span>{member ? '회원 계정에 저장' : '이 브라우저에 저장'}</span></div>
+            <div className="setting"><strong>화면 설정</strong><span>이 브라우저에 저장</span></div>
           </section>
           <Watchlist {...watchlistProps} />
         </>}

@@ -27,6 +27,8 @@ const financeRoutes = [
 
 async function setup(t, options = {}) {
   const rows = new Map([[admin, member(admin, 'approved')], [other, member(other, 'approved')]])
+  const favorites = new Map()
+  let watchlistAvailable = true
   const calls = []
   let available = true
   const membership = createMembership({
@@ -43,6 +45,33 @@ async function setup(t, options = {}) {
           app_metadata: { provider: token === 'notgoogle' ? 'email' : 'google' },
           user_metadata: { role: 'administrator', status: 'approved' },
         })
+      }
+      if (url.pathname === '/rest/v1/rpc/finance_read_watchlist') {
+        assert.equal(request.headers.apikey, secretKey)
+        assert.equal(request.method, 'POST')
+        const { member_id } = JSON.parse(request.body)
+        return Response.json([...favorites.values()].filter(row => row.user_id === member_id)
+          .map(({ market, exchange, symbol }) => ({ market, exchange, symbol })))
+      }
+      if (url.pathname === '/rest/v1/finance_member_watchlist') {
+        assert.equal(request.headers.apikey, secretKey)
+        if (!watchlistAvailable) return Response.json({}, { status: 503 })
+        if (request.method === 'POST') {
+          assert.equal(request.headers.Prefer, 'resolution=ignore-duplicates,return=minimal')
+          assert.equal(url.searchParams.get('on_conflict'), 'user_id,market,symbol')
+          for (const row of JSON.parse(request.body)) {
+            const key = JSON.stringify([row.user_id, row.market, row.symbol])
+            if (!favorites.has(key)) favorites.set(key, row)
+          }
+          return new Response(null, { status: 201 })
+        }
+        assert.equal(request.method, 'DELETE')
+        for (const [key, row] of favorites) {
+          if (['user_id', 'market', 'exchange', 'symbol'].every(field => 'eq.' + row[field] === url.searchParams.get(field))) {
+            favorites.delete(key)
+          }
+        }
+        return new Response(null, { status: 204 })
       }
       assert.equal(url.pathname, '/rest/v1/finance_members')
       assert.equal(request.headers.apikey, secretKey)
@@ -73,7 +102,7 @@ async function setup(t, options = {}) {
     ecos: track('ECOS'), dart: track('DART'), memberFred: track('FRED'), ...options,
   })
   t.after(() => app.close())
-  return { app, calls, rows, offline: () => { available = false } }
+  return { app, calls, rows, watchlistOffline: () => { watchlistAvailable = false }, offline: () => { available = false } }
 }
 
 test('each legacy finance route requires a verified Google token and an approved account before serving data', async t => {
@@ -202,4 +231,52 @@ test('an administrator can restore a suspended member and a fresh session can us
   assert.equal(session.json().admin, false)
   assert.equal((await app.inject({ url: financeRoutes[0], headers: fresh })).statusCode, 200)
   assert.equal((await app.inject(financeRoutes[0])).statusCode, 401)
+})
+
+test('watchlist scopes writes and reads to approved account including admin and rejects invalid identifiers', async t => {
+  const { app } = await setup(t)
+  const path = '/api/v1/watchlist'
+  const apple = { market: 'US', exchange: 'XNAS', symbol: 'AAPL' }
+  const samsung = { market: 'KR', exchange: 'XKRX', symbol: '005930' }
+  const list = (actor, url = path) => app.inject({ url, headers: auth(actor) })
+  const add = (actor, items) => app.inject({ url: path, method: 'POST', headers: auth(actor), payload: { items } })
+  const deleteApple = (actor, exchange = apple.exchange) => app.inject({
+    url: path + '/US/' + exchange + '/AAPL', method: 'DELETE', headers: auth(actor),
+  })
+
+  assert.equal((await app.inject(path)).statusCode, 401)
+  assert.equal((await add('applicant', [apple])).statusCode, 403)
+  assert.equal((await add('other', [{ ...apple, user_id: admin }])).statusCode, 400)
+  assert.equal((await add('other', [{ ...apple, exchange: 'XKRX' }])).statusCode, 400)
+  assert.equal((await add('other', [{ ...samsung, symbol: '00593' }])).statusCode, 400)
+  assert.equal((await list('administrator', path + '?user_id=' + other)).statusCode, 400)
+  assert.equal((await deleteApple('other', 'XKRX')).statusCode, 400)
+  assert.match((await app.inject({ url: path, method: 'OPTIONS' })).headers['access-control-allow-methods'], /\bDELETE\b/)
+
+  const alias = { ...apple, exchange: 'US' }
+  const writes = await Promise.all([add('other', [apple, alias]), add('other', [samsung]), add('administrator', [alias])])
+  assert.deepEqual(writes.map(response => response.statusCode), [204, 204, 204])
+  assert.equal((await add('other', [alias])).statusCode, 204)
+  assert.deepEqual((await list('other')).json().items.sort((a, b) => a.symbol.localeCompare(b.symbol)), [samsung, apple])
+  assert.deepEqual((await list('administrator')).json().items, [alias])
+
+  assert.equal((await deleteApple('administrator')).statusCode, 204)
+  assert.deepEqual((await list('administrator')).json().items, [alias])
+  const genians = { market: 'KR', exchange: 'XKRX', symbol: '263860' }
+  const changes = await Promise.all([deleteApple('other'), deleteApple('other'), add('other', [genians])])
+  assert.deepEqual(changes.map(response => response.statusCode), [204, 204, 204])
+  assert.deepEqual((await list('other')).json().items, [samsung, genians])
+  assert.deepEqual((await list('administrator')).json().items, [alias])
+})
+
+test('failed watchlist write preserves the last persisted list', async t => {
+  const { app, watchlistOffline } = await setup(t)
+  const headers = auth('other')
+  const url = '/api/v1/watchlist'
+  const apple = { market: 'US', exchange: 'XNAS', symbol: 'AAPL' }
+  assert.equal((await app.inject({ url, method: 'POST', headers, payload: { items: [apple] } })).statusCode, 204)
+  watchlistOffline()
+  const failed = await app.inject({ url: url + '/US/XNAS/AAPL', method: 'DELETE', headers })
+  assert.equal(failed.statusCode, 503)
+  assert.deepEqual((await app.inject({ url, headers })).json(), { items: [apple] })
 })

@@ -1,5 +1,6 @@
 import { useId, useMemo, useState, type CSSProperties } from 'react'
 import { stockHref } from '../services/marketListings'
+import { favoriteKey } from '../services/watchlist'
 import { heatmapColor, heatmapTextColor, layoutHeatmap, parseMarketHeatmap, type HeatmapListing, type HeatmapRect } from '../services/marketHeatmap'
 import { marketSymbolKey, type EquityMarket, type MarketSymbol } from '../types/marketSymbol'
 
@@ -24,11 +25,11 @@ export function MarketHeatmap({ market, favorites, data, summary = false }: {
   const sectors = [...new Set(snapshot?.listings.map(item => item.sector) ?? [])].sort((a, b) => a.localeCompare(b, 'ko'))
   const selectedSector = sectors.includes(sector) ? sector : ''
   const groups = useMemo(() => {
-    const saved = new Set(favorites.map(marketSymbolKey))
+    const saved = new Set(favorites.map(favoriteKey))
     const terms = query.toLocaleLowerCase('ko-KR').trim().split(/\s+/).filter(Boolean)
     const groups = new Map<string, { sector: string; cap: number; listings: HeatmapListing[] }>()
     for (const item of snapshot?.listings ?? []) {
-      if ((selectedSector && selectedSector !== item.sector) || (favoritesOnly && !saved.has(marketSymbolKey(item.listing)))) continue
+      if ((selectedSector && selectedSector !== item.sector) || (favoritesOnly && !saved.has(favoriteKey(item.listing)))) continue
       const search = [item.name, item.listing.symbol, item.listing.exchange].join(' ').toLocaleLowerCase('ko-KR')
       if (!terms.every(term => search.includes(term))) continue
       const group = groups.get(item.sector) ?? { sector: item.sector, cap: 0, listings: [] }

@@ -31,8 +31,8 @@ export function createMembership({
     return response.json().catch(() => { throw new ProviderError(503, 'MEMBERSHIP_UNAVAILABLE') })
   }
 
-  function table(query, { method = 'GET', body, prefer } = {}) {
-    return send('/rest/v1/finance_members?' + new URLSearchParams(query), {
+  function rest(resource, query, { method = 'GET', body, prefer } = {}) {
+    return send('/rest/v1/' + resource + '?' + new URLSearchParams(query), {
       method,
       headers: {
         apikey: secretKey,
@@ -42,6 +42,8 @@ export function createMembership({
       ...(body && { body: JSON.stringify(body) }),
     })
   }
+
+  const table = (query, options) => rest('finance_members', query, options)
 
   async function verify(token) {
     let claims
@@ -71,6 +73,24 @@ export function createMembership({
 
   return {
     verify,
+    async watchlist(id) {
+      const items = await rest('rpc/finance_read_watchlist', {}, {
+        method: 'POST', body: { member_id: id },
+      })
+      if (!Array.isArray(items)) throw new ProviderError(503, 'MEMBERSHIP_UNAVAILABLE')
+      return items
+    },
+    async addFavorites(id, items) {
+      await rest('finance_member_watchlist', { on_conflict: 'user_id,market,symbol' }, {
+        method: 'POST', body: items.map(({ market, exchange, symbol }) => ({ user_id: id, market, exchange, symbol })),
+        prefer: 'resolution=ignore-duplicates,return=minimal',
+      })
+    },
+    async deleteFavorite(id, { market, exchange, symbol }) {
+      await rest('finance_member_watchlist', {
+        user_id: 'eq.' + id, market: 'eq.' + market, exchange: 'eq.' + exchange, symbol: 'eq.' + symbol,
+      }, { method: 'DELETE', prefer: 'return=minimal' })
+    },
     read,
     isAdmin: id => id === adminId,
     async register(user) {

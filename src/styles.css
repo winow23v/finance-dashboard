@@ -551,3 +551,10 @@ dialog::backdrop { background: #04080bcc; }
 @media (max-width: 480px) {
   .fx-info-button { width: 44px; height: 44px; }
 }
+
+.watchlist-status { display: block; }
+.watchlist-status p { margin: 0 0 0.4rem; overflow-wrap: anywhere; }
+.watchlist-status p:last-child { margin-bottom: 0; }
+.watchlist-import-items { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; margin: 0.4rem 0; padding-inline-start: 1rem; }
+.watchlist-quote { display: block; }
+.stock-list .favorite-button { flex-shrink: 0; }

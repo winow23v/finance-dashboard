@@ -343,16 +343,20 @@ export function createKrxProvider({
       const state = await load(endpoint[market].index, target)
       return { ...state.data?.rows[0], ...metadata(state, target) }
     },
-    async stocks({ market, q, symbol }) {
+    async stocks({ market, q, symbol, symbols }) {
       const target = session(clock())
       const config = endpoint[market]
       const listings = await load(config.listings, target)
       const trades = await load(config.trades, target)
       const byCode = new Map(trades.data?.rows.map(row => [row.symbol, row]))
       const term = q?.trim().toLowerCase()
-      const matches = (listings.data?.rows ?? []).filter(row =>
-        symbol ? row.symbol === symbol : !term || [row.symbol, row.name, row.fullName, row.englishName]
-          .some(text => text?.toLowerCase().includes(term)))
+      const exact = symbols && new Set(symbols)
+      const matches = (listings.data?.rows ?? []).filter(row => {
+        if (exact) return exact.has(row.symbol)
+        if (symbol) return row.symbol === symbol
+        return !term || [row.symbol, row.name, row.fullName, row.englishName]
+          .some(text => text?.toLowerCase().includes(term))
+      })
       if (term) matches.sort((a, b) => Number(b.symbol === term.toUpperCase()) - Number(a.symbol === term.toUpperCase()))
       return { market, listings: metadata(listings, target), trades: metadata(trades, target),
         listingDate: listings.data?.date ?? null, items: matches.slice(0, 20).map(row => ({

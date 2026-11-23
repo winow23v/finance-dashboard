@@ -4,15 +4,15 @@ import type { MarketSymbol } from '../types/marketSymbol'
 import { UsAnalysis } from './UsAnalysis'
 import { KrxAnalysis } from './KrxAnalysis'
 
-export function StockDetail({ listing, saved, onToggle, liveQuote, usQuote }: {
-  listing: MarketSymbol; saved: boolean; onToggle: () => void; liveQuote?: boolean; usQuote?: boolean
+export function StockDetail({ listing, saved, onToggle, liveQuote, usQuote, favoriteDisabled }: {
+  listing: MarketSymbol; saved: boolean; onToggle: () => void; liveQuote?: boolean; usQuote?: boolean; favoriteDisabled?: boolean
 }) {
   const metadata = findMarketListing(listing)
   return <>
     <section className={liveQuote ? "stock-actions" : "panel stock-detail"} aria-label={liveQuote ? "종목 작업" : "종목 정보"}>
       <div className="section-heading">
         <a href={listing.market === 'KR' ? '#domestic' : '#global'}>시장으로 돌아가기</a>
-        <button type="button" className="button" aria-pressed={saved} onClick={onToggle}>
+        <button type="button" className="button" aria-pressed={saved} disabled={favoriteDisabled} onClick={onToggle}>
           <Star size={16} aria-hidden="true" /> {saved ? '관심종목 삭제' : '관심종목 추가'}
         </button>
       </div>

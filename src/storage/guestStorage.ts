@@ -66,9 +66,14 @@ export class LocalFavoriteRepository implements FavoriteRepository<MarketSymbol[
   load(): MarketSymbol[] {
     const stored = read(favoritesKey)
     if (Array.isArray(stored)) {
-      return mergeFavorites(stored.flatMap(id =>
-        typeof id === 'string' && Object.hasOwn(legacyListings, id) ? [legacyListings[id]] : [],
-      ))
+      return mergeFavorites(stored.flatMap((id): MarketSymbol[] => {
+        if (typeof id !== 'string') return []
+        const symbol = id.trim().toUpperCase().replace('.', '-')
+        if (Object.hasOwn(legacyListings, symbol)) return [legacyListings[symbol]]
+        if (/^[0-9]{6}$/.test(symbol)) return [{ market: 'KR', exchange: 'XKRX', symbol }]
+        if (/^[A-Z][A-Z0-9]{0,9}(-[A-Z0-9]{1,5})?$/.test(symbol)) return [{ market: 'US', exchange: 'US', symbol }]
+        return []
+      }))
     }
     const payload = record(stored)
     return payload?.version === 1 && Array.isArray(payload.data)

@@ -30,6 +30,17 @@ function isLocalResearchRequest(request) {
 
 const noQuery = { type: 'object', additionalProperties: false }
 
+const favoriteSchema = {
+  type: 'object', additionalProperties: false, required: ['market', 'exchange', 'symbol'],
+  properties: { market: { type: 'string' }, exchange: { type: 'string' }, symbol: { type: 'string' } },
+  oneOf: [
+    { properties: { market: { const: 'KR' }, exchange: { const: 'XKRX' },
+      symbol: { type: 'string', pattern: '^[0-9A-Z]{6}$' } } },
+    { properties: { market: { const: 'US' }, exchange: { enum: ['US', 'XNAS', 'XNYS', 'ARCX'] },
+      symbol: usTickerSchema } },
+  ],
+}
+
 export async function buildApp({
   provider,
   localIndexResearch,
@@ -120,9 +131,29 @@ export async function buildApp({
     })
 
     app.options('/api/v1/*', { config: { access: 'preflight' } }, async (_request, reply) => reply
-      .header('access-control-allow-methods', 'GET, HEAD, POST, PATCH, OPTIONS')
+      .header('access-control-allow-methods', 'GET, HEAD, POST, PATCH, DELETE, OPTIONS')
       .header('access-control-allow-headers', 'Authorization, Content-Type')
       .header('access-control-max-age', '600').code(204).send())
+    app.get('/api/v1/watchlist', { schema: { querystring: noQuery } }, async request =>
+      ({ items: await membership.watchlist(request.memberUser.id) }))
+    app.post('/api/v1/watchlist', { schema: { querystring: noQuery, body: {
+      type: 'object', additionalProperties: false, required: ['items'],
+      properties: { items: { type: 'array', minItems: 1, maxItems: 100, items: favoriteSchema } },
+    } } }, async (request, reply) => {
+      const unique = new Map()
+      for (const item of request.body.items) {
+        const key = JSON.stringify([item.market, item.symbol])
+        if (!unique.has(key)) unique.set(key, item)
+      }
+      await membership.addFavorites(request.memberUser.id, [...unique.values()])
+      return reply.code(204).send()
+    })
+    app.delete('/api/v1/watchlist/:market/:exchange/:symbol', {
+      schema: { querystring: noQuery, params: favoriteSchema },
+    }, async (request, reply) => {
+      await membership.deleteFavorite(request.memberUser.id, request.params)
+      return reply.code(204).send()
+    })
     app.get('/api/v1/session', {
       config: { access: 'session' }, schema: { querystring: noQuery },
     }, async request => {
@@ -256,6 +287,33 @@ export async function buildApp({
     }
     if (memberSnapshot) return sendMarket(reply, 'snapshot:member', policies.snapshot, memberSnapshot)
     return sendMarket(reply, 'snapshot', policies.snapshot, provider?.snapshot ?? unavailableSnapshot)
+  })
+
+  if (membership) app.post('/api/v1/market/watchlist/observations', {
+    schema: { querystring: noQuery, body: {
+      type: 'object', additionalProperties: false, required: ['items'],
+      properties: { items: { type: 'array', minItems: 1, maxItems: 20, items: favoriteSchema } },
+    } },
+  }, async request => {
+    const { items } = request.body
+    const krx = krxFor(request)
+    const symbols = [...new Set(items.filter(item => item.market === 'KR').map(item => item.symbol))]
+    const domestic = krx && symbols.length ? await Promise.allSettled(['KOSPI', 'KOSDAQ'].map(market =>
+      krx.stocks({ market, symbols }))) : []
+    const stocks = domestic.flatMap(result => result.status === 'fulfilled' ? result.value.items : [])
+    return { items: await Promise.all(items.map(async item => {
+      if (item.market === 'KR') {
+        const matches = stocks.filter(stock => stock.symbol === item.symbol)
+        if (matches.length !== 1) return { listing: item }
+        const { name, market, quote } = matches[0]
+        return { listing: item, name, segment: market, currency: 'KRW', quote }
+      }
+      const quote = (await memberUs?.stock(item.symbol).catch(() => null))?.quote
+      return { listing: item, ...(quote && {
+        currency: 'USD',
+        quote: { price: quote.close, changePercent: quote.changePercent, tradingDate: quote.tradingDate },
+      }) }
+    })) }
   })
 
   app.get('/api/v1/market/kr/stocks', {

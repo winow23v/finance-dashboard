@@ -17,8 +17,9 @@ export const krxStateLabels: Record<KrxReason, string> = {
   'before-collection': '당일 수집 대기',
 }
 
-export function KrxStocks({ selected, onToggle, symbol }: {
+export function KrxStocks({ selected, onToggle, symbol, blocked }: {
   selected: MarketSymbol[]
+  blocked?: boolean
   onToggle: (listing: MarketSymbol) => void
   symbol?: string
 }) {
@@ -86,7 +87,7 @@ export function KrxStocks({ selected, onToggle, symbol }: {
                     {quote.change !== null && quote.changePercent !== null && <> · <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed /></>}
                     {' · 거래량 '}{quote.volume === null ? '미확인' : number.format(quote.volume)}</> : '유효한 시세 없음'}</small>
                 </div>
-                <button type="button" className="favorite-button" aria-pressed={saved} aria-label={item.name + ' 관심종목'}
+                <button type="button" className="favorite-button" disabled={blocked} aria-pressed={saved} aria-label={item.name + ' 관심종목'}
                   onClick={() => onToggle(listing)}><Star size={19} fill={saved ? 'currentColor' : 'none'} aria-hidden="true" /></button>
               </li>
             })}
