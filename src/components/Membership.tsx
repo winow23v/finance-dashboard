@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { useEffect, useState } from 'react'
-import { Activity, UserRound, LogOut, ShieldCheck } from 'lucide-react'
+import { UserRound, LogOut, ShieldCheck } from 'lucide-react'
 import { App } from '../App'
 import { dataMode } from '../services/financeService'
 import { invalidateMemberData, setMemberSession } from '../services/memberTransport'
@@ -145,7 +145,7 @@ function MemberGate() {
 
   const information = Object.hasOwn(informationPages, page) ? page as InformationPage : undefined
   return <main className="member-gate">
-    <div className="member-brand"><Activity size={22} aria-hidden="true" /> Finance Dashboard</div>
+    <div className="member-brand"><img src={import.meta.env.BASE_URL + 'favicon.svg?v=19k'} alt="" width={30} height={30} /> Finance Dashboard</div>
     {information && <><h1>{informationPages[information]}</h1><SiteInformation page={information} /></>}
     <section className="panel member-panel">
       <h2><ShieldCheck size={20} aria-hidden="true" /> 회원 전용 대시보드</h2>

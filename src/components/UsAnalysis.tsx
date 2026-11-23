@@ -1,5 +1,5 @@
 import { ChevronDown } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { getUsAnalysis, marketRequestMessage } from '../services/apiFinanceService'
 import { calculatePriceReturns, calculateTechnicalIndicators, emaWindows, smaWindows } from '../services/technicalIndicators'
 import { Change } from './QuoteDisplay'
@@ -18,9 +18,12 @@ const messages = {
   unsupported: '지원되는 미국 상장 종목을 확인할 수 없습니다.',
 }
 
-export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: string }) {
+export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
+  symbol: string; indexId?: string; stock?: { name: string; meta: string; actions: ReactNode }; refresh?: number
+}) {
   const [state, setState] = useState<{ data: Awaited<ReturnType<typeof getUsAnalysis>> } | { error: string }>()
-  const [requested, setRequested] = useState(false)
+  const [requestedAt, setRequestedAt] = useState<number>()
+  const requested = requestedAt === refresh
   const [revision, retry] = useState(0)
   useEffect(() => {
     const controller = new AbortController()
@@ -30,7 +33,7 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
       if (!controller.signal.aborted) setState({ error: marketRequestMessage(error, '미국시장 일봉 조회 실패') })
     })
     return () => controller.abort()
-  }, [symbol, requested, indexId, revision])
+  }, [symbol, requested, indexId, revision, refresh])
 
   const data = state && 'data' in state ? state.data : null
   const quote = data && data.status !== 'unavailable' ? data.quote : null
@@ -40,29 +43,33 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
   const indicators = useMemo(() => history && aligned ? calculateTechnicalIndicators(history) : null, [history, aligned])
   const returns = useMemo(() => history && indicators ? calculatePriceReturns(history) : {}, [history, indicators])
   return <section className="panel stock-detail krx-analysis" aria-label="기술적 분석">
-    <h2>기술적 분석</h2>
+    {stock && !quote && <header className="stock-identity"><h1>{stock.name}</h1><small>{stock.meta}</small>{stock.actions}</header>}
+    {!stock && <h2>기술적 분석</h2>}
     {!state ? <p role="status">미국시장 일봉을 불러오는 중입니다.</p>
       : 'error' in state ? <div><p role="status">{state.error}</p><p>최신 위험 상태 확인 불가</p>
-        <button className="button" onClick={() => { setState(undefined); setRequested(false); retry(value => value + 1) }}>다시 조회</button></div>
+        <button className="button" onClick={() => { setState(undefined); setRequestedAt(undefined); retry(value => value + 1) }}>다시 조회</button></div>
       : !data || data.status === 'unavailable' || !quote ? <>
         <p role="status">{data?.reason ? messages[data.reason] : '자료 없음'}</p>
         <p>{data?.reason === 'provider-error' || data?.reason === 'provider-not-configured'
           ? '최신 위험 상태 확인 불가' : '위험 분석 자료 부족'}</p>
         {!indexId && !requested && data?.reason === 'not-published' &&
-          <button className="button" type="button" onClick={() => { setState(undefined); setRequested(true) }}>수집 요청</button>}
+          <button className="button" type="button" onClick={() => { setState(undefined); setRequestedAt(refresh) }}>수집 요청</button>}
       </> : <>
-        <section className="analysis-quote us-analysis-quote">
-          <h3>{symbol} 일별 종가</h3>
+        <header className="analysis-quote us-analysis-quote">
+          {stock ? <div className="stock-identity"><h1>{stock.name}</h1><small>{stock.meta}</small></div>
+            : <h3>{symbol} 일별 종가</h3>}
+          <div className="analysis-price"><small>최신 확인 종가</small>
           <strong className="us-quote-price" title={String(quote.close)}>{formatAnalysisPrice(quote.close, unit)}</strong>
           {quote.change !== null && quote.changePercent !== null && <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
-          <p className="heatmap-meta">{quote.tradingDate} · {data.source} · Yahoo 제공 종가 (Adj Close 미적용)
+          </div>{stock?.actions}
+          <p className="heatmap-meta analysis-meta">{quote.tradingDate} · {data.source} · Yahoo 제공 종가 (Adj Close 미적용)
             {' · 수집 '}{dateTime.format(new Date(data.collectedAt))} (KST)</p>
           {data.status === 'stale' && <>
             <p role="status">마지막 정상 데이터 · {data.reason ? messages[data.reason] : '갱신 지연'}</p>
             {!indexId && !requested && data.reason === 'not-published' &&
-              <button className="button" type="button" onClick={() => setRequested(true)}>갱신 요청</button>}
+              <button className="button" type="button" onClick={() => setRequestedAt(refresh)}>갱신 요청</button>}
           </>}
-        </section>
+        </header>
         {history && <TechnicalSummary indicators={indicators} history={history} index={!!indexId} stale={data.status === 'stale'} />}
         <details>
           <summary>최근 20거래일 OHLCV {indexId ? '' : '(기업행위 조정)'}</summary>
@@ -78,7 +85,7 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
             </table>
           </div>
         </details>
-        {indicators && <div className="analysis-details">
+        {indicators && <details className="technical-detail-group"><summary>이동평균·모멘텀·수익률 상세</summary><div className="analysis-details">
             <details>
               <summary>추세 분석 <ChevronDown size={16} aria-hidden="true" /></summary><p>{indexId ? 'Yahoo 제공 지수 종가 기준' : 'Yahoo 배당·분할 조정 종가 기준'}</p>
               <dl className="stock-detail-fields">
@@ -105,7 +112,7 @@ export function UsAnalysis({ symbol, indexId }: { symbol: string; indexId?: stri
                   <dd>{returns[months] ? formatPercent(returns[months].percent) + ' · ' + returns[months].tradingDate : '자료 부족'}</dd></div>)}
               </dl>
             </details>
-          </div>}
+          </div></details>}
       </>}
   </section>
 }

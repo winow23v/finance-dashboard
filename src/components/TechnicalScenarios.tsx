@@ -91,10 +91,12 @@ export function TechnicalScenarios({ plan, tradingDate, display, stale }: {
       {entry.mode === 'unavailable' ? <p>확정 일봉이 더 쌓인 뒤 추세와 가격 구간을 확인할 수 있습니다.</p> : <>
         {entry.mode === 'chase' && <p>가격 이격 또는 과열 조건이 확인됐습니다. 지지 구간을 다시 테스트할 때의 종가를 확인합니다.</p>}
         {entry.mode === 'watch' && <p>추세와 지지 확인이 더 필요합니다. 이 상태에서는 진입 후보를 산출하지 않습니다.</p>}
-        {entry.support && <p>눌림 확인 · {zone(entry.support)}에서 반응하고 확정 종가가 구간 상단을 회복하는 경우</p>}
-        {entry.breakoutZone && <p>돌파 확인 · {zone(entry.breakoutZone)}의 상단을 확정 종가로 넘고,
-          거래량이 직전 20봉 평균의 {format(entry.volumeThreshold)}배 이상인 경우
-          {entry.breakoutPassed && ' · 기준일 충족, 후속 유지 여부 확인'}</p>}
+        {(entry.support || entry.breakoutZone) && <dl className="scenario-conditions">
+          {entry.support && <div><dt>눌림 확인</dt><dd><strong>{zone(entry.support)}</strong><small>지지 반응 뒤 확정 종가가 구간 상단을 회복</small></dd></div>}
+          {entry.breakoutZone && <div><dt>돌파 확인</dt><dd><strong>{zone(entry.breakoutZone)}</strong>
+            <small>종가 상단 돌파 · 거래량 직전 20봉 평균의 {format(entry.volumeThreshold)}배 이상</small>
+            {entry.breakoutPassed && <small>기준일 충족 · 후속 유지 확인</small>}</dd></div>}
+        </dl>}
         {entry.candidate && <>
           <p className="heatmap-meta">{pricePolicy(display)} · 주문 및 체결 가격은 거래 화면에서 확인하세요.</p>
           <dl className="stock-detail-fields scenario-price-cards">
@@ -122,10 +124,11 @@ export function TechnicalScenarios({ plan, tradingDate, display, stale }: {
             {holding.mediumLevel !== undefined && <small>하위 지지 또는 SMA 50 {down(holding.mediumLevel)} · {holding.mediumBreached ? '기준일 종가가 위험 관리가 이하' : '하향 이탈 시 재검토'}</small>}</dd></div>
         </dl>
         <p className="heatmap-meta">표시한 위험 관리 가격은 기준 가격에서 {stopAtrBuffer} ATR을 뺀 값입니다. 확정 종가를 기준으로 점검합니다.</p>
-        <p>분할 익절 후보 · {holding.trimZones.length ? holding.trimZones.map(level => zone(level)).join(' / ') : '상위 저항 미확인'}</p>
-        <p>추가 매수 검토 · {holding.addSupport
-          ? `${zone(holding.addSupport)}에서 지지를 확인하고 확정 종가가 상단을 회복하는 경우`
-          : '추세 개선과 지지 회복 확인 대기'}</p>
+        <dl className="scenario-conditions">
+          <div><dt>분할 익절 후보</dt><dd>{holding.trimZones.length ? holding.trimZones.map(level => <strong key={level.low}>{zone(level)}</strong>) : '상위 저항 미확인'}</dd></div>
+          <div><dt>추가 매수 검토</dt><dd>{holding.addSupport ? <><strong>{zone(holding.addSupport)}</strong>
+            <small>지지 확인 뒤 확정 종가가 구간 상단 회복</small></> : '추세 개선과 지지 회복 확인 대기'}</dd></div>
+        </dl>
       </>}
     </div>}
     <RewardRiskForm prices={rewardRisk ? shown.prices : null} unit={unit} />

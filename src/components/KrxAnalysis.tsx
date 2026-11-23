@@ -1,5 +1,5 @@
 import { ChevronDown, Clock } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { FinanceApiError, getKrxAnalysis, getKrxStocks, marketRequestMessage } from '../services/apiFinanceService'
 import { calculatePriceReturns, calculateTechnicalIndicators, emaWindows, smaWindows } from '../services/technicalIndicators'
 import type { KrxAnalysis as Analysis } from '../types/finance'
@@ -18,7 +18,7 @@ const historyStop = {
   'missing-observation': '종목 유효 관측 없음',
 }
 
-export function KrxAnalysis({ symbol }: { symbol: string }) {
+export function KrxAnalysis({ symbol, actions, refresh = 0 }: { symbol: string; actions: ReactNode; refresh?: number }) {
   const [result, setResult] = useState<{ data: Analysis } | { message: string }>()
   const [listing, setListing] = useState<{ symbol: string; data: KrxStocks }>()
   const [revision, retry] = useState(0)
@@ -33,7 +33,7 @@ export function KrxAnalysis({ symbol }: { symbol: string }) {
         : marketRequestMessage(error, 'KRX 일별 시계열 조회 실패') })
     })
     return () => controller.abort()
-  }, [symbol, revision])
+  }, [symbol, revision, refresh])
 
   const data = result && 'data' in result ? result.data : undefined
   const market = data?.market
@@ -63,14 +63,15 @@ export function KrxAnalysis({ symbol }: { symbol: string }) {
   const histogram = macd?.histogram
 
   return <section className="panel stock-detail krx-analysis" aria-label="기술적 분석">
+    {!data && <header className="stock-identity"><h1>{symbol}</h1>{actions}</header>}
     {!result ? <p className="state" role="status">KRX 시세를 불러오는 중입니다.</p>
       : 'message' in result || !data ? <div className="state"><p role="status">{'message' in result ? result.message : '자료 없음'}</p>
         <p>최신 위험 상태 확인 불가</p>
         <button className="button" onClick={() => { setResult(undefined); retry(value => value + 1) }}>다시 조회</button></div>
         : <>
           <header className="analysis-quote">
-            <div>
-              <h2>{data.name}</h2>
+            <div className="stock-identity">
+              <h1>{data.name}</h1>
               <small>{data.symbol} · {data.market} (XKRX) · KRW</small>
             </div>
             {quote ? <div className="analysis-price">
@@ -79,6 +80,7 @@ export function KrxAnalysis({ symbol }: { symbol: string }) {
               {quote.change !== null && quote.changePercent !== null &&
                 <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
             </div> : <p className="state">최신 공식 종가 없음</p>}
+            {actions}
             <div className="analysis-meta">
               {quote && <span><Clock size={14} aria-hidden="true" /> 거래일 <time dateTime={quote.tradingDate}>{quote.tradingDate}</time></span>}
               <span>{data.source} · 공식 미수정 종가</span>
@@ -86,13 +88,12 @@ export function KrxAnalysis({ symbol }: { symbol: string }) {
               {data.collectedAt && <span>수집 <time dateTime={data.collectedAt}>{timestamp.format(new Date(data.collectedAt))}</time> (KST)</span>}
             </div>
           </header>
-          <div className="analysis-heading">
-            <h2>기술적 분석</h2>
+          <div className="analysis-heading analysis-history-status">
             <small>{bars.length ? `${bars.length}거래일 · ${bars[0].tradingDate} ~ ${bars.at(-1)?.tradingDate}`
               : '연속 일봉 부족'}</small>
           </div>
           <TechnicalSummary indicators={indicator} history={data.history} tick={tick} stale={data.reason === 'provider-error' || data.reason === 'provider-not-configured' || data.reason === 'not-published'} />
-          <div className="analysis-details">
+          <details className="technical-detail-group"><summary>이동평균·모멘텀·수익률 상세</summary><div className="analysis-details">
             <details>
               <summary>추세 · 이동평균 <ChevronDown size={16} aria-hidden="true" /></summary>
               <p className="heatmap-meta">EMA는 첫 전체 구간의 SMA에서 시작합니다.</p>
@@ -124,7 +125,7 @@ export function KrxAnalysis({ symbol }: { symbol: string }) {
                     <small>비교 거래일 <time dateTime={returns[months].tradingDate}>{returns[months].tradingDate}</time></small></> : '자료 부족'}</dd></div>)}
               </dl>
             </details>
-          </div>
+          </div></details>
           {data.stoppedAt && data.stoppedReason && <small>{data.stoppedAt} 및 이전 제외 · {historyStop[data.stoppedReason]}</small>}
         </>}
   </section>

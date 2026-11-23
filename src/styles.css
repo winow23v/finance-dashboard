@@ -516,8 +516,6 @@ dialog::backdrop { background: #04080bcc; }
   .analysis-price { text-align: end; }
   .analysis-details { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
-@container dashboard (max-width: 295px) {
-}
 
 .us-quote-price { display: block; font-size: clamp(1.5rem, 5vw, 2rem); }
 .us-history-scroll { overflow-x: auto; }
@@ -590,3 +588,52 @@ dialog::backdrop { background: #04080bcc; }
 .scenario-price-cards > div { min-width: 0; padding: 8px; border: 1px solid var(--line); border-radius: var(--radius-control); }
 .scenario-price-cards dd { font-weight: 650; }
 .scenario-price-cards small { font-weight: 400; }
+
+img.brand-icon { padding: 0; }
+.overview-market-summary { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; align-items: start; }
+.overview-market-note { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; padding: 10px 12px; }
+.overview-market-note h2, .overview-market-note p { margin: 0; }
+.overview-market-note p { color: var(--muted); }
+.overview-market-note .text-link { margin-inline-start: auto; }
+.overview-watch-link { display: inline-flex; align-items: center; min-height: 44px; margin-inline: 12px; }
+.overview-heatmap .heatmap-map { height: clamp(150px, 38cqw, 300px); }
+.overview-heatmap .krx-heatmap-layout { grid-template-columns: minmax(0, 1fr); }
+.stock-identity { min-width: 0; overflow-wrap: anywhere; }
+.stock-identity h1 { margin: 0 0 4px; font-size: clamp(1.35rem, 4vw, 1.85rem); }
+.stock-toolbar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-block: 4px; }
+.stock-toolbar .button { white-space: normal; }
+.analysis-quote .analysis-meta { margin: 0; }
+.analysis-history-status { color: var(--muted); }
+.watchlist-saved { position: fixed; z-index: 7; inset: auto var(--gutter) 16px auto; max-width: calc(100% - 2 * var(--gutter)); background: var(--panel); box-shadow: var(--shadow-dialog); padding-block: 3px; }
+.technical-key-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 108px), 1fr)); gap: 6px 12px; margin: 10px 0; }
+.technical-key-metrics > div { padding-block: 5px; border-block-start: 1px solid var(--line); min-width: 0; }
+.technical-key-metrics dt, .scenario-conditions dt { color: var(--muted); font-size: var(--text-caption); }
+.technical-key-metrics dd, .scenario-conditions dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.technical-detail-group > summary { display: flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; font-weight: 650; }
+.technical-detail-group > summary::before { content: '›'; }
+.technical-detail-group[open] > summary::before { transform: rotate(90deg); }
+.scenario-conditions { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 8px 16px; margin-block: 8px; }
+.scenario-conditions > div { padding: 6px 8px; border-inline-start: 2px solid var(--line); }
+.scenario-conditions :is(strong, small) { display: block; }
+.scenario-conditions small { color: var(--muted); }
+.fx-chart-link { display: inline-flex; align-items: center; min-height: 44px; }
+.fx-chart-link[aria-pressed="true"] { font-weight: 700; text-decoration: underline; }
+@container dashboard (min-width: 920px) {
+  .overview-market-summary { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+  .overview-market-note { grid-column: 1 / -1; }
+  .analysis-quote.us-analysis-quote:has(.stock-identity) { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+}
+@media (max-width: 780px) {
+  html { scroll-padding-bottom: calc(64px + env(safe-area-inset-bottom)); }
+  .mobile-navigation { padding-inline: env(safe-area-inset-left) env(safe-area-inset-right); }
+  .mobile-navigation :is([aria-current], .mobile-menu-active) { box-shadow: inset 0 2px currentColor; font-weight: 700; }
+  .app:has(input:is([type="search"], [type="number"], [type="text"]):focus) .mobile-navigation { visibility: hidden; }
+  .search input, .scenario-inputs input, .heatmap-controls input { font-size: 16px; }
+  .watchlist-saved { bottom: calc(8px + var(--bottom-height) + env(safe-area-inset-bottom)); }
+  .overview-index-quotes .quote-card { padding: 8px; gap: 3px; }
+  .overview-fx .fx-rates { gap: 5px; grid-template-columns: minmax(0, 1fr); }
+  .overview-fx .fx-quote { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; align-items: start; padding: 6px 10px; }
+  .overview-fx .fx-quote > strong { grid-column: 2; grid-row: 1; margin: 0; }
+  .overview-fx .fx-info-button { display: none; }
+  .overview-fx .fx-quote > small { margin: 2px 0 0; }
+}

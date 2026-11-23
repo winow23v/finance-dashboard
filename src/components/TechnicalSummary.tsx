@@ -40,7 +40,7 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
   const risk = technicalRisk(assessment, indicators, stale, !index)
   if (!assessment || !indicators || !plan) return <p className="state" role="status">분석 불가 · {risk.status} · 유효한 연속 확정 일봉을 확인할 수 없습니다.</p>
   const { trend, reasons, zones, invalidation, breakVolumeConfirmed, tradingDate } = assessment
-  const { dmi, bands, volume, atr14, cross, sma, sma20Slope } = indicators
+  const { dmi, bands, volume, atr14, cross, sma, sma20Slope, rsi14, macd } = indicators
   const display: PriceDisplay = { unit: index ? 'pt' : history.currency, tick }
   const basis = history.adjustment === 'total-return-adjusted' ? '배당·분할 조정 가격'
     : history.adjustment === 'split-adjusted' ? '분할 조정 가격' : '미수정 가격'
@@ -56,6 +56,13 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
         <div><dt>추세</dt><dd>{trendLabel[trend]}</dd></div>
         <div><dt>진입 관점</dt><dd>{entryLabel}</dd></div>
         <div><dt>위험</dt><dd><span className={stale || risk.signals.length ? "technical-risk-attention" : undefined}>{risk.status}</span></dd></div>
+      </dl>
+      <dl className="technical-key-metrics">
+        <div><dt>RSI 14</dt><dd>{format(rsi14)}</dd></div>
+        <div><dt>MACD</dt><dd>{macd.histogram === null ? '자료 부족' : macd.histogram > 0 ? '시그널 위' : macd.histogram < 0 ? '시그널 아래' : '시그널과 같음'}</dd></div>
+        <div><dt>ADX 14</dt><dd>{format(dmi.adx)}</dd></div>
+        <div><dt>직전 20봉 대비 거래량</dt><dd>{volume.ratio === null ? '비교 불가' : format(volume.ratio) + '배'}</dd></div>
+        <div><dt>변동성</dt><dd>{stale ? '최신 상태 미확인' : atr14 === null ? '자료 부족' : risk.signals.includes('변동성 확대') ? '확대' : 'ATR ' + format(atr14)}</dd></div>
       </dl>
       <details className="technical-risk-checks">
         <summary>확인한 위험 조건 <ChevronDown size={16} aria-hidden="true" /></summary>
@@ -88,6 +95,7 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
       </details>
     </section>
     {!index && <TechnicalScenarios plan={plan} tradingDate={tradingDate} display={display} stale={stale} />}
+    <details className="technical-detail-group"><summary>추세 강도·변동성·거래량 상세</summary>
     <div className="analysis-details">
       <details>
         <summary>추세 강도 · 이동평균 교차 <ChevronDown size={16} aria-hidden="true" /></summary>
@@ -121,5 +129,6 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
         </dl>
       </details>
     </div>
+    </details>
   </>
 }
