@@ -5,6 +5,7 @@ import { calculatePriceReturns, calculateTechnicalIndicators, emaWindows, smaWin
 import type { KrxAnalysis as Analysis } from '../types/finance'
 import { Change } from './QuoteDisplay'
 import { krxStateLabels } from './KrxStocks'
+import { KrxAfterHoursStatus } from './KrxAfterHoursStatus'
 import { TechnicalSummary } from './TechnicalSummary'
 import { confirmedKrxTick, formatAnalysisPrice, formatPercent } from '../services/analysisPrices'
 import type { KrxStocks } from '../types/finance'
@@ -75,7 +76,7 @@ export function KrxAnalysis({ symbol, actions, refresh = 0 }: { symbol: string; 
               <small>{data.symbol} · {data.market} (XKRX) · KRW</small>
             </div>
             {quote ? <div className="analysis-price">
-              <small>최신 확인 종가</small>
+              <small>KRX 정규장 종가</small>
               <strong>{formatAnalysisPrice(quote.price, 'KRW')}</strong>
               {quote.change !== null && quote.changePercent !== null &&
                 <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
@@ -88,6 +89,7 @@ export function KrxAnalysis({ symbol, actions, refresh = 0 }: { symbol: string; 
               {data.collectedAt && <span>수집 <time dateTime={data.collectedAt}>{timestamp.format(new Date(data.collectedAt))}</time> (KST)</span>}
             </div>
           </header>
+          <KrxAfterHoursStatus details={data.afterHours} />
           <div className="analysis-heading analysis-history-status">
             <small>{bars.length ? `${bars.length}거래일 · ${bars[0].tradingDate} ~ ${bars.at(-1)?.tradingDate}`
               : '연속 일봉 부족'}</small>

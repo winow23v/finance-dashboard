@@ -1,12 +1,14 @@
-import { isNumber, isRecord } from './apiFinanceService'
+import { isKrxAfterHours, isNumber, isRecord } from './apiFinanceService'
 import { fetchMemberApi } from './memberTransport'
 import { findMarketListing, marketListings } from './marketListings'
 import { isWatchlistSymbol } from './watchlist'
 import { marketSymbolKey, type MarketSymbol } from '../types/marketSymbol'
-import type { KrxStock } from '../types/finance'
+import type { KrxAfterHours, KrxStock } from '../types/finance'
 
 export type Observation = {
   name?: string; segment?: string; currency?: 'KRW' | 'USD'
+  regular?: { source: string; collectedAt: string | null; reason: string | null }
+  afterHours?: KrxAfterHours[]
   quote?: { price: number; changePercent: number | null; tradingDate: string }
 }
 
@@ -48,6 +50,13 @@ export async function watchlistObservations(items: MarketSymbol[], signal: Abort
     }
     if (row.listing.market === 'KR' && typeof row.name === 'string' && row.name.trim()
       && row.name !== row.listing.symbol && (row.segment === 'KOSPI' || row.segment === 'KOSDAQ') && row.currency === 'KRW') {
+      const regular = row.regular
+      if (isRecord(regular) && regular.source === 'KRX OPEN API'
+        && (regular.collectedAt === null || typeof regular.collectedAt === 'string' && Number.isFinite(Date.parse(regular.collectedAt)))
+        && (regular.reason === null || typeof regular.reason === 'string')) {
+        observation.regular = { source: regular.source, collectedAt: regular.collectedAt, reason: regular.reason }
+      }
+      if (isKrxAfterHours(row.afterHours)) observation.afterHours = row.afterHours
       entries.set(key, { ...observation, name: row.name, segment: row.segment, currency: 'KRW' })
     } else if (row.listing.market === 'US' && row.currency === 'USD'
       && (row.listing.exchange === 'US' || findMarketListing(row.listing))) {

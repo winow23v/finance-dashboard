@@ -306,7 +306,9 @@ export async function buildApp({
         const matches = stocks.filter(stock => stock.symbol === item.symbol)
         if (matches.length !== 1) return { listing: item }
         const { name, market, quote } = matches[0]
-        return { listing: item, name, segment: market, currency: 'KRW', quote }
+        const catalog = domestic.find(result => result.status === 'fulfilled' && result.value.market === market)?.value
+        return { listing: item, name, segment: market, currency: 'KRW', quote,
+          regular: catalog?.trades, afterHours: catalog?.afterHours }
       }
       const quote = (await memberUs?.stock(item.symbol).catch(() => null))?.quote
       return { listing: item, ...(quote && {
@@ -404,6 +406,28 @@ export async function buildApp({
   return app
 }
 
+export function registerKrxCollector(app, collector, intervalMs = 60_000) {
+  const shutdown = new AbortController()
+  let timer
+  let pending
+  const collect = () => {
+    if (shutdown.signal.aborted || pending) return
+    pending = Promise.resolve().then(() => collector.collect(shutdown.signal))
+      .catch(() => app.log.warn('KRX collection failed'))
+      .finally(() => { pending = undefined })
+  }
+  app.addHook('onReady', async () => {
+    collect()
+    timer = setInterval(collect, intervalMs)
+    timer.unref()
+  })
+  app.addHook('preClose', async () => {
+    clearInterval(timer)
+    shutdown.abort()
+    await pending
+  })
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const privateFred = process.env.FRED_PRIVATE_MODE === '1'
@@ -424,15 +448,18 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       memberUs: configureMemberUsMarket(),
       localIndexResearch: research || krx ? createIndexSnapshot(research?.createResearchProvider(), krx) : undefined,
     })
-    let timer
-    if (krx) app.addHook('onClose', async () => clearInterval(timer))
+    const collector = memberKrx ?? krx
+    if (collector) registerKrxCollector(app, collector)
     await app.listen({ host: '127.0.0.1', port: privateFred ? 3001 : 3000 })
-    if (krx) {
-      const collect = () => { void krx.collect().catch(() => app.log.warn('KRX collection failed')) }
-      collect()
-      timer = setInterval(collect, 60_000)
-      timer.unref()
+    let stopping
+    const shutdown = () => {
+      stopping ??= app.close().catch(() => {
+        app.log.error('Finance API shutdown failed')
+        process.exitCode = 1
+      })
     }
+    process.once('SIGTERM', shutdown)
+    process.once('SIGINT', shutdown)
   } catch {
     console.error('Finance API startup failed')
     process.exitCode = 1

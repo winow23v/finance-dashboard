@@ -10,7 +10,7 @@ trap 'rm -rf -- "$fixture"' EXIT
 
 required=(
   server.mjs market-cache.mjs package.json package-lock.json
-  membership-provider.mjs market-index-provider.mjs krx-provider.mjs us-market-provider.mjs
+  membership-provider.mjs market-index-provider.mjs krx-provider.mjs krx-calendar-provider.mjs us-market-provider.mjs
   fred-provider.mjs ecos-provider.mjs dart-provider.mjs fx-provider.mjs public-provider.mjs
 )
 

@@ -61,3 +61,124 @@ Recovery
 - If an import stops early, existing files are preserved. Review the report
   and repeat the plan before re-applying. Review conflicts with an operator
   before replacing any file.
+
+Phase 19-L member collection
+
+- The existing Fastify process runs one in-process collector. No separate service
+  or timer is required. Run only one member collector per KRX cache directory.
+  Member HTTP reads use the file-backed snapshots and do not dispatch KRX calls.
+- Use FINANCE_MEMBER_KRX=1, the existing KRX_API_KEY and the existing
+  KRX_MEMBER_CACHE_DIR. Back up that directory and verify that the API service
+  account can write to it. Preserve the existing OHLCV history and permissions.
+- Normal KST slots are 16:00, 16:30, 17:30, 18:15, 19:00, 20:15 and 21:15.
+  A missing prior close gets two additional checks at 08:00 and 10:00 on the
+  next trading day. Each endpoint reserves its window on disk before the HTTP
+  call. Missed slots are not replayed. A 429 stops calls across the collector
+  for at least 30 minutes or Retry-After, whichever is longer. The cooldown
+  file persists across restarts.
+- The included holiday calendar covers 2026. Set KRX_CALENDAR_OVERRIDES to a JSON
+  object when an official special close or a new year is announced. The following
+  illustrates the format only:
+  {"years":[2027],"closed":["2027-01-01"],"regularClose":{"2027-01-04":"15:30"},"afterClose":{"2027-01-04":"20:00"}}
+  Include the complete official holiday list before enabling a new year.
+  Collection is held for an uncovered year. The regular check never starts
+  before 16:00 or 30 minutes after a late official close.
+- The after-hours connection check runs at 20:15 or 15 minutes after an
+  overridden late close. The check records an unconnected state for each
+  venue. It does not call a quote endpoint or write an OHLCV bar.
+  Connect a venue-specific provider after verifying feed scope, display
+  approval, symbol eligibility and the observation timestamp.
+- After approval, deploy the Oracle API and check its scheduled result, the
+  existing history and the KRX stock history endpoint before the Pages rollout.
+  Watch 429s, cache write failures and aggregate memory and CPU. For rollback,
+  restore the previous API and frontend releases. Preserve the cache.
+
+Phase 19-L read-only operational verification (after access is available)
+
+Run on Oracle. These commands read service metadata and selected cache keys.
+They never print the process environment, tokens, keys, or cached stock rows.
+
+    service=finance-dashboard-api.service
+    systemctl is-active "$service"
+    systemctl show "$service" -p MainPID -p WorkingDirectory -p User -p MemoryCurrent -p CPUUsageNSec
+    getconf _NPROCESSORS_ONLN
+    free -m
+    vmstat 1 3
+    systemctl list-timers --all --no-pager
+    pid=$(systemctl show "$service" -p MainPID --value)
+    test "$pid" -gt 1
+    runtime=$(sudo readlink "/proc/$pid/exe")
+    cwd=$(sudo readlink "/proc/$pid/cwd")
+    service_user=$(systemctl show "$service" -p User --value)
+    cache=$(sudo "$runtime" - "$pid" "$cwd" <<'NODE'
+    const fs = require('node:fs')
+    const path = require('node:path')
+    const [, , pid, cwd] = process.argv
+    const entry = fs.readFileSync('/proc/' + pid + '/environ', 'utf8').split('\0')
+      .find(value => value.startsWith('KRX_MEMBER_CACHE_DIR='))
+    const configured = entry?.slice('KRX_MEMBER_CACHE_DIR='.length).trim()
+    console.log(path.resolve(cwd, configured || '.krx-cache/member'))
+    NODE
+    )
+    printf 'KRX cache: %s\n' "$cache"
+    sudo -u "${service_user:-root}" test -r "$cache"
+    sudo -u "${service_user:-root}" test -w "$cache"
+    sudo -u "${service_user:-root}" test -x "$cache"
+    curl -fsS http://127.0.0.1:3000/health
+    sudo sha256sum "$cwd/server.mjs" "$cwd/krx-provider.mjs" "$cwd/krx-calendar-provider.mjs"
+    sudo "$runtime" - "$cache" <<'NODE'
+    const fs = require('node:fs')
+    const path = require('node:path')
+    const root = process.argv[2]
+    for (const name of ['idx-kospi_dd_trd', 'idx-kosdaq_dd_trd', 'sto-stk_bydd_trd',
+      'sto-ksq_bydd_trd', 'sto-stk_isu_base_info', 'sto-ksq_isu_base_info',
+      'krx-regular-cooldown', 'krx-after-hours-check']) {
+      try {
+        const value = JSON.parse(fs.readFileSync(path.join(root, name + '.json')))
+        console.log(JSON.stringify({ name, date: value.data?.date ?? value.date,
+          collectedAt: value.data?.collectedAt, attempt: value.attempt,
+          blockedUntil: value.blockedUntil, connectionCheckedAt: value.at }))
+      } catch (error) {
+        console.log(JSON.stringify({ name, error: error.code ?? 'INVALID_CACHE_JSON' }))
+      }
+    }
+    NODE
+
+Use the Oracle Actions run's headSha and compare the deployed checksums
+against that exact Git tree. The tar deployment does not carry Git metadata.
+From the release checkout:
+
+    gh run view "$oracle_run_id" --json headSha,conclusion
+    git show "$release_sha:vps-api/server.mjs" | sha256sum
+    git show "$release_sha:vps-api/krx-provider.mjs" | sha256sum
+    git show "$release_sha:vps-api/krx-calendar-provider.mjs" | sha256sum
+
+After approval and before deployment, confirm there is exactly one cache writer.
+Take a backup outside collection windows after checking no writes are active.
+The command archives ownership, modes, and the complete existing history.
+The cache must be outside the replaceable API release tree; if it is inside,
+stop and check the approved cache relocation procedure first.
+
+    backup="/var/backups/finance-dashboard/krx-$(date -u +%Y%m%dT%H%M%SZ).tar"
+    sudo install -d -m 0700 "$(dirname "$backup")"
+    archive_member=$(basename "$cache")
+    sudo tar --acls --xattrs -C "$(dirname "$cache")" -cpf "$backup" "$archive_member"
+    sudo tar -tf "$backup" | awk '/ohlcv-(KOSPI|KOSDAQ)-/ {count++} END {print "OHLCV files:", count}'
+    sudo sha256sum "$backup"
+
+After deployment, use the read-only commands above in a collection window.
+Expect the reported trading date and collectedAt to advance only after both
+current OHLCV and the latest snapshot are saved. Check KOSPI and KOSDAQ,
+the presence of earlier OHLCV files, and the independent 20:15 connection
+status. In a signed-in browser, inspect the history route for 005930 and
+263860 and the favorite observations for matching trading dates and sources.
+If the provider is late, check the recorded attempt and subsequent slot.
+If SSH access is unavailable, mark production checks pending.
+
+For code rollback, use the previous Oracle release tree identified by the
+deployment log's Rollback backup path and the prior Pages artifact. Verify
+the exact backup path and use the existing release recovery procedure.
+Keep the cache in place. If cache recovery is necessary, extract the tar
+backup to a separate secure directory and verify the history before restoring
+only approved missing or corrupt files under a stopped writer. Preserve
+successfully collected newer files and keep the original backup.
