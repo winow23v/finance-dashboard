@@ -580,3 +580,64 @@ test('permanent HTTP and network failures do not retry', async t => {
     assert.deepEqual(requests.filter(entry => entry.event === 'krx-request').map(entry => entry.httpStatus), [status])
   }
 })
+
+
+test('HTTP 200 body connection failures retry at most twice', async t => {
+  for (const [networkCode, recover] of [['ECONNRESET', true], ['UND_ERR_SOCKET', false]]) {
+    await t.test(networkCode, async t => {
+      const root = await mkdtemp(join(tmpdir(), 'krx-body-connection-'))
+      t.after(() => rm(root, { recursive: true, force: true }))
+      const log = []
+      let calls = 0
+      const provider = createKrxProvider({ root, key: 'fixture', log: entry => log.push(entry),
+        clock: () => Date.parse('2026-11-23T08:31:00Z'),
+        fetchImpl() {
+          calls++
+          if (recover && calls === 3) {
+            return response([{ IDX_CLSS: 'KOSPI', IDX_NM: '코스피', BAS_DD: '20261123', CLSPRC_IDX: '105' }])
+          }
+          const error = networkCode === 'ECONNRESET'
+            ? Object.assign(new Error('upstream disconnect'), { code: networkCode })
+            : new TypeError('terminated', { cause: { code: networkCode } })
+          return new Response(new ReadableStream({
+            start(controller) { controller.enqueue(new TextEncoder().encode('{"OutBlock_1":')) },
+            pull(controller) { controller.error(error) },
+          }))
+        },
+      })
+      const result = await provider.indices('KOSPI')
+      assert.equal(calls, 3)
+      assert.equal(recover ? result.price : result.errorCode, recover ? 105 : 'PROVIDER_CONNECTION_ERROR')
+      assert.deepEqual(log.filter(entry => entry.event === 'krx-request')
+        .map(({ attempt, httpStatus, code }) => [attempt, httpStatus, code]), [
+        [1, 200, 'PROVIDER_CONNECTION_ERROR'], [2, 200, 'PROVIDER_CONNECTION_ERROR'],
+        [3, 200, recover ? null : 'PROVIDER_CONNECTION_ERROR'],
+      ])
+    })
+  }
+})
+
+test('malformed, oversized, and unclassified bodies and HTTP 429 do not retry', async t => {
+  for (const [createResponse, status, code] of [
+    [() => new Response('{'), 200, 'PROVIDER_INVALID_JSON'],
+    [() => new Response(new Uint8Array(4 * 1024 * 1024 + 1)), 200, 'PROVIDER_RESPONSE_TOO_LARGE'],
+    [() => new Response(new ReadableStream({ pull(controller) { controller.error(new Error('unknown body error')) } })),
+      200, 'PROVIDER_BODY_ERROR'],
+    [() => new Response(null, { status: 429 }), 429, 'PROVIDER_RATE_LIMITED'],
+  ]) {
+    await t.test(code, async t => {
+      const root = await mkdtemp(join(tmpdir(), 'krx-no-body-retry-'))
+      t.after(() => rm(root, { recursive: true, force: true }))
+      const log = []
+      let calls = 0
+      const provider = createKrxProvider({ root, key: 'fixture', log: entry => log.push(entry),
+        clock: () => Date.parse('2026-11-23T08:31:00Z'),
+        fetchImpl() { calls++; return createResponse() },
+      })
+      assert.equal((await provider.indices('KOSPI')).errorCode, code)
+      assert.equal(calls, 1)
+      assert.deepEqual(log.filter(entry => entry.event === 'krx-request')
+        .map(({ httpStatus, code }) => [httpStatus, code]), [[status, code]])
+    })
+  }
+})

@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
-import { isDay, providerClient, ProviderError } from './public-provider.mjs'
+import { isDay, isTransientNetworkError, providerClient, ProviderError } from './public-provider.mjs'
 import { createKrxCalendar, krxCollectionSession, day, dayMs, koreanOffset, weekend } from './krx-calendar-provider.mjs'
 
 const source = 'KRX OPEN API'
@@ -23,9 +23,6 @@ const markets = Object.keys(endpoint)
 const backfillStopCodes = new Set(['PROVIDER_RATE_LIMITED', 'KRX_BACKFILL_BUDGET', 'KRX_AUTH_REJECTED',
   'KRX_ACCESS_DENIED', 'KRX_HISTORY_CACHE_FAILED'])
 const retryableHttp = new Set([408, 500, 502, 503, 504])
-const retryableNetwork = new Set(['EAI_AGAIN', 'ECONNABORTED', 'ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH',
-  'ENETRESET', 'ENETUNREACH', 'EPIPE', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT',
-  'UND_ERR_SOCKET'])
 
 function * tradingCandidates(date, closed = weekend) {
   for (let offset = 0; offset < historyDays; offset++) {
@@ -139,8 +136,7 @@ export function createKrxProvider({
       response = await fetchImpl(url, options)
     } catch (error) {
       if (error instanceof ProviderError || options.signal.aborted) throw error
-      const networkCode = error.cause?.code ?? error.code
-      if (retryableNetwork.has(networkCode)) throw error
+      if (isTransientNetworkError(error)) throw error
       throw new ProviderError(502, 'PROVIDER_UNAVAILABLE')
     }
     if (response.status === 429 && scheduledOnly) {
@@ -177,7 +173,7 @@ export function createKrxProvider({
           return rows
         } catch (error) {
           code = { 400: 'KRX_INVALID_REQUEST', 401: 'KRX_AUTH_REJECTED', 403: 'KRX_ACCESS_DENIED' }[httpStatus]
-            ?? error.code ?? 'KRX_UNAVAILABLE'
+            ?? (error.transientNetwork === true ? 'PROVIDER_CONNECTION_ERROR' : error.code) ?? 'KRX_UNAVAILABLE'
           if (code === error.code) throw error
           throw new ProviderError(502, code)
         } finally {
