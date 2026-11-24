@@ -2,6 +2,8 @@ import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { performance } from 'node:perf_hooks'
+import { setTimeout as delay } from 'node:timers/promises'
 import { isDay, providerClient, ProviderError } from './public-provider.mjs'
 import { createKrxCalendar, krxCollectionSession, day, dayMs, koreanOffset, weekend } from './krx-calendar-provider.mjs'
 
@@ -14,12 +16,21 @@ const services = Object.values(endpoint).flatMap(({ index, trades, listings }) =
 const minutes = [16 * 60 + 30, 17 * 60 + 30, 19 * 60]
 const isoDay = value => typeof value === 'string' ? value.replace(/^(\d{4})(\d\d)(\d\d)$/, '$1-$2-$3') : ''
 const codePattern = /^[0-9A-Z]{6}$/
-const historyDays = 540
+const historyDays = 780
+const historySessions = 500
+const firstOfficialDate = '2010-01-04'
 const markets = Object.keys(endpoint)
+const backfillStopCodes = new Set(['PROVIDER_RATE_LIMITED', 'KRX_BACKFILL_BUDGET', 'KRX_AUTH_REJECTED',
+  'KRX_ACCESS_DENIED', 'KRX_HISTORY_CACHE_FAILED'])
+const retryableHttp = new Set([408, 500, 502, 503, 504])
+const retryableNetwork = new Set(['EAI_AGAIN', 'ECONNABORTED', 'ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH',
+  'ENETRESET', 'ENETUNREACH', 'EPIPE', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_SOCKET'])
 
 function * tradingCandidates(date, closed = weekend) {
   for (let offset = 0; offset < historyDays; offset++) {
     const candidate = day(Date.parse(date) - offset * dayMs)
+    if (candidate < firstOfficialDate) break
     if (!closed(candidate)) yield candidate
   }
 }
@@ -39,7 +50,9 @@ function session(time) {
   if (!weekend(today) && slot !== -1) return { date: today, slot, weekend: false, beforeClose: false }
   let prior = Date.parse(today) - dayMs
   while (weekend(prior)) prior -= dayMs
-  return { date: day(prior), slot: 2, weekend: weekend(today), beforeClose: !weekend(today) }
+  const overnightSlot = prior === Date.parse(today) - dayMs && nowMinutes >= 6 * 60
+  return { date: day(prior), slot: overnightSlot ? minutes.length : minutes.length - 1,
+    weekend: weekend(today), beforeClose: !weekend(today) }
 }
 
 function value(raw) {
@@ -93,9 +106,13 @@ function normalize(path, rows, date) {
   }))
 }
 
+export function memberKrxCacheDir() {
+  return process.env.KRX_MEMBER_CACHE_DIR?.trim() || fileURLToPath(new URL('.krx-cache/member/', import.meta.url))
+}
+
 export function configureMemberKrx({
   enabled = process.env.FINANCE_MEMBER_KRX,
-  root = process.env.KRX_MEMBER_CACHE_DIR?.trim() || fileURLToPath(new URL('.krx-cache/member/', import.meta.url)),
+  root = memberKrxCacheDir(),
   ...options
 } = {}) {
   if (enabled === '1') return createKrxProvider({ ...options, root, scheduledOnly: true })
@@ -105,6 +122,7 @@ export function createKrxProvider({
   key = process.env.KRX_API_KEY,
   root = fileURLToPath(new URL('.krx-cache/', import.meta.url)),
   fetchImpl = fetch, clock = Date.now, scheduledOnly = false, calendar = createKrxCalendar(),
+  log = scheduledOnly ? entry => console.info(JSON.stringify(entry)) : () => {},
 } = {}) {
   // A bounded number of KRX GETs are allowed per collection window and per process.
   let blockedUntil = 0
@@ -114,40 +132,70 @@ export function createKrxProvider({
   let afterCheck
   let collection
   const targetFor = () => scheduledOnly ? krxCollectionSession(clock(), calendar) : session(clock())
-  const get = providerClient(async (...args) => {
-    const response = await fetchImpl(...args)
+  const historyClosed = scheduledOnly ? calendar.closed : weekend
+  const get = providerClient(async (url, options) => {
+    let response
+    try {
+      response = await fetchImpl(url, options)
+    } catch (error) {
+      if (error instanceof ProviderError || options.signal.aborted) throw error
+      const networkCode = error.cause?.code ?? error.code
+      if (retryableNetwork.has(networkCode)) throw error
+      throw new ProviderError(502, 'PROVIDER_UNAVAILABLE')
+    }
     if (response.status === 429 && scheduledOnly) {
       const header = response.headers.get('retry-after')
       const resume = header && /^\d+$/.test(header) ? clock() + Number(header) * 1000 : Date.parse(header ?? '')
       blockedUntil = Math.max(clock() + 30 * 60_000, Number.isFinite(resume) ? resume : 0)
       await save(cooldownFile, { blockedUntil })
     }
-    const code = { 400: 'KRX_INVALID_REQUEST', 401: 'KRX_AUTH_REJECTED', 403: 'KRX_ACCESS_DENIED' }[response.status]
-    if (code) {
-      await response.body?.cancel().catch(() => {})
-      throw new ProviderError(502, code)
-    }
     return response
-  }, 150, { queue: true, dailyLimit: 300, timeoutMs: 3500, maxBytes: 4 * 1024 * 1024 })
+  }, 150, { queue: true, dailyLimit: 300, detailedErrors: true, maxBytes: 4 * 1024 * 1024 })
   const states = new Map()
   const pending = new Map()
   const historyPending = new Map()
   let queue = Promise.resolve()
 
-  async function request(path, date) {
+  async function request(path, date, { retries = 0, requests } = {}) {
     const url = new URL('https://data-dbg.krx.co.kr/svc/apis/' + path)
     url.searchParams.set('basDd', date.replaceAll('-', ''))
-    const call = queue.then(() => {
-      if (clock() < blockedUntil) throw new ProviderError(503, 'PROVIDER_RATE_LIMITED')
-      return get(url, { AUTH_KEY: key.trim() })
-    })
-    queue = call.catch(() => {})
-    const body = await call
-    if (!Array.isArray(body?.OutBlock_1)) throw new ProviderError(502, 'KRX_INVALID_RESPONSE')
-    if (body.OutBlock_1.length === 0) return []
-    const rows = normalize(path, body.OutBlock_1, date)
-    if (!rows.length) throw new ProviderError(502, 'KRX_INVALID_OBSERVATIONS')
-    return rows
+    const timeoutMs = path.endsWith('_bydd_trd') ? 10_000 : 5_000
+    for (let retry = 0; ; retry++) {
+      let httpStatus = null
+      const call = queue.then(async () => {
+        await loadCooldown()
+        if (clock() < blockedUntil) throw new ProviderError(503, 'PROVIDER_RATE_LIMITED')
+        const at = new Date(clock()).toISOString()
+        const start = performance.now()
+        let code = null
+        try {
+          const body = await get(url, { AUTH_KEY: key.trim() }, timeoutMs, status => { httpStatus = status })
+          if (!Array.isArray(body?.OutBlock_1)) throw new ProviderError(502, 'KRX_INVALID_RESPONSE')
+          if (body.OutBlock_1.length === 0) return []
+          const rows = normalize(path, body.OutBlock_1, date)
+          if (!rows.length) throw new ProviderError(502, 'KRX_INVALID_OBSERVATIONS')
+          return rows
+        } catch (error) {
+          code = { 400: 'KRX_INVALID_REQUEST', 401: 'KRX_AUTH_REJECTED', 403: 'KRX_ACCESS_DENIED' }[httpStatus]
+            ?? error.code ?? 'KRX_UNAVAILABLE'
+          if (code === error.code) throw error
+          throw new ProviderError(502, code)
+        } finally {
+          const entry = { at, date, attempt: retry + 1, httpStatus, elapsedMs: Math.round(performance.now() - start), code }
+          requests?.push(entry)
+          log({ event: 'krx-request', endpoint: path, ...entry })
+        }
+      })
+      queue = call.catch(() => {})
+      try {
+        return await call
+      } catch (error) {
+        const transient = retryableHttp.has(httpStatus) || error.code === 'PROVIDER_TIMEOUT'
+          || error.code === 'PROVIDER_CONNECTION_ERROR'
+        if (!transient || retry >= retries) throw error
+        await delay(500 * 2 ** retry)
+      }
+    }
   }
 
   async function save(file, state) {
@@ -172,7 +220,8 @@ export function createKrxProvider({
   async function saveHistory(market, date, rows) {
     const bars = rows.map(toBar).filter(Boolean)
     if (rows.length && !bars.length) throw new ProviderError(502, 'KRX_INVALID_OBSERVATIONS')
-    const stored = await save(historyFile(market, date), { date, rows: bars })
+    const noTrades = rows.filter(row => row.volume === 0).map(row => row.symbol)
+    const stored = await save(historyFile(market, date), { date, rows: bars, noTrades })
     if (!stored) throw new ProviderError(503, 'KRX_HISTORY_CACHE_FAILED')
   }
 
@@ -206,7 +255,7 @@ export function createKrxProvider({
     if (!key?.trim() || (!metadataRefresh && state.data?.date >= target.date) ||
       (scheduledOnly && (!target.canCollect || clock() < blockedUntil)) ||
       (alreadyAttempted && (scheduledOnly || !metadataRefresh || state.attempt.metadataRefresh))) return previous
-    const attempt = { date: target.date, slot: target.slot, at: new Date(clock()).toISOString(), result: 'empty', metadataRefresh }
+    const attempt = { date: target.date, slot: target.slot, at: new Date(clock()).toISOString(), result: 'empty', metadataRefresh, requests: [] }
     if (scheduledOnly) {
       // Reserve this window on disk before calling upstream. A restart must not
       // turn a previously dispatched request into another request in the same slot.
@@ -223,7 +272,7 @@ export function createKrxProvider({
       for (let offset = 0; offset < (scheduledOnly || state.data ? 1 : 8); offset++) {
         const date = day(Date.parse(target.date) - offset * dayMs)
         if (weekend(date)) continue
-        const rows = await request(path, date)
+        const rows = await request(path, date, { retries: offset === 0 ? 2 : 0, requests: attempt.requests })
         if (!rows.length) continue
         await saveLatestHistory(path, date, rows)
         state.data = { date, collectedAt: new Date(clock()).toISOString(), rows }
@@ -236,13 +285,15 @@ export function createKrxProvider({
     }
     state.attempt = attempt
     state.history = [...state.history, attempt].slice(-45)
-    if (!(await save(file, state))) {
-      const failed = { ...previous, attempt: { ...attempt, result: 'error', code: 'KRX_REGULAR_CACHE_FAILED' } }
-      states.set(path, failed)
-      return failed
+    const persisted = await save(file, state)
+    const published = persisted ? state : {
+      ...previous, attempt: { ...attempt, result: 'error', code: 'KRX_REGULAR_CACHE_FAILED' },
     }
-    states.set(path, state)
-    return state
+    states.set(path, published)
+    log({ event: 'krx-collection', endpoint: path, date: attempt.date, at: attempt.at,
+      result: published.attempt.result, code: published.attempt.code, latestDate: published.data?.date ?? null,
+      collectedAt: published.data?.collectedAt ?? null, persisted })
+    return published
   }
 
   async function load(path, target = targetFor(), collect = false) {
@@ -284,10 +335,12 @@ export function createKrxProvider({
     const bars = []
     let stoppedAt = null
     let stoppedReason = null
-    for (const date of latestDate ? tradingCandidates(latestDate, scheduledOnly ? calendar.closed : weekend) : []) {
+    for (const date of latestDate ? tradingCandidates(latestDate, historyClosed) : []) {
+      if (bars.length >= historySessions) break
       if (date < listedOn) break
       const cached = date === latestDate
-        ? { rows: latest.rows.map(toBar).filter(Boolean) } : await readHistory(market, date)
+        ? { rows: latest.rows.map(toBar).filter(Boolean) }
+        : await readHistory(market, date)
       if (date !== latestDate && cached?.rows.length === 0) continue
       const row = cached?.rows.find(([code]) => code === symbol)
       if (!row) {
@@ -298,43 +351,83 @@ export function createKrxProvider({
       const [, open, high, low, close, volume] = row
       bars.push({ tradingDate: date, open, high, low, close, volume })
     }
-    return { symbol, name, market, source, quote: latestQuote, reason: metadata(trades, target).reason,
+    const { reason, errorCode } = metadata(trades, target)
+    return { symbol, name, market, source, quote: latestQuote, reason, errorCode,
       latestDate, collectedAt: latest?.collectedAt ?? null, stoppedAt, stoppedReason,
       afterHours: afterHours(target),
       history: { currency: 'KRW', timeZone: 'Asia/Seoul', adjustment: 'unadjusted',
         completeness: bars.length ? 'complete' : 'missing-observations', bars: bars.reverse() } }
   }
 
-  async function backfill(limit = 140) {
-    if (!key?.trim() || !Number.isInteger(limit) || limit < 1 || limit > 145) throw new Error('Invalid KRX backfill configuration')
+  function checkBatch(limit) {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 145) throw new Error('Invalid KRX backfill configuration')
+  }
+
+  async function backfillPlan(limit = 140) {
+    checkBatch(limit)
     const target = targetFor()
     const results = {}
     for (const market of markets) {
+      let cachedSessions = 0, marketEmptyDays = 0, missingWeekdays = 0
+      for (const date of tradingCandidates(target.date, historyClosed)) {
+        const cached = await readHistory(market, date)
+        if (!cached) missingWeekdays++
+        else if (cached.rows.length) cachedSessions++
+        else marketEmptyDays++
+        if (cachedSessions === historySessions) break
+      }
+      results[market] = { cachedSessions, marketEmptyDays, missingWeekdays,
+        targetSessions: historySessions, minimumAdditionalSessions: historySessions - cachedSessions, requestCap: limit }
+    }
+    return { targetDate: target.date, latestLookupMax: 16, maxRequestsPerRun: Math.min(300, 2 * limit + 16), markets: results }
+  }
+
+  let backfillPending
+  async function runBackfill(limit) {
+    checkBatch(limit)
+    if (!key?.trim()) throw new Error('Invalid KRX backfill configuration')
+    const target = targetFor()
+    await loadCooldown()
+    if (clock() < blockedUntil) throw new ProviderError(503, 'PROVIDER_RATE_LIMITED')
+    const results = {}
+    for (const market of markets) {
       const path = endpoint[market].trades
-      const latest = (await load(path, target)).data
+      const state = await load(path, target)
+      if (state.attempt?.date === target.date && backfillStopCodes.has(state.attempt.code)) {
+        throw new ProviderError(503, state.attempt.code)
+      }
+      const latest = state.data
       if (!latest) throw new Error('Latest KRX trading date unavailable')
       const result = { requested: 0, sessions: 0, empty: 0, failures: [], oldest: latest.date, latest: latest.date }
-      for (const date of tradingCandidates(latest.date)) {
+      let availableSessions = 0
+      for (const date of tradingCandidates(latest.date, historyClosed)) {
+        if (availableSessions >= historySessions) break
         if (date === latest.date) {
           if (!(await readHistory(market, date))) await saveHistory(market, date, latest.rows)
+          availableSessions++
           continue
         }
         const cached = await readHistory(market, date)
-        if (cached) continue
+        if (cached) {
+          if (cached.rows.length) {
+            availableSessions++
+            result.oldest = date
+          }
+          continue
+        }
         if (result.requested >= limit) break
         result.requested++
         try {
           const rows = await request(path, date)
           await saveHistory(market, date, rows)
-          if (rows.length) { result.sessions++; result.oldest = date }
+          if (rows.length) { result.sessions++; availableSessions++; result.oldest = date }
           else result.empty++
         } catch (error) {
-          if (['PROVIDER_RATE_LIMITED', 'KRX_BACKFILL_BUDGET', 'KRX_AUTH_REJECTED',
-            'KRX_ACCESS_DENIED', 'KRX_HISTORY_CACHE_FAILED'].includes(error.code)) throw error
+          if (backfillStopCodes.has(error.code)) throw error
           result.failures.push({ date, code: error.code ?? 'KRX_UNAVAILABLE' })
         }
       }
-      results[market] = result
+      results[market] = { ...result, availableSessions }
     }
     return results
   }
@@ -383,6 +476,13 @@ export function createKrxProvider({
     }))
   }
 
+  async function loadCooldown() {
+    if (!scheduledOnly || cooldownLoaded) return
+    const saved = await readFile(cooldownFile, 'utf8').then(JSON.parse).catch(() => null)
+    if (Number.isFinite(saved?.blockedUntil)) blockedUntil = Math.max(blockedUntil, saved.blockedUntil)
+    cooldownLoaded = true
+  }
+
   async function runCollection(signal) {
     if (signal?.aborted) return
     const target = targetFor()
@@ -398,11 +498,7 @@ export function createKrxProvider({
       }
     }
     if (scheduledOnly && !target.canCollect) return
-    if (scheduledOnly && !cooldownLoaded) {
-      const saved = await readFile(cooldownFile, 'utf8').then(JSON.parse).catch(() => null)
-      if (Number.isFinite(saved?.blockedUntil)) blockedUntil = Math.max(blockedUntil, saved.blockedUntil)
-      cooldownLoaded = true
-    }
+    await loadCooldown()
     for (const path of services) {
       if (signal?.aborted) break
       await load(path, target, true)
@@ -414,7 +510,13 @@ export function createKrxProvider({
       if (!historyPending.has(symbol)) historyPending.set(symbol, stockHistory(symbol).finally(() => historyPending.delete(symbol)))
       return historyPending.get(symbol)
     },
-    backfill,
+    backfillPlan,
+    backfill(limit = 140) {
+      checkBatch(limit)
+      if (backfillPending) throw new ProviderError(503, 'KRX_BACKFILL_BUSY')
+      backfillPending = runBackfill(limit).finally(() => { backfillPending = undefined })
+      return backfillPending
+    },
     overview,
     async indices(market) {
       const target = targetFor()
@@ -436,7 +538,9 @@ export function createKrxProvider({
           .some(text => text?.toLowerCase().includes(term))
       })
       if (term) matches.sort((a, b) => Number(b.symbol === term.toUpperCase()) - Number(a.symbol === term.toUpperCase()))
-      return { market, listings: metadata(listings, target), trades: metadata(trades, target), afterHours: afterHours(target),
+      return { market, listings: metadata(listings, target),
+        trades: { ...metadata(trades, target), tradingDate: trades.data?.date ?? null },
+        afterHours: afterHours(target),
         listingDate: listings.data?.date ?? null, items: matches.slice(0, 20).map(row => ({
           ...row, quote: trades.data && row.listedOn <= trades.data.date
             ? byCode.get(row.symbol) ?? null : null,

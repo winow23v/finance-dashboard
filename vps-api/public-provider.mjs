@@ -24,7 +24,7 @@ export function providerClient(fetchImpl, intervalMs, {
   let active = 0
   const recent = []
   const bodyError = code => detailedErrors ? new ProviderError(502, code) : invalidResponse()
-  return async (url, headers = {}, requestTimeoutMs = timeoutMs) => {
+  return async (url, headers = {}, requestTimeoutMs = timeoutMs, observeResponse) => {
     if (active >= 2 || (!queue && performance.now() < next)) throw new ProviderError(503, 'PROVIDER_BUSY')
     active++
     while (performance.now() < next) await delay(Math.ceil(next - performance.now()))
@@ -38,8 +38,12 @@ export function providerClient(fetchImpl, intervalMs, {
       }
       next = now + intervalMs
       const response = await fetchImpl(url, { headers: { Accept: binary ? 'application/zip, application/json' : 'application/json', ...headers }, signal, redirect: 'error' })
-      if (response.status === 429) throw new ProviderError(503, 'PROVIDER_RATE_LIMITED')
-      if (!response.ok) throw new ProviderError(502, 'PROVIDER_UNAVAILABLE')
+      observeResponse?.(response.status)
+      if (!response.ok) {
+        void response.body?.cancel().catch(() => {})
+        if (response.status === 429) throw new ProviderError(503, 'PROVIDER_RATE_LIMITED')
+        throw new ProviderError(502, 'PROVIDER_UNAVAILABLE')
+      }
       try {
         let size = 0
         const chunks = []

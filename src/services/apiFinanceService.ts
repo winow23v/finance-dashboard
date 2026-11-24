@@ -111,7 +111,7 @@ export async function getKrxAnalysis(symbol: string, signal: AbortSignal): Promi
     || !(value.stoppedReason === null || value.stoppedReason === 'missing-observation' || value.stoppedReason === 'not-collected')
     || !isRecord(value.history) || value.history.currency !== 'KRW' || value.history.timeZone !== 'Asia/Seoul'
     || value.history.adjustment !== 'unadjusted' || !['complete', 'missing-observations'].includes(String(value.history.completeness))
-    || !Array.isArray(value.history.bars) || value.history.bars.length > 390
+    || !Array.isArray(value.history.bars) || value.history.bars.length > 500
     || !value.history.bars.every(bar => isRecord(bar) && isDate(bar.tradingDate)
       && [bar.open, bar.high, bar.low, bar.close, bar.volume].every(isNumber))) throw new Error('Invalid KRX history')
   return value as unknown as KrxAnalysis
