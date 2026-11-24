@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { isDay, providerClient, ProviderError } from './public-provider.mjs'
+import { createKrxCalendar, krxCollectionSession, day, dayMs, koreanOffset, weekend } from './krx-calendar-provider.mjs'
 
 const source = 'KRX OPEN API'
 const endpoint = {
@@ -12,13 +13,9 @@ const endpoint = {
   KOSDAQ: { index: 'idx/kosdaq_dd_trd', trades: 'sto/ksq_bydd_trd', listings: 'sto/ksq_isu_base_info', name: '코스닥' },
 }
 const services = Object.values(endpoint).flatMap(({ index, trades, listings }) => [index, trades, listings])
-const minutes = [16 * 60 + 30, 17 * 60 + 30, 19 * 60, 21 * 60, 23 * 60]
-const dayMs = 86_400_000
-const koreanOffset = 9 * 60 * 60_000
-const day = timestamp => new Date(timestamp).toISOString().slice(0, 10)
+const minutes = [16 * 60 + 30, 17 * 60 + 30, 19 * 60]
 const isoDay = value => typeof value === 'string' ? value.replace(/^(\d{4})(\d\d)(\d\d)$/, '$1-$2-$3') : ''
 const codePattern = /^[0-9A-Z]{6}$/
-const weekend = date => [0, 6].includes(new Date(date).getUTCDay())
 const historyDays = 780
 const historySessions = 500
 const firstOfficialDate = '2010-01-04'
@@ -26,12 +23,15 @@ const markets = Object.keys(endpoint)
 const backfillStopCodes = new Set(['PROVIDER_RATE_LIMITED', 'KRX_BACKFILL_BUDGET', 'KRX_AUTH_REJECTED',
   'KRX_ACCESS_DENIED', 'KRX_HISTORY_CACHE_FAILED'])
 const retryableHttp = new Set([408, 500, 502, 503, 504])
+const retryableNetwork = new Set(['EAI_AGAIN', 'ECONNABORTED', 'ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH',
+  'ENETRESET', 'ENETUNREACH', 'EPIPE', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_SOCKET'])
 
-function * tradingCandidates(date) {
+function * tradingCandidates(date, closed = weekend) {
   for (let offset = 0; offset < historyDays; offset++) {
     const candidate = day(Date.parse(date) - offset * dayMs)
     if (candidate < firstOfficialDate) break
-    if (!weekend(candidate)) yield candidate
+    if (!closed(candidate)) yield candidate
   }
 }
 
@@ -115,17 +115,42 @@ export function configureMemberKrx({
   root = memberKrxCacheDir(),
   ...options
 } = {}) {
-  if (enabled === '1') return createKrxProvider({ ...options, root })
+  if (enabled === '1') return createKrxProvider({ ...options, root, scheduledOnly: true })
 }
 
 export function createKrxProvider({
   key = process.env.KRX_API_KEY,
   root = fileURLToPath(new URL('.krx-cache/', import.meta.url)),
-  fetchImpl = fetch, clock = Date.now, log = () => {}, scheduled = false,
+  fetchImpl = fetch, clock = Date.now, scheduledOnly = false, calendar = createKrxCalendar(),
+  log = scheduledOnly ? entry => console.info(JSON.stringify(entry)) : () => {},
 } = {}) {
   // A bounded number of KRX GETs are allowed per collection window and per process.
-  const get = providerClient(fetchImpl, 150,
-    { queue: true, dailyLimit: 300, detailedErrors: true, maxBytes: 4 * 1024 * 1024 })
+  let blockedUntil = 0
+  let cooldownLoaded = false
+  const cooldownFile = join(root, 'krx-regular-cooldown.json')
+  const afterCheckFile = join(root, 'krx-after-hours-check.json')
+  let afterCheck
+  let collection
+  const targetFor = () => scheduledOnly ? krxCollectionSession(clock(), calendar) : session(clock())
+  const historyClosed = scheduledOnly ? calendar.closed : weekend
+  const get = providerClient(async (url, options) => {
+    let response
+    try {
+      response = await fetchImpl(url, options)
+    } catch (error) {
+      if (error instanceof ProviderError || options.signal.aborted) throw error
+      const networkCode = error.cause?.code ?? error.code
+      if (retryableNetwork.has(networkCode)) throw error
+      throw new ProviderError(502, 'PROVIDER_UNAVAILABLE')
+    }
+    if (response.status === 429 && scheduledOnly) {
+      const header = response.headers.get('retry-after')
+      const resume = header && /^\d+$/.test(header) ? clock() + Number(header) * 1000 : Date.parse(header ?? '')
+      blockedUntil = Math.max(clock() + 30 * 60_000, Number.isFinite(resume) ? resume : 0)
+      await save(cooldownFile, { blockedUntil })
+    }
+    return response
+  }, 150, { queue: true, dailyLimit: 300, detailedErrors: true, maxBytes: 4 * 1024 * 1024 })
   const states = new Map()
   const pending = new Map()
   const historyPending = new Map()
@@ -138,6 +163,8 @@ export function createKrxProvider({
     for (let retry = 0; ; retry++) {
       let httpStatus = null
       const call = queue.then(async () => {
+        await loadCooldown()
+        if (clock() < blockedUntil) throw new ProviderError(503, 'PROVIDER_RATE_LIMITED')
         const at = new Date(clock()).toISOString()
         const start = performance.now()
         let code = null
@@ -200,35 +227,49 @@ export function createKrxProvider({
 
   async function saveLatestHistory(path, date, rows) {
     const market = markets.find(name => endpoint[name].trades === path)
-    if (market) await saveHistory(market, date, rows)
+    if (!market) return
+    const stored = saveHistory(market, date, rows)
+    if (scheduledOnly) await stored
+    else await stored.catch(() => {})
   }
 
-  const stateFile = path => join(root, path.replaceAll('/', '-') + '.json')
   async function readState(path) {
-    const stored = await readFile(stateFile(path), 'utf8').then(JSON.parse).catch(() => null)
-    const valid = stored?.version === 1 && Array.isArray(stored.history) &&
-      (!stored.data || (isDay(stored.data.date) && Array.isArray(stored.data.rows) && stored.data.rows.length))
-    return valid ? stored : { version: 1, history: [] }
-  }
-
-  function getState(path) {
-    if (!states.has(path)) states.set(path, readState(path))
+    const file = join(root, path.replaceAll('/', '-') + '.json')
+    if (!states.has(path)) {
+      const stored = await readFile(file, 'utf8').then(JSON.parse).catch(() => null)
+      const valid = stored?.version === 1 && Array.isArray(stored.history) &&
+        (!stored.data || (isDay(stored.data.date) && Array.isArray(stored.data.rows) && stored.data.rows.length))
+      if (!states.has(path)) states.set(path, valid ? stored : { version: 1, history: [] })
+    }
     return states.get(path)
   }
 
   async function refresh(path, target) {
-    const previous = await getState(path)
+    const file = join(root, path.replaceAll('/', '-') + '.json')
+    const previous = await readState(path)
     const state = { ...previous }
     const metadataRefresh = path.endsWith('_base_info') && state.data?.date === target.date &&
       state.data.rows.some(row => !row.fullName)
+    const alreadyAttempted = state.attempt?.date === target.date && (scheduledOnly
+      ? Date.parse(state.attempt.at) >= target.slotStart : state.attempt.slot >= target.slot)
     if (!key?.trim() || (!metadataRefresh && state.data?.date >= target.date) ||
-      (state.attempt?.date === target.date && state.attempt.slot >= target.slot &&
-        (!metadataRefresh || state.attempt.metadataRefresh))) return state
-    const attempt = { date: target.date, slot: target.slot, at: new Date(clock()).toISOString(),
-      result: 'empty', metadataRefresh, requests: [] }
+      (scheduledOnly && (!target.canCollect || clock() < blockedUntil)) ||
+      (alreadyAttempted && (scheduledOnly || !metadataRefresh || state.attempt.metadataRefresh))) return previous
+    const attempt = { date: target.date, slot: target.slot, at: new Date(clock()).toISOString(), result: 'empty', metadataRefresh, requests: [] }
+    if (scheduledOnly) {
+      // Reserve this window on disk before calling upstream. A restart must not
+      // turn a previously dispatched request into another request in the same slot.
+      const reservation = { ...previous, attempt: { ...attempt, result: 'pending' } }
+      if (!(await save(file, reservation))) {
+        const failed = { ...previous, attempt: { ...attempt, result: 'error', code: 'KRX_REGULAR_CACHE_FAILED' } }
+        states.set(path, failed)
+        return failed
+      }
+      states.set(path, reservation)
+    }
     try {
       // On a cold cache, step past consecutive closed or unpublished days.
-      for (let offset = 0; offset < (state.data ? 1 : 8); offset++) {
+      for (let offset = 0; offset < (scheduledOnly || state.data ? 1 : 8); offset++) {
         const date = day(Date.parse(target.date) - offset * dayMs)
         if (weekend(date)) continue
         const rows = await request(path, date, { retries: offset === 0 ? 2 : 0, requests: attempt.requests })
@@ -244,21 +285,19 @@ export function createKrxProvider({
     }
     state.attempt = attempt
     state.history = [...state.history, attempt].slice(-45)
-    state.persisted = await save(stateFile(path), state)
-    if (!state.persisted) {
-      attempt.result = 'error'
-      attempt.code = 'KRX_SNAPSHOT_CACHE_FAILED'
-      state.data = previous.data
+    const persisted = await save(file, state)
+    const published = persisted ? state : {
+      ...previous, attempt: { ...attempt, result: 'error', code: 'KRX_REGULAR_CACHE_FAILED' },
     }
-    states.set(path, Promise.resolve(state))
+    states.set(path, published)
     log({ event: 'krx-collection', endpoint: path, date: attempt.date, at: attempt.at,
-      result: attempt.result, code: attempt.code, latestDate: state.data?.date ?? null,
-      collectedAt: state.data?.collectedAt ?? null, persisted: state.persisted })
-    return state
+      result: published.attempt.result, code: published.attempt.code, latestDate: published.data?.date ?? null,
+      collectedAt: published.data?.collectedAt ?? null, persisted })
+    return published
   }
 
-  async function load(path, target = session(clock()), collect = false) {
-    if (scheduled && !collect) return getState(path)
+  async function load(path, target = targetFor(), collect = false) {
+    if (scheduledOnly && !collect) return readState(path)
     if (!pending.has(path)) pending.set(path, refresh(path, target).finally(() => pending.delete(path)))
     return pending.get(path)
   }
@@ -266,22 +305,20 @@ export function createKrxProvider({
   function metadata(state, target) {
     const current = state.data?.date === target.date
     const reason = !key?.trim() ? 'provider-not-configured'
-      : current ? (target.weekend ? 'weekend' : target.beforeClose ? 'before-collection' : null)
-        : state.attempt?.result === 'error' ? 'provider-error' : 'not-published'
+      : scheduledOnly && !target.known ? 'provider-not-configured'
+        : target.closed ? 'weekend'
+          : current ? (target.weekend ? 'weekend' : target.beforeClose ? 'before-collection' : null)
+        : state.attempt?.date === target.date && state.attempt?.result === 'error' ? 'provider-error' : 'not-published'
     return { status: !state.data ? 'unavailable' : current ? 'available' : 'stale',
       reason, collectedAt: state.data?.collectedAt ?? null, source,
-      ...(state.attempt?.result === 'error' && { errorCode: state.attempt.code }),
+      ...(state.attempt?.date === target.date && state.attempt.result === 'error' && { errorCode: state.attempt.code }),
     }
   }
 
   async function stockHistory(symbol) {
-    const target = session(clock())
+    const target = targetFor()
     const catalogs = await Promise.all(markets.map(market => load(endpoint[market].listings, target)))
-    const newestCatalogDate = catalogs.map(state => state.data?.date ?? '').sort().at(-1)
-    const candidates = catalogs.flatMap(state => (state.data?.rows ?? [])
-      .filter(row => row.symbol === symbol)
-      .map(row => ({ ...row, catalogDate: state.data.date })))
-    const matches = candidates.length > 1 ? candidates.filter(row => row.catalogDate === newestCatalogDate) : candidates
+    const matches = catalogs.flatMap(state => state.data?.rows.filter(row => row.symbol === symbol) ?? [])
     if (matches.length !== 1) {
       if (catalogs.some(state => !state.data)) {
         const reasons = catalogs.map(state => metadata(state, target).reason)
@@ -292,28 +329,23 @@ export function createKrxProvider({
     }
     const [{ market, name, listedOn }] = matches
     const trades = await load(endpoint[market].trades, target)
-    const latest = trades.data
+    const latest = trades.data ?? null
     const latestDate = latest?.date ?? null
     const latestQuote = latest?.rows.find(row => row.symbol === symbol && row.tradingDate >= listedOn) ?? null
     const bars = []
     let stoppedAt = null
     let stoppedReason = null
-    for (const date of latestDate ? tradingCandidates(latestDate) : []) {
+    for (const date of latestDate ? tradingCandidates(latestDate, historyClosed) : []) {
       if (bars.length >= historySessions) break
-      if (date < listedOn) {
-        stoppedAt = date
-        stoppedReason = 'pre-listing'
-        break
-      }
+      if (date < listedOn) break
       const cached = date === latestDate
-        ? { rows: latest.rows.map(toBar).filter(Boolean), noTrades: latest.rows.filter(row => row.volume === 0).map(row => row.symbol) }
+        ? { rows: latest.rows.map(toBar).filter(Boolean) }
         : await readHistory(market, date)
       if (date !== latestDate && cached?.rows.length === 0) continue
       const row = cached?.rows.find(([code]) => code === symbol)
       if (!row) {
         stoppedAt = date
-        stoppedReason = !cached ? 'not-collected'
-          : Array.isArray(cached.noTrades) && cached.noTrades.includes(symbol) ? 'no-trades' : 'missing-observation'
+        stoppedReason = cached ? 'missing-observation' : 'not-collected'
         break
       }
       const [, open, high, low, close, volume] = row
@@ -322,6 +354,7 @@ export function createKrxProvider({
     const { reason, errorCode } = metadata(trades, target)
     return { symbol, name, market, source, quote: latestQuote, reason, errorCode,
       latestDate, collectedAt: latest?.collectedAt ?? null, stoppedAt, stoppedReason,
+      afterHours: afterHours(target),
       history: { currency: 'KRW', timeZone: 'Asia/Seoul', adjustment: 'unadjusted',
         completeness: bars.length ? 'complete' : 'missing-observations', bars: bars.reverse() } }
   }
@@ -332,11 +365,11 @@ export function createKrxProvider({
 
   async function backfillPlan(limit = 140) {
     checkBatch(limit)
-    const target = session(clock())
+    const target = targetFor()
     const results = {}
     for (const market of markets) {
       let cachedSessions = 0, marketEmptyDays = 0, missingWeekdays = 0
-      for (const date of tradingCandidates(target.date)) {
+      for (const date of tradingCandidates(target.date, historyClosed)) {
         const cached = await readHistory(market, date)
         if (!cached) missingWeekdays++
         else if (cached.rows.length) cachedSessions++
@@ -346,18 +379,20 @@ export function createKrxProvider({
       results[market] = { cachedSessions, marketEmptyDays, missingWeekdays,
         targetSessions: historySessions, minimumAdditionalSessions: historySessions - cachedSessions, requestCap: limit }
     }
-    return { targetDate: target.date, latestLookupMax: 12, maxRequestsPerRun: Math.min(300, 2 * limit + 12), markets: results }
+    return { targetDate: target.date, latestLookupMax: 16, maxRequestsPerRun: Math.min(300, 2 * limit + 16), markets: results }
   }
 
   let backfillPending
   async function runBackfill(limit) {
     checkBatch(limit)
     if (!key?.trim()) throw new Error('Invalid KRX backfill configuration')
-    const target = session(clock())
+    const target = targetFor()
+    await loadCooldown()
+    if (clock() < blockedUntil) throw new ProviderError(503, 'PROVIDER_RATE_LIMITED')
     const results = {}
     for (const market of markets) {
       const path = endpoint[market].trades
-      const state = await load(path, target, true)
+      const state = await load(path, target)
       if (state.attempt?.date === target.date && backfillStopCodes.has(state.attempt.code)) {
         throw new ProviderError(503, state.attempt.code)
       }
@@ -365,7 +400,7 @@ export function createKrxProvider({
       if (!latest) throw new Error('Latest KRX trading date unavailable')
       const result = { requested: 0, sessions: 0, empty: 0, failures: [], oldest: latest.date, latest: latest.date }
       let availableSessions = 0
-      for (const date of tradingCandidates(latest.date)) {
+      for (const date of tradingCandidates(latest.date, historyClosed)) {
         if (availableSessions >= historySessions) break
         if (date === latest.date) {
           if (!(await readHistory(market, date))) await saveHistory(market, date, latest.rows)
@@ -398,7 +433,7 @@ export function createKrxProvider({
   }
 
   async function overview() {
-    const target = session(clock())
+    const target = targetFor()
     const datasets = await Promise.all(markets.map(market => load(endpoint[market].trades, target)))
     const date = datasets[0].data?.date
     if (!date || datasets.some(state => state.data?.date !== date)) {
@@ -431,6 +466,45 @@ export function createKrxProvider({
       marketTiles: Object.fromEntries(markets.map(market => [market, tiles.filter(row => row.market === market).slice(0, 60)])) }
   }
 
+  function afterHours(target) {
+    if (!scheduledOnly) return undefined
+    return ['KRX', 'NXT'].map(venue => ({
+      venue, status: target.closed ? 'market-closed' : !target.known ? 'calendar-unavailable' : 'provider-unavailable',
+      tradingDate: target.today, scheduledCheckAt: target.afterCheckAt,
+      connectionCheckedAt: afterCheck?.date === target.today ? afterCheck.at : null,
+      eligibility: 'unknown', source: null, price: null, observedAt: null, collectedAt: null,
+    }))
+  }
+
+  async function loadCooldown() {
+    if (!scheduledOnly || cooldownLoaded) return
+    const saved = await readFile(cooldownFile, 'utf8').then(JSON.parse).catch(() => null)
+    if (Number.isFinite(saved?.blockedUntil)) blockedUntil = Math.max(blockedUntil, saved.blockedUntil)
+    cooldownLoaded = true
+  }
+
+  async function runCollection(signal) {
+    if (signal?.aborted) return
+    const target = targetFor()
+    if (scheduledOnly && !target.closed && target.known && clock() >= Date.parse(target.afterCheckAt) &&
+      afterCheck?.date !== target.today) {
+      // No authorized after-hours price adapter is configured. Record only the
+      // connection check, never a price observation or a provider call.
+      const saved = await readFile(afterCheckFile, 'utf8').then(JSON.parse).catch(() => null)
+      if (saved?.date === target.today && Number.isFinite(Date.parse(saved.at))) afterCheck = saved
+      else {
+        afterCheck = { date: target.today, at: new Date(clock()).toISOString() }
+        await save(afterCheckFile, afterCheck)
+      }
+    }
+    if (scheduledOnly && !target.canCollect) return
+    await loadCooldown()
+    for (const path of services) {
+      if (signal?.aborted) break
+      await load(path, target, true)
+    }
+  }
+
   return {
     stockHistory(symbol) {
       if (!historyPending.has(symbol)) historyPending.set(symbol, stockHistory(symbol).finally(() => historyPending.delete(symbol)))
@@ -445,12 +519,12 @@ export function createKrxProvider({
     },
     overview,
     async indices(market) {
-      const target = session(clock())
+      const target = targetFor()
       const state = await load(endpoint[market].index, target)
       return { ...state.data?.rows[0], ...metadata(state, target) }
     },
     async stocks({ market, q, symbol, symbols }) {
-      const target = session(clock())
+      const target = targetFor()
       const config = endpoint[market]
       const listings = await load(config.listings, target)
       const trades = await load(config.trades, target)
@@ -466,14 +540,15 @@ export function createKrxProvider({
       if (term) matches.sort((a, b) => Number(b.symbol === term.toUpperCase()) - Number(a.symbol === term.toUpperCase()))
       return { market, listings: metadata(listings, target),
         trades: { ...metadata(trades, target), tradingDate: trades.data?.date ?? null },
+        afterHours: afterHours(target),
         listingDate: listings.data?.date ?? null, items: matches.slice(0, 20).map(row => ({
           ...row, quote: trades.data && row.listedOn <= trades.data.date
             ? byCode.get(row.symbol) ?? null : null,
         })) }
     },
-    async collect() {
-      const target = session(clock())
-      for (const path of services) await load(path, target, true)
+    collect(signal) {
+      collection ??= runCollection(signal).finally(() => { collection = undefined })
+      return collection
     },
   }
 }

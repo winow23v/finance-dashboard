@@ -13,7 +13,7 @@ export const krxStateLabels: Record<KrxReason, string> = {
   'provider-not-configured': 'KRX 공급자 미연결',
   'provider-error': 'KRX 조회 실패',
   'not-published': '기준일 자료 미확인',
-  weekend: '주말 휴장',
+  weekend: '거래소 휴장',
   'before-collection': '당일 수집 대기',
 }
 

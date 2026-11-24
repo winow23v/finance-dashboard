@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { Activity, ArrowLeftRight, BarChart3, ChevronDown, Clock, FileSearch, Globe2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Settings, ShieldCheck, Star, Sun, TrendingUp, UserRound, X } from 'lucide-react'
+import { ArrowLeftRight, BarChart3, ChevronDown, Clock, FileSearch, Globe2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Settings, ShieldCheck, Star, Sun, TrendingUp, UserRound, X } from 'lucide-react'
 import { dataMode } from './services/financeService'
 import { getKrxOverview, getMarketIndices, marketRequestMessage } from './services/apiFinanceService'
 import { mockFinanceService } from './mocks/mockFinance'
@@ -12,7 +12,7 @@ import { DataStatus } from './components/DataStatus'
 import { Economics } from './components/Economics'
 import { informationPages, SiteInformation, type InformationPage } from './components/SiteInformation'
 import { UsAnalysis } from './components/UsAnalysis'
-import { findMarketListing, parseStockPage } from './services/marketListings'
+import { parseStockPage } from './services/marketListings'
 import { StockDetail } from './components/StockDetail'
 import { KrxStocks, krxStateLabels } from './components/KrxStocks'
 import { KrxHeatmap, KrxMovers } from './components/KrxMarketOverview'
@@ -138,7 +138,8 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const [pending, setPending] = useState(!isApi)
   const [error, setError] = useState(false)
   const economyPage = tab === 'economy' || tab === 'economy/fx-settings'
-  const showEconomy = tab === 'overview' || economyPage
+  const overview = tab === 'overview'
+  const showFx = overview || economyPage
   const companyPage = tab === 'companies'
   const market = tab === 'domestic' ? 'KR' : tab === 'global' ? 'US' : undefined
   const isMarket = tab === 'overview' || market !== undefined
@@ -157,11 +158,12 @@ export function App({ member, signOut, accountBusy, accountError }: {
     const timer = window.setTimeout(() => setRefreshUntil(0), Math.max(0, refreshUntil - Date.now()))
     return () => window.clearTimeout(timer)
   }, [refreshUntil])
-  const [visitedEconomy, setVisitedEconomy] = useState(showEconomy)
-
+  const [visitedFx, setVisitedFx] = useState(showFx)
+  const [visitedEconomy, setVisitedEconomy] = useState(economyPage)
   useEffect(() => {
-    if (showEconomy) setVisitedEconomy(true)
-  }, [showEconomy])
+    if (showFx) setVisitedFx(true)
+    if (economyPage) setVisitedEconomy(true)
+  }, [showFx, economyPage])
   useEffect(() => {
     const change = () => {
       setTab(hashPage() ?? guestStorage.loadSettings().market)
@@ -210,8 +212,9 @@ export function App({ member, signOut, accountBusy, accountError }: {
     return () => controller.abort()
   }, [showKrxOverview, request])
 
-  const canRefresh = isApi ? isMarket || showEconomy || companyPage : showEconomy || tab === 'trends'
-  const refreshing = pending || (isApi && ((isMarket && !marketResult) || (showEconomy && !(fxReady && ecosReady && fredReady))))
+  const stock = parseStockPage(tab)
+  const canRefresh = isApi ? !!stock || isMarket || economyPage || companyPage : showFx || tab === 'trends'
+  const refreshing = pending || (isApi && ((isMarket && !marketResult) || (showFx && !fxReady) || (economyPage && !(ecosReady && fredReady))))
   const refreshDisabled = !canRefresh || refreshing || !!refreshUntil || (tab === 'companies' && !dartReady)
   const refresh = () => {
     if (refreshDisabled || Date.now() < refreshLock.current) return
@@ -222,24 +225,23 @@ export function App({ member, signOut, accountBusy, accountError }: {
       setPending(true)
       setRequest(value => value + 1)
     }
-    if (isApi && isMarket) setRequest(value => value + 1)
+    if (isApi && (isMarket || stock)) setRequest(value => value + 1)
     if (tab === 'companies') setDartRevision(value => value + 1)
-    if (showEconomy) setEconomyRevision(value => value + 1)
+    if (showFx) setEconomyRevision(value => value + 1)
   }
 
   const current = [...tabs, trends].find(item => item.id === section)
-  const stock = parseStockPage(tab)
   const index = indexPage(tab)
   const detailMarket = stock?.market ?? index?.market
   const navSection = detailMarket ? (detailMarket === 'KR' ? 'domestic' : 'global') : section
   const information = Object.hasOwn(informationPages, tab) ? tab as InformationPage : undefined
-  const pageLabel = stock ? (findMarketListing(stock)?.name ?? stock.symbol)
-    : tab === 'members' ? '회원 승인 관리' : index?.name ?? current?.label ?? (information && informationPages[information])
+  const pageLabel = tab === 'members' ? '회원 승인 관리' : index?.name ?? current?.label ?? (information && informationPages[information])
   const fx = snapshot?.quotes.find(quote => quote.kind === 'fx')
   const watchlistProps = { selected: watchlist, onToggle: toggle, blocked, loading: sync?.status === 'loading' || sync?.failure === 'load', live: isApi }
   const navigationLinks = (items: readonly (typeof tabs[number] | typeof trends | typeof memberAdminTab | typeof mobileTabs[number])[]) =>
     items.map(({ id, label, icon: Icon }) => <a key={id} href={'#' + id} title={label} aria-label={label}
-      aria-current={id === navSection ? (id === section ? 'page' : 'location') : undefined}>
+      aria-current={id === navSection ? (id === section ? 'page' : 'location') : undefined}
+      onClick={() => { if (id === tab) window.scrollTo(0, 0) }}>
       <Icon size={19} strokeWidth={1.75} aria-hidden="true" /><span>{label}</span>
     </a>)
   const themeLabel = settings.theme === 'dark' ? '라이트 테마로 전환' : '다크 테마로 전환'
@@ -254,16 +256,17 @@ export function App({ member, signOut, accountBusy, accountError }: {
     }}>본문으로 이동</a>
     <header className="topbar">
       <a className="brand" href="#overview" aria-label="Finance Dashboard">
-        <span className="brand-icon"><Activity size={19} aria-hidden="true" /></span>
+        <img className="brand-icon" src={import.meta.env.BASE_URL + 'favicon.svg?v=19k'} alt="" width={30} height={30} />
         <span className="brand-name">Finance Dashboard<small>{dataLabel}</small></span>
       </a>
-      <span className="breadcrumb">워크스페이스 <span aria-hidden="true">/</span> <strong>{pageLabel}</strong></span>
+      <span className="breadcrumb">{stock ? (stock.market === 'KR' ? '국내시장' : '해외시장')
+        : <>워크스페이스 <span aria-hidden="true">/</span> <strong>{pageLabel}</strong></>}</span>
       <div className="top-actions">
         <a className="connection-status" href="#settings" title="공급자별 데이터 상태"><i aria-hidden="true" />{dataLabel}</a>
         <a className="icon-button" href="#companies" aria-label="통합 종목·기업 검색" title="통합 종목·기업 검색"
           onClick={() => setSearchFocus(value => value + 1)}><Search size={18} /></a>
-        <button className="icon-button" onClick={refresh} disabled={refreshDisabled}
-          aria-label={refreshLabel} title={refreshLabel}><RefreshCw size={17} /></button>
+        {!stock && <button className="icon-button" onClick={refresh} disabled={refreshDisabled}
+          aria-label={refreshLabel} title={refreshLabel}><RefreshCw size={17} /></button>}
         <button className="icon-button" aria-label={themeLabel} title={themeLabel}
           onClick={() => setSettings(previous => ({ ...previous, theme: previous.theme === 'dark' ? 'light' : 'dark' }))}>
           {settings.theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
@@ -284,12 +287,10 @@ export function App({ member, signOut, accountBusy, accountError }: {
     </aside>
     <div className="workspace">
       <main id="main-content" tabIndex={-1}>
-        <div className="page-heading">
-          <h1>{pageLabel}</h1>
-        </div>
-        {sync && !information && <WatchlistStatus sync={sync} email={member?.email} />}
+        {!stock && <div className="page-heading"><h1>{pageLabel}</h1></div>}
+        {sync && !information && <WatchlistStatus sync={sync} email={member?.email} compact={!!stock} />}
         {information ? <SiteInformation page={information} /> : stock ?
-          <StockDetail favoriteDisabled={blocked || !!member && !isWatchlistSymbol(stock)} listing={stock} saved={watchlist.some(item => favoriteKey(item) === favoriteKey(stock))}
+          <StockDetail revision={request} onRefresh={refresh} refreshDisabled={refreshDisabled} favoriteDisabled={blocked || !!member && !isWatchlistSymbol(stock)} listing={stock} saved={watchlist.some(item => favoriteKey(item) === favoriteKey(stock))}
             onToggle={() => toggle(stock)} usQuote={isApi && stock.market === 'US'} liveQuote={isApi && stock.market === 'KR' && stock.exchange === 'XKRX'} />
           : index ? <section className="panel stock-detail" aria-label="지수 상세">
             <div className="section-heading"><h2>지수 추이</h2>
@@ -316,16 +317,18 @@ export function App({ member, signOut, accountBusy, accountError }: {
                 </article>)}
             </div>
           </section>
-          {(tab === 'overview' || market === 'KR') && <KrxMovers data={isApi ? krxOverview?.data : null}
-            message={isApi ? krxOverview?.message : 'KRX 공급자 미연결'} />}
-          <div className={market === 'US' ? 'market-sections overseas-panels' : 'market-sections'}>
-            {(!market || market === 'KR') && (isApi ? <KrxHeatmap data={krxOverview?.data} message={krxOverview?.message} summary={!market} />
-              : <MarketHeatmap market="KR" favorites={watchlist} summary={!market} />)}
-            {(!market || market === 'US') && <MarketHeatmap market="US" favorites={watchlist} summary={!market} />}
-            {market === 'US' && <Watchlist key={'watchlist:' + tab} {...watchlistProps} market={market} />}
-          </div>
-          {isApi && market !== 'US' && <KrxStocks {...watchlistProps} />}
-          {market !== 'US' && <Watchlist key={'watchlist:' + tab} {...watchlistProps} market={market} />}
+          {overview ? <Watchlist {...watchlistProps} summary /> : <>
+            {market === 'KR' && <KrxMovers data={isApi ? krxOverview?.data : null}
+              message={isApi ? krxOverview?.message : 'KRX 공급자 미연결'} />}
+            <div className={market === 'US' ? 'market-sections overseas-panels' : 'market-sections'}>
+              {market === 'KR' && (isApi ? <KrxHeatmap data={krxOverview?.data} message={krxOverview?.message} />
+                : <MarketHeatmap market="KR" favorites={watchlist} />)}
+              {market === 'US' && <MarketHeatmap market="US" favorites={watchlist} />}
+              {market === 'US' && <Watchlist key={'watchlist:' + tab} {...watchlistProps} market="US" />}
+            </div>
+            {isApi && market === 'KR' && <KrxStocks {...watchlistProps} />}
+            {market === 'KR' && <Watchlist key={'watchlist:' + tab} {...watchlistProps} market="KR" />}
+          </>}
           {market === 'KR' && <a className="text-link" href="#companies">기업 검색·공시 보기</a>}
         </>}
         {tab === 'watchlist' && <Watchlist {...watchlistProps} />}
@@ -336,21 +339,29 @@ export function App({ member, signOut, accountBusy, accountError }: {
           {fx ? <><strong>{price(fx, settings.units)}</strong><Change quote={fx} detailed />
             <time dateTime={fx.asOf} title="환율 기준 시각 (KST)">{timestamp.format(new Date(fx.asOf))}{fx.delayed && ' · 지연'}</time></>
             : <small>환율 데이터가 없습니다.</small>}
+          <a href="#economy" className="text-link">환율·경제지표 보기</a>
         </section>}
         {tab === 'trends' && isApi && <p className="panel state">현재 API는 키워드 트렌드를 지원하지 않습니다.</p>}
         {snapshot && tab === 'trends' && <HistoryChart simulated items={snapshot.trendTopics.map(name => ({ id: name, name }))} revision={revision} />}
         </Suspense>
         </>}
         {isApi && <div hidden={tab !== 'companies'}><Disclosures revision={dartRevision} visible={tab === 'companies'} searchFocus={searchFocus} onRefreshReady={setDartReady} /></div>}
-        {(showEconomy || visitedEconomy) && (isApi || snapshot) && <div className="economy-stack" hidden={!showEconomy}>
-          {tab === 'overview' && <div className="section-heading economy-summary-heading">
-            <h2>환율·경제지표 요약</h2><a className="text-link" href="#economy">상세보기</a>
-          </div>}
-          {isApi && <Suspense fallback={<p className="panel state" role="status">환율을 준비하는 중입니다.</p>}>
+        {(showFx || visitedFx) && isApi && <div hidden={!showFx}>
+          <Suspense fallback={<p className="panel state" role="status">환율을 준비하는 중입니다.</p>}>
             <FxDashboard revision={economyRevision} detailed={economyPage} onRefreshReady={setFxReady} showSettings={tab === 'economy/fx-settings'} />
-          </Suspense>}
+          </Suspense>
+        </div>}
+        {overview && <div className="overview-market-summary">
+          {isApi ? <KrxHeatmap data={krxOverview?.data} message={krxOverview?.message} summary />
+            : <MarketHeatmap market="KR" favorites={watchlist} summary />}
+          {isApi && <KrxMovers data={krxOverview?.data} message={krxOverview?.message} summary />}
+          <section className="panel overview-market-note" aria-label="해외시장 데이터 상태">
+            <h2>해외시장</h2><p>해외 히트맵 공급자 미연결</p><a className="text-link" href="#global">해외시장 보기</a>
+          </section>
+        </div>}
+        {(economyPage || visitedEconomy) && (isApi || snapshot) && <div className="economy-stack" hidden={!economyPage}>
           {isApi && <KoreaEconomy revision={economyRevision} visible={economyPage} onRefreshReady={setEcosReady} />}
-          <Economics api={isApi} demo={snapshot?.indicators} detailed={economyPage} revision={economyRevision} onRefreshReady={setFredReady} />
+          <Economics api={isApi && economyPage} demo={snapshot?.indicators} detailed={economyPage} revision={economyRevision} onRefreshReady={setFredReady} />
         </div>}
         {tab === 'members' && (member?.admin ? <MemberAdmin userId={member.userId} />
           : <p className="panel state">관리자 전용 화면입니다.</p>)}

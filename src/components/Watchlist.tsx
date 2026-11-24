@@ -3,12 +3,13 @@ import { Plus, Search, Star, X } from 'lucide-react'
 import { marketSymbolKey, type EquityMarket, type MarketSymbol } from '../types/marketSymbol'
 import { marketListings, stockHref } from '../services/marketListings'
 import { favoriteKey, isWatchlistSymbol } from '../services/watchlist'
+import { KrxAfterHoursStatus, regularQuoteStatus, formatKrxCollectionTime } from './KrxAfterHoursStatus'
 import { getKrxStocks } from '../services/apiFinanceService'
 import { krxObservation, registeredObservation, watchlistObservations, type Observation } from '../services/watchlistMetadata'
 
 type Props = {
   selected: MarketSymbol[]; onToggle: (symbol: MarketSymbol) => void; market?: EquityMarket
-  blocked?: boolean; loading?: boolean; live?: boolean
+  blocked?: boolean; loading?: boolean; live?: boolean; summary?: boolean
 }
 
 type Row = { listing: MarketSymbol; observation?: Observation }
@@ -20,7 +21,7 @@ function StockList({ rows, saved, onToggle, label, blocked }: {
 }) {
   return <ul className="stock-list" aria-label={label}>
     {rows.map(({ listing, observation }) => {
-      const { name, segment, currency, quote } = { ...registeredObservation(listing), ...observation }
+      const { name, segment, currency, quote, regular, afterHours } = { ...registeredObservation(listing), ...observation }
       const active = saved.has(favoriteKey(listing))
       const venue = segment ?? (listing.exchange === 'US' ? '거래소 미확인' : listing.exchange)
       return <li key={marketSymbolKey(listing)}>
@@ -28,10 +29,15 @@ function StockList({ rows, saved, onToggle, label, blocked }: {
           <a className="stock-detail-link" href={stockHref(listing)}>{name ?? '종목명 미확인'}</a>
           <small>{listing.symbol} · {listing.market === 'KR' ? '국내' : '미국'} · {venue} · {currency ?? '통화 미확인'}</small>
           {quote && <small className="watchlist-quote">
-            {number.format(quote.price)} {currency}
+            {listing.market === 'KR' && '정규장 종가 '}{number.format(quote.price)} {currency}
             {quote.changePercent !== null && ' · ' + percent.format(quote.changePercent) + '%'}
             {' · ' + quote.tradingDate + ' 기준'}
           </small>}
+          {regular && <small className="watchlist-quote">{regular.source}
+            {regular.collectedAt && ' · 수집 ' + formatKrxCollectionTime(regular.collectedAt)}
+            {regular.reason && ' · ' + regularQuoteStatus(regular.reason)}
+          </small>}
+          {afterHours && <KrxAfterHoursStatus details={afterHours} compact />}
         </div>
         <button type="button" className="favorite-button" disabled={blocked} aria-pressed={active}
           aria-label={(name ?? listing.symbol) + (active ? ' 관심종목에서 삭제' : ' 관심종목에 추가')}
@@ -41,7 +47,7 @@ function StockList({ rows, saved, onToggle, label, blocked }: {
   </ul>
 }
 
-export function Watchlist({ selected, onToggle, market, blocked, loading, live }: Props) {
+export function Watchlist({ selected, onToggle, market, blocked, loading, live, summary }: Props) {
   const [query, setQuery] = useState('')
   const [observations, setObservations] = useState(new Map<string, Observation>())
   const [search, setSearch] = useState<{ query: string; rows: Row[]; failed: boolean }>()
@@ -51,14 +57,16 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live }
   const input = useRef<HTMLInputElement>(null)
   const saved = new Set(selected.map(favoriteKey))
   const inMarket = (listing: MarketSymbol) => !market || market === listing.market
-  const rows = selected.filter(inMarket)
+  const marketRows = selected.filter(inMarket)
+  const rows = summary ? marketRows.slice(0, 3) : marketRows
   const term = query.trim().slice(0, 64)
   const domesticSearch = live && market !== 'US' && term.length > 0
   const searchResult = domesticSearch && search?.query === term ? search : undefined
 
   useEffect(() => {
     if (!live) return
-    const items = selected.filter(item => (!market || item.market === market) && isWatchlistSymbol(item))
+    const visible = selected.filter(item => !market || item.market === market)
+    const items = (summary ? visible.slice(0, 3) : visible).filter(isWatchlistSymbol)
     if (!items.length) return
     const controller = new AbortController()
     async function load() {
@@ -73,7 +81,7 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live }
     }
     void load()
     return () => controller.abort()
-  }, [selected, live, market])
+  }, [selected, live, market, summary])
 
   useEffect(() => {
     if (!domesticSearch) return
@@ -112,9 +120,9 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live }
   }
   const title = market === 'KR' ? '국내 관심종목' : market === 'US' ? '해외 관심종목' : '관심종목'
 
-  return <section className="panel watch-panel">
+  return <section className={summary ? 'panel watch-panel overview-watch' : 'panel watch-panel'}>
     <div className="panel-heading">
-      <div><h2><Star size={17} aria-hidden="true" /> {title}</h2>{!loading && <p>{rows.length}개 종목</p>}</div>
+      <div><h2><Star size={17} aria-hidden="true" /> {title}</h2>{!loading && <p>{marketRows.length}개 종목</p>}</div>
       <button type="button" className="button" onClick={() => {
         setQuery('')
         editor.current?.showModal()
@@ -124,6 +132,7 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live }
     {rows.length ? <StockList rows={rows.map(listing => ({ listing, observation: observations.get(marketSymbolKey(listing)) }))}
       saved={saved} onToggle={onToggle} label={title} blocked={blocked} />
       : !loading && <p className="state">등록된 관심종목이 없습니다.</p>}
+    {summary && <a className="text-link overview-watch-link" href="#watchlist">관심종목 전체 보기</a>}
     <dialog className="stock-search-dialog" ref={editor} aria-labelledby={titleId} onClose={() => setQuery('')} onClick={event => {
       if (event.target instanceof Element && event.target.closest('a')) editor.current?.close()
     }}>

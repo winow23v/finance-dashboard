@@ -130,6 +130,10 @@ function latestRate(latest: ReturnType<typeof parseLatest> | null | undefined, b
   }
 }
 
+function basisLabel(code: string, multiplier: number) {
+  return code === 'JPY' ? `${multiplier}엔당` : `${multiplier} ${code}당`
+}
+
 export default function FxDashboard({ revision, detailed, showSettings, onRefreshReady }: {
   revision: number; detailed: boolean; showSettings: boolean; onRefreshReady: (ready: boolean) => void
 }) {
@@ -144,7 +148,7 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
   const latestResult = usePublicData('/api/v1/fx/latest', revision, parseLatest, undefined, true, latestCache)
   const latest = latestResult?.data
   const infoId = useId()
-  const availablePairs = [...new Set([...pairs, ...(latest?.reference ? [selection, ...selected.map(code => `${code}/${reference}`)] : [])])]
+  const availablePairs = [...new Set([...pairs, selection, ...selected.map(code => `${code}/${reference}`)])]
   const pair = availablePairs.includes(selection) ? selection : pairs[0]
   const [base, quote] = pair.split('/')
   const chartResult = usePublicData(detailed ? '/api/v1/fx/history?' + new URLSearchParams({ base, quote, period }) : undefined, revision, parseHistory, undefined, true, historyCache)
@@ -155,8 +159,8 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
 
   useEffect(() => { guestPreferences.save(fxKey, preferences) }, [preferences])
 
-  return <section className="market-sections" aria-label="환율">
-    <div className="section-heading"><h2>환율</h2><span className="badge">공표 기준환율 · 일별</span></div>
+  return <section className={detailed ? "market-sections" : "market-sections overview-fx"} aria-label="환율">
+    <div className="section-heading"><h2>환율</h2>{detailed ? <span className="badge">공표 기준환율 · 일별</span> : <a href="#economy" className="text-link">환율·경제지표 보기</a>}</div>
     <details className="panel fx-settings" ref={settings} hidden={!detailed}>
       <summary>환율 설정</summary>
       <div className="fx-preferences">
@@ -178,10 +182,11 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
           })}</div>
         </fieldset>
         <label><input type="checkbox" checked={yen100} onChange={event => setPreferences({ ...preferences, yen100: event.target.checked })} /> 일본 엔화 100엔 기준</label>
+      <p className="heatmap-meta">설정은 이 브라우저에 자동 저장됩니다. 통화쌍을 바꾸면 해당 이력을 조회하며 별도 갱신은 필요하지 않습니다.</p>
       </div>
     </details>
     <div className="quote-grid fx-rates">
-      {selected.map(code => {
+      {(detailed ? selected : selected.slice(0, 3)).map(code => {
         const name = `${code}/${reference}`
         const row = latestRate(latest, code, reference)
         const multiplier = code === 'JPY' && yen100 ? 100 : 1
@@ -193,14 +198,16 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
           : rate != null && row?.status === 'previous_publication' ? '이전 공표값' : refreshError(latestResult?.errorCode)
         return <article className="panel quote-card fx-quote" key={name}>
           <div className="fx-quote-heading">
-            <h3>{name}{multiplier === 100 && <small>100엔 기준</small>}</h3>
+            <h3>{name}<small>{basisLabel(code, multiplier)}</small></h3>
             <button type="button" className="fx-info-button" popoverTarget={details} aria-controls={details}
               aria-label={name + ' 환율 정보'}><Info size={17} aria-hidden="true" /></button>
           </div>
           <strong>{rate != null ? <>{displayRate(rate * multiplier, reference)} <span>{unit}</span></>
             : latest === undefined ? '조회 중' : '조회 불가'}</strong>
           {rate != null && row?.observationDate && <small><time dateTime={row.observationDate}>{row.observationDate.replaceAll('-', '.')}</time> 기준</small>}
-          {status && <small className="fx-quote-state">{status}</small>}
+          {rate != null && <small>ECB · Frankfurter v2{row?.calculated ? ' · 교차환율' : ''}</small>}
+          {(status || rate != null) && <small className="fx-quote-state">{status ?? '최근 공표값'}</small>}
+          {detailed && <button className="text-link fx-chart-link" aria-pressed={pair === name} type="button" onClick={() => setPair(name)}>이 통화쌍 추이</button>}
           <div className="panel fx-info-popover" id={details} popover="auto" role="group" aria-labelledby={details + '-title'}>
             <div className="section-heading">
               <h4 id={details + '-title'}>{name} 환율 정보</h4>
@@ -224,7 +231,7 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
     </div>
     {detailed && <div className="panel chart-panel">
       <div className="panel-heading">
-        <div><h2>환율 추이</h2><p>{quote} / {chartMultiplier} {base}</p></div>
+        <div><h2>환율 추이</h2><p>{pair} · {basisLabel(base, chartMultiplier)} {quote === 'KRW' ? '원' : quote}</p></div>
         <div className="chart-selects"><select aria-label="통화쌍 선택" value={pair} onChange={event => setPair(event.target.value)}>
           {availablePairs.map(name => <option key={name}>{name}</option>)}
         </select></div>
@@ -233,8 +240,8 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
         {(Object.keys(periods) as (keyof typeof periods)[]).map(value =>
           <button key={value} aria-pressed={value === period} onClick={() => setPeriod(value)}>{periods[value]}</button>)}
       </div></div>
-      {chartResult?.data?.refreshError && <p className="chart-note" role="status">
-        갱신 실패 · 이전 공표 이력 ({chartResult.data.refreshError})
+      {(chartResult?.data?.refreshError || chartResult?.refreshFailed) && <p className="chart-note" role="status">
+        갱신 실패 · 이전 공표 이력{chartResult?.data?.refreshError && ` (${chartResult.data.refreshError})`}
       </p>}
       <div className="chart-body">
         {!chart?.length ? <p className="state" role="status">{chart === undefined ? '조회 중' : chart === null ? refreshError(chartResult?.errorCode) ?? '조회 불가' : '표시할 관측값 없음'}</p>
@@ -243,7 +250,9 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
               <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="4 5" />
               <XAxis dataKey="dateTime" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={date => new Date(date).toISOString().slice(5, 10)} minTickGap={28} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
               <YAxis orientation="right" width={65} domain={['auto', 'auto']} tickFormatter={value => displayRate(value, quote)} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
-              <Tooltip labelFormatter={date => new Date(Number(date)).toISOString().slice(0, 10)} formatter={value => `${detailFormat.format(Number(value))} ${quote}`} contentStyle={{ background: 'var(--panel)', borderColor: 'var(--line)' }} />
+              <Tooltip labelFormatter={date => new Date(Number(date)).toISOString().slice(0, 10)} formatter={value => [`${displayRate(Number(value), quote)} ${quote === 'KRW' ? '원' : quote}`, basisLabel(base, chartMultiplier)]}
+                labelStyle={{ color: 'var(--text)' }} itemStyle={{ color: 'var(--text)' }}
+                contentStyle={{ background: 'var(--panel)', borderColor: 'var(--line)' }} />
               <Area name={pair} dataKey="rate" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.09} isAnimationActive={false} dot={chart.length === 1} />
             </AreaChart>
           </ResponsiveContainer>}

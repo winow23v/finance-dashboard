@@ -72,6 +72,16 @@ const isKrxQuote = (value: unknown) => value === null || (isRecord(value) && isN
   && isNullableNumber(value.volume) && isNullableNumber(value.change)
   && isNullableNumber(value.changePercent) && isDate(value.tradingDate))
 
+export function isKrxAfterHours(value: unknown): value is NonNullable<KrxAnalysis['afterHours']> {
+  return Array.isArray(value) && value.length === 2 && value.every((item, index) =>
+    isRecord(item) && item.venue === (index === 0 ? 'KRX' : 'NXT')
+    && (item.status === 'provider-unavailable' || item.status === 'market-closed' || item.status === 'calendar-unavailable')
+    && isDate(item.tradingDate) && isDate(item.scheduledCheckAt)
+    && (item.connectionCheckedAt === null || isDate(item.connectionCheckedAt))
+    && item.eligibility === 'unknown' && item.source === null && item.price === null
+    && item.observedAt === null && item.collectedAt === null)
+}
+
 function isKrxStock(value: unknown): value is KrxStock {
   return isRecord(value) && isText(value.symbol) && /^[0-9A-Z]{6}$/.test(value.symbol) && isText(value.name)
     && typeof value.englishName === 'string' && typeof value.shareClass === 'string' && isDate(value.listedOn)
@@ -86,6 +96,7 @@ export async function getKrxStocks(market: KrxMarket, filters: { q?: string; sym
     && isKrxReason(status.reason)
   if (!isRecord(value) || value.market !== market || !Array.isArray(value.items)
     || !value.items.every(item => isKrxStock(item) && item.market === market)
+    || (value.afterHours !== undefined && !isKrxAfterHours(value.afterHours))
     || !validStatus(value.listings) || !validStatus(value.trades)
     || (value.listingDate !== null && !isDate(value.listingDate))) throw new Error('Invalid KRX stock response')
   return value as unknown as KrxStocks
@@ -95,11 +106,12 @@ export async function getKrxAnalysis(symbol: string, signal: AbortSignal): Promi
   const value = await getJson('/api/v1/market/kr/stocks/' + encodeURIComponent(symbol) + '/history', false, signal)
   if (!isRecord(value) || value.symbol !== symbol || !isText(value.name) || !isKrxMarket(value.market)
     || value.source !== 'KRX OPEN API' || !isKrxQuote(value.quote) || !isKrxReason(value.reason)
+    || (value.afterHours !== undefined && !isKrxAfterHours(value.afterHours))
     || !isOptionalDate(value.latestDate) || !isOptionalDate(value.collectedAt) || !isOptionalDate(value.stoppedAt)
     || !(value.stoppedReason === null || value.stoppedReason === 'missing-observation' || value.stoppedReason === 'not-collected')
     || !isRecord(value.history) || value.history.currency !== 'KRW' || value.history.timeZone !== 'Asia/Seoul'
     || value.history.adjustment !== 'unadjusted' || !['complete', 'missing-observations'].includes(String(value.history.completeness))
-    || !Array.isArray(value.history.bars) || value.history.bars.length > 390
+    || !Array.isArray(value.history.bars) || value.history.bars.length > 500
     || !value.history.bars.every(bar => isRecord(bar) && isDate(bar.tradingDate)
       && [bar.open, bar.high, bar.low, bar.close, bar.volume].every(isNumber))) throw new Error('Invalid KRX history')
   return value as unknown as KrxAnalysis

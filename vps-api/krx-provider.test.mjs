@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, rmdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { setTimeout as delay } from 'node:timers/promises'
 import { configureMemberKrx, createKrxProvider } from './krx-provider.mjs'
+import { createKrxCalendar, krxCollectionSession } from './krx-calendar-provider.mjs'
 import { createIndexSnapshot } from './market-index-provider.mjs'
-import { buildApp } from './server.mjs'
+import { buildApp, registerKrxCollector } from './server.mjs'
 
 const response = rows => Response.json({ OutBlock_1: rows })
 
@@ -31,11 +33,18 @@ test('scheduled collection keeps old bars on errors and publishes recovered trad
   let now = Date.parse('2026-11-23T07:31:00Z')
   let available = false
   let checks = 0
-  const provider = createKrxProvider({ scheduled: true, root, key: 'fixture', clock: () => now,
+  const tradeCalls = []
+  const provider = createKrxProvider({ scheduledOnly: true, root, key: 'fixture', clock: () => now,
     log: event => log.push(event),
     fetchImpl(url) {
       checks++
+      if (url.pathname.endsWith('/stk_bydd_trd')) {
+        tradeCalls.push('KOSPI')
+        return response([{ BAS_DD: '20261123', MKT_NM: 'KOSPI', ISU_CD: '005930', ISU_NM: '삼성전자',
+          TDD_CLSPRC: '105', TDD_OPNPRC: '100', TDD_HGPRC: '107', TDD_LWPRC: '97', ACC_TRDVOL: '20' }])
+      }
       if (!url.pathname.endsWith('/ksq_bydd_trd')) return new Response(null, { status: 403 })
+      tradeCalls.push('KOSDAQ')
       if (!available) return new Response(null, { status: 503 })
       return response([{ BAS_DD: '20261123', MKT_NM: 'KOSDAQ', ISU_CD: symbol, ISU_NM: '지니언스',
         TDD_CLSPRC: '105', TDD_OPNPRC: '100', TDD_HGPRC: '107', TDD_LWPRC: '97', ACC_TRDVOL: '20' }])
@@ -44,6 +53,8 @@ test('scheduled collection keeps old bars on errors and publishes recovered trad
   assert.equal((await provider.stockHistory(symbol)).latestDate, oldDate)
   assert.equal(checks, 0)
   await provider.collect()
+  assert.equal((await provider.stocks({ market: 'KOSPI' })).trades.tradingDate, newDate)
+  assert.deepEqual(tradeCalls, ['KOSPI', 'KOSDAQ', 'KOSDAQ', 'KOSDAQ'])
   const stale = await provider.stockHistory(symbol)
   assert.equal(stale.latestDate, oldDate)
   assert.equal(stale.collectedAt, collectedAt)
@@ -92,7 +103,7 @@ test('member KRX checks current approval before accessing or reusing the daily c
   t.after(() => rm(root, { recursive: true, force: true }))
   const calls = []
   const memberKrx = configureMemberKrx({
-    enabled: '1', key: 'fixture', root, clock: () => Date.parse('2026-11-21T08:00:00Z'),
+    enabled: '1', key: 'fixture', root, clock: () => Date.parse('2026-11-20T08:00:00Z'),
     fetchImpl(url, request) {
       calls.push(url.pathname)
       assert.equal(url.searchParams.get('basDd'), '20261120')
@@ -118,6 +129,9 @@ test('member KRX checks current approval before accessing or reusing the daily c
   }
   assert.deepEqual(calls, [])
   status = 'approved'
+  await app.inject({ url: urls[2], headers })
+  assert.deepEqual(calls, [])
+  await memberKrx.collect()
   const [snapshot, shared] = await Promise.all([app.inject({ url: urls[0], headers }), app.inject({ url: urls[0], headers })])
   assert.equal(snapshot.statusCode, 200)
   assert.deepEqual(snapshot.json(), shared.json())
@@ -128,7 +142,7 @@ test('member KRX checks current approval before accessing or reusing the daily c
   assert.equal(kosdaq.reason, 'provider-error')
   assert.equal(kosdaq.errorCode, 'KRX_ACCESS_DENIED')
   assert.equal(spx.reason, 'provider-not-configured')
-  assert.equal(calls.length, 2)
+  assert.equal(calls.length, 6)
   const overview = await app.inject({ url: urls[1], headers })
   assert.equal(overview.statusCode, 200)
   assert.equal(overview.json().reason, 'provider-error')
@@ -241,7 +255,7 @@ test('history excludes closed dates, stops at an invalid session, and ranks only
   const history = await krx.stockHistory('005930')
   assert.deepEqual(history.history.bars.map(row => row.tradingDate), ['2026-11-18', '2026-11-20'])
   assert.equal(history.stoppedAt, '2026-11-17')
-  assert.equal(history.stoppedReason, 'no-trades')
+  assert.equal(history.stoppedReason, 'missing-observation')
   assert.equal(history.history.adjustment, 'unadjusted')
   const overview = await krx.overview()
   assert.equal(overview.tradingDate, '2026-11-20')
@@ -292,10 +306,12 @@ test('a member cache supports 500 shared sessions without fetches and stops befo
   const root = await mkdtemp(join(tmpdir(), 'krx-member-history-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const latest = '2026-11-20'
+  const calendar = createKrxCalendar()
   const dates = []
   for (let offset = 0; dates.length < 501; offset++) {
     const date = new Date(Date.parse(latest) - offset * 86_400_000)
-    if (![0, 6].includes(date.getUTCDay())) dates.push(date.toISOString().slice(0, 10))
+    const session = date.toISOString().slice(0, 10)
+    if (!calendar.closed(session)) dates.push(session)
   }
   const symbols = ['005930', '000660', '263860']
   const state = (file, rows) => writeFile(join(root, file + '.json'),
@@ -322,15 +338,17 @@ test('a member cache supports 500 shared sessions without fetches and stops befo
   assert.equal(plan.maxRequestsPerRun, 300)
   assert.equal(plan.markets.KOSPI.cachedSessions, 500)
   assert.equal(plan.markets.KOSPI.minimumAdditionalSessions, 0)
+  assert.ok(!dates.includes('2026-10-09'))
   const [samsung, hynix, listedRecently] = await Promise.all(symbols.map(symbol => provider.stockHistory(symbol)))
   for (const result of [samsung, hynix]) {
     assert.equal(result.history.bars.length, 500)
+    assert.ok(result.history.bars.every(bar => !calendar.closed(bar.tradingDate)))
     assert.equal(result.history.bars[0].tradingDate, dates[499])
     assert.equal(result.history.bars.at(-1).tradingDate, latest)
   }
   assert.equal(listedRecently.history.bars.length, 3)
-  assert.equal(listedRecently.stoppedAt, dates[3])
-  assert.equal(listedRecently.stoppedReason, 'pre-listing')
+  assert.equal(listedRecently.stoppedAt, null)
+  assert.equal(listedRecently.stoppedReason, null)
 })
 
 test('backfill does not start historical requests after a latest session 429', async t => {
@@ -343,4 +361,222 @@ test('backfill does not start historical requests after a latest session 429', a
   })
   await assert.rejects(provider.backfill(1), { code: 'PROVIDER_RATE_LIMITED' })
   assert.equal(calls, 1)
+})
+
+test('member collector reserves windows, retains older OHLCV and accepts trades independently of the listing publication', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-scheduled-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  let now = Date.parse('2026-11-20T07:00:00Z')
+  let published = false
+  const calls = []
+  const opts = { enabled: '1', root, key: 'fixture', clock: () => now, fetchImpl(url) {
+    const date = url.searchParams.get('basDd')
+    const path = url.pathname
+    calls.push([date, path])
+    if (path.endsWith('/stk_isu_base_info')) return date === '20261120' ? response([
+      { LIST_DD: '19750611', MKT_TP_NM: 'KOSPI', ISU_ABBRV: '삼성전자', ISU_NM: '삼성전자', ISU_SRT_CD: '005930' },
+    ]) : response([])
+    if (path.endsWith('/stk_bydd_trd') && (date === '20261120' || published)) return response([
+      { BAS_DD: date, MKT_NM: 'KOSPI', ISU_CD: '005930', ISU_NM: '삼성전자',
+        TDD_CLSPRC: date === '20261120' ? '100' : '102', TDD_OPNPRC: '100',
+        TDD_HGPRC: '103', TDD_LWPRC: '99', ACC_TRDVOL: '10' },
+    ])
+    return response([])
+  } }
+  let member = configureMemberKrx(opts)
+  await member.collect()
+  assert.equal(calls.length, 6)
+  now = Date.parse('2026-11-23T06:59:00Z')
+  assert.equal((await member.stockHistory('005930')).history.bars[0].tradingDate, '2026-11-20')
+  assert.equal(calls.length, 6)
+  now = Date.parse('2026-11-23T07:00:00Z')
+  await Promise.all([member.collect(), member.collect()])
+  assert.equal(calls.length, 12)
+  let stock = await member.stockHistory('005930')
+  assert.equal(stock.reason, 'not-published')
+  assert.equal(stock.quote.price, 100)
+  member = configureMemberKrx(opts)
+  await member.collect()
+  assert.equal(calls.length, 12)
+  published = true
+  now = Date.parse('2026-11-23T07:30:00Z')
+  await member.collect()
+  stock = await member.stockHistory('005930')
+  assert.equal(stock.quote.price, 102)
+  assert.equal(stock.collectedAt, '2026-11-23T07:30:00.000Z')
+  assert.deepEqual(stock.history.bars.map(bar => bar.tradingDate), ['2026-11-20', '2026-11-23'])
+  assert.ok(stock.afterHours.every(row => row.price === null && row.eligibility === 'unknown' && row.connectionCheckedAt === null))
+  now = Date.parse('2026-11-23T11:15:00Z')
+  await member.collect()
+  stock = await member.stockHistory('005930')
+  assert.deepEqual(stock.afterHours.map(row => row.venue), ['KRX', 'NXT'])
+  assert.ok(stock.afterHours.every(row => row.status === 'provider-unavailable' &&
+    row.price === null && row.connectionCheckedAt === '2026-11-23T11:15:00.000Z'))
+  assert.equal(calls.filter(([date, path]) => date === '20261123' && path.endsWith('/stk_bydd_trd')).length, 2)
+})
+
+test('scheduled rate limiting stops other endpoints until the next allowed window', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-rate-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  let now = Date.parse('2026-11-23T07:00:00Z')
+  let calls = 0
+  const options = { enabled: '1', root, key: 'fixture', clock: () => now, fetchImpl() {
+    calls++
+    return calls === 1 ? new Response(null, { status: 503 })
+      : new Response(null, { status: 429, headers: { 'retry-after': '3600' } })
+  } }
+  let member = configureMemberKrx(options)
+  await member.collect()
+  assert.equal((await member.indices('KOSPI')).errorCode, 'PROVIDER_RATE_LIMITED')
+  assert.equal(calls, 2)
+  now = Date.parse('2026-11-23T07:31:00Z')
+  member = configureMemberKrx(options)
+  await member.collect()
+  assert.equal(calls, 2)
+  now = Date.parse('2026-11-23T08:30:00Z')
+  await member.collect()
+  assert.equal(calls, 3)
+})
+
+test('KST schedule handles weekends, holidays, next-session retry, year coverage and special closes', () => {
+  const calendar = createKrxCalendar()
+  const at = date => krxCollectionSession(Date.parse(date), calendar)
+  assert.equal(at('2026-11-22T12:00Z').canCollect, false)
+  assert.equal(at('2026-12-25T08:00Z').canCollect, false)
+  assert.equal(at('2026-07-17T08:00Z').canCollect, false)
+  assert.equal(at('2026-11-22T16:00Z').today, '2026-11-23')
+  assert.equal(at('2026-11-22T23:00Z').date, '2026-11-20')
+  assert.equal(at('2026-11-22T23:00Z').canCollect, true)
+  assert.equal(at('2026-11-23T07:00Z').date, '2026-11-23')
+  assert.equal(at('2026-11-19T07:59Z').date, '2026-11-18')
+  assert.equal(at('2026-11-19T08:00Z').date, '2026-11-19')
+  assert.equal(at('2027-01-06T08:00Z').canCollect, false)
+  const override = createKrxCalendar('{"years":[2027],"closed":["2027-01-07"],"regularClose":{"2027-01-06":"13:00"},"afterClose":{"2027-01-06":"20:30"}}')
+  assert.equal(krxCollectionSession(Date.parse('2027-01-06T07:00Z'), override).afterCheckAt, '2027-01-06T11:45:00.000Z')
+  assert.equal(krxCollectionSession(Date.parse('2027-01-07T07:00Z'), override).canCollect, false)
+})
+
+test('scheduled OHLCV persistence failure retains the last successful close', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-write-failure-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  let now = Date.parse('2026-11-20T07:00:00Z')
+  const fetched = []
+  const member = configureMemberKrx({ enabled: '1', root, key: 'fixture', clock: () => now, fetchImpl(url) {
+    const date = url.searchParams.get('basDd')
+    if (url.pathname.endsWith('/stk_isu_base_info')) return response([
+      { LIST_DD: '19750611', MKT_TP_NM: 'KOSPI', ISU_ABBRV: '삼성전자', ISU_NM: '삼성전자', ISU_SRT_CD: '005930' },
+    ])
+    if (!url.pathname.endsWith('/stk_bydd_trd')) return response([])
+    fetched.push(date)
+    return response([{ BAS_DD: date, MKT_NM: 'KOSPI', ISU_CD: '005930', ISU_NM: '삼성전자',
+      TDD_CLSPRC: date === '20261120' ? '100' : '102', TDD_OPNPRC: '100',
+      TDD_HGPRC: '103', TDD_LWPRC: '99', ACC_TRDVOL: '10' }])
+  } })
+  await member.collect()
+  const blocked = join(root, 'ohlcv-KOSPI-2026-11-23.json')
+  await mkdir(blocked)
+  now = Date.parse('2026-11-23T07:00:00Z')
+  await member.collect()
+  const fallback = await member.stockHistory('005930')
+  assert.equal(fallback.reason, 'provider-error')
+  assert.equal(fallback.quote.price, 100)
+  assert.equal(fallback.latestDate, '2026-11-20')
+  assert.deepEqual(fallback.history.bars.map(bar => bar.tradingDate), ['2026-11-20'])
+  await member.collect()
+  assert.deepEqual(fetched, ['20261120', '20261123'])
+  await rmdir(blocked)
+  now = Date.parse('2026-11-23T07:30:00Z')
+  await member.collect()
+  assert.equal((await member.stockHistory('005930')).quote.price, 102)
+})
+
+test('Fastify shutdown stops the timer and drains the current run', async () => {
+  const app = await buildApp({ logger: false })
+  let runs = 0
+  let completed = false
+  registerKrxCollector(app, { async collect(signal) {
+    runs++
+    await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }))
+    completed = true
+  } }, 5)
+  await app.ready()
+  await new Promise(resolve => setTimeout(resolve, 15))
+  assert.equal(runs, 1)
+  await app.close()
+  assert.equal(completed, true)
+  await new Promise(resolve => setTimeout(resolve, 15))
+  assert.equal(runs, 1)
+})
+
+test('daily trade download can exceed the old 3.5 second limit', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-slow-trade-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const log = []
+  const provider = createKrxProvider({ root, key: 'fixture', log: entry => log.push(entry),
+    clock: () => Date.parse('2026-11-23T08:31:00Z'),
+    async fetchImpl(url, { signal }) {
+      if (!url.pathname.endsWith('/stk_bydd_trd')) return response([])
+      await delay(3600, undefined, { signal })
+      return response([{ BAS_DD: '20261123', MKT_NM: 'KOSPI', ISU_CD: '005930', ISU_NM: '삼성전자',
+        TDD_CLSPRC: '105', TDD_OPNPRC: '100', TDD_HGPRC: '107', TDD_LWPRC: '97', ACC_TRDVOL: '20' }])
+    },
+  })
+  const result = await provider.stocks({ market: 'KOSPI' })
+  assert.equal(result.trades.tradingDate, '2026-11-23')
+  const entry = log.find(item => item.event === 'krx-request' && item.endpoint === 'sto/stk_bydd_trd')
+  assert.equal(entry.httpStatus, 200)
+  assert.equal(entry.code, null)
+  assert.ok(entry.elapsedMs >= 3500)
+})
+
+test('HTTP 200 body timeout and transient network errors consume separate requests before recovery', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-body-deadline-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const log = []
+  let calls = 0
+  const provider = createKrxProvider({ root, key: 'fixture', log: entry => log.push(entry),
+    clock: () => Date.parse('2026-11-23T08:31:00Z'),
+    async fetchImpl(_url, { signal }) {
+      calls++
+      if (calls === 1) {
+        return new Response(new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"OutBlock_1":'))
+            signal.addEventListener('abort', () => controller.error(signal.reason), { once: true })
+          },
+        }))
+      }
+      if (calls === 2) throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } })
+      return response([{ IDX_CLSS: 'KOSPI', IDX_NM: '코스피', BAS_DD: '20261123', CLSPRC_IDX: '105' }])
+    },
+  })
+  // AbortSignal.timeout uses an unreferenced timer, as a fetch socket normally keeps the process alive.
+  const keepAlive = setTimeout(() => {}, 12_000)
+  t.after(() => clearTimeout(keepAlive))
+  assert.equal((await provider.indices('KOSPI')).price, 105)
+  assert.equal(calls, 3)
+  const requests = log.filter(entry => entry.event === 'krx-request')
+  assert.deepEqual(requests.map(({ attempt, httpStatus, code }) => [attempt, httpStatus, code]), [
+    [1, 200, 'PROVIDER_TIMEOUT'], [2, null, 'PROVIDER_CONNECTION_ERROR'], [3, 200, null],
+  ])
+  assert.ok(requests[0].elapsedMs >= 4900 && requests[0].elapsedMs < 9500)
+  assert.ok(log.every(entry => !JSON.stringify(entry).includes('fixture')))
+})
+
+test('permanent HTTP and network failures do not retry', async t => {
+  for (const [status, code] of [[400, 'KRX_INVALID_REQUEST'], [401, 'KRX_AUTH_REJECTED'],
+    [403, 'KRX_ACCESS_DENIED'], [null, 'PROVIDER_UNAVAILABLE']]) {
+    const root = await mkdtemp(join(tmpdir(), 'krx-permanent-'))
+    t.after(() => rm(root, { recursive: true, force: true }))
+    const requests = []
+    const provider = createKrxProvider({ root, key: 'fixture', log: entry => requests.push(entry),
+      clock: () => Date.parse('2026-11-23T08:31:00Z'),
+      fetchImpl() {
+        if (status === null) throw new TypeError('fetch failed', { cause: { code: 'CERT_HAS_EXPIRED' } })
+        return new Response(null, { status })
+      },
+    })
+    assert.equal((await provider.indices('KOSPI')).errorCode, code)
+    assert.deepEqual(requests.filter(entry => entry.event === 'krx-request').map(entry => entry.httpStatus), [status])
+  }
 })

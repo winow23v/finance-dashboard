@@ -77,6 +77,19 @@ export interface KrxStatus {
   collectedAt: string | null
   source: string
 }
+export type KrxAfterHours = {
+  venue: 'KRX' | 'NXT'
+  status: 'market-closed' | 'provider-unavailable' | 'calendar-unavailable'
+  tradingDate: string
+  scheduledCheckAt: string
+  connectionCheckedAt: string | null
+  eligibility: 'unknown'
+  source: null
+  price: null
+  observedAt: null
+  collectedAt: null
+}
+
 export interface KrxStock {
   symbol: string
   name: string
@@ -97,6 +110,7 @@ export interface KrxStocks {
   listingDate: string | null
   listings: KrxStatus
   trades: KrxStatus
+  afterHours?: KrxAfterHours[]
   items: KrxStock[]
 }
 
@@ -108,6 +122,7 @@ export interface KrxAnalysis {
   reason: KrxReason | null
   latestDate: string | null
   collectedAt: string | null
+  afterHours?: KrxAfterHours[]
   stoppedAt: string | null
   stoppedReason: 'missing-observation' | 'not-collected' | null
   quote: KrxStock['quote']
