@@ -30,7 +30,7 @@ test('scheduled collection keeps old bars on errors and publishes recovered trad
       }))),
   ])
   const log = []
-  let now = Date.parse('2026-11-23T07:31:00Z')
+  let now = Date.parse('2026-11-23T12:15:00Z')
   let available = false
   let checks = 0
   const tradeCalls = []
@@ -64,7 +64,7 @@ test('scheduled collection keeps old bars on errors and publishes recovered trad
     .map(({ attempt, httpStatus }) => [attempt, httpStatus]), [[1, 503], [2, 503], [3, 503]])
   assert.equal(log.filter(entry => entry.httpStatus === 403 && entry.attempt > 1).length, 0)
   available = true
-  now = Date.parse('2026-11-23T08:31:00Z')
+  now = Date.parse('2026-11-24T01:10:00Z')
   await provider.collect()
   const list = await provider.stocks({ market: 'KOSDAQ', symbol })
   const detail = await provider.stockHistory(symbol)
@@ -73,7 +73,7 @@ test('scheduled collection keeps old bars on errors and publishes recovered trad
   assert.equal(list.trades.collectedAt, detail.collectedAt)
   assert.deepEqual(list.items[0].quote, detail.quote)
   assert.equal(detail.latestDate, newDate)
-  assert.equal(detail.reason, null)
+  assert.equal(detail.reason, 'before-collection')
   assert.deepEqual(detail.history.bars.map(row => row.tradingDate), [oldDate, newDate])
   assert.equal(await readFile(oldFile, 'utf8'), oldHistory)
   const snapshot = JSON.parse(await readFile(join(root, 'sto-ksq_bydd_trd.json'), 'utf8'))
@@ -103,7 +103,7 @@ test('member KRX checks current approval before accessing or reusing the daily c
   t.after(() => rm(root, { recursive: true, force: true }))
   const calls = []
   const memberKrx = configureMemberKrx({
-    enabled: '1', key: 'fixture', root, clock: () => Date.parse('2026-11-20T08:00:00Z'),
+    enabled: '1', key: 'fixture', root, clock: () => Date.parse('2026-11-20T12:15:00Z'),
     fetchImpl(url, request) {
       calls.push(url.pathname)
       assert.equal(url.searchParams.get('basDd'), '20261120')
@@ -282,7 +282,8 @@ test('history excludes closed dates, stops at an invalid session, and ranks only
 test('backfill stops on HTTP 429 and a rerun skips the saved latest session', async t => {
   const root = await mkdtemp(join(tmpdir(), 'krx-test-'))
   t.after(() => rm(root, { recursive: true, force: true }))
-  const clock = () => Date.parse('2026-11-21T08:00:00Z')
+  let now = Date.parse('2026-11-21T08:00:00Z')
+  const clock = () => now
   const log = []
   const get = (delayDate) => (url) => {
     const date = url.searchParams.get('basDd')
@@ -295,6 +296,9 @@ test('backfill stops on HTTP 429 and a rerun skips the saved latest session', as
   await assert.rejects(createKrxProvider({ key: 'fixture', root, clock, fetchImpl: get('20261119') }).backfill(1),
     { code: 'PROVIDER_RATE_LIMITED' })
   assert.deepEqual(log, ['20261120', '20261119'])
+  await assert.rejects(createKrxProvider({ key: 'fixture', root, clock, fetchImpl: get(null) }).backfill(1),
+    { code: 'PROVIDER_RATE_LIMITED' })
+  now += 30 * 60_000
   const result = await createKrxProvider({ key: 'fixture', root, clock, fetchImpl: get(null) }).backfill(1)
   assert.deepEqual(log.slice(2), ['20261119', '20261120', '20261119'])
   assert.equal(result.KOSPI.sessions, 1)
@@ -366,7 +370,7 @@ test('backfill does not start historical requests after a latest session 429', a
 test('member collector reserves windows, retains older OHLCV and accepts trades independently of the listing publication', async t => {
   const root = await mkdtemp(join(tmpdir(), 'krx-scheduled-'))
   t.after(() => rm(root, { recursive: true, force: true }))
-  let now = Date.parse('2026-11-20T07:00:00Z')
+  let now = Date.parse('2026-11-20T12:15:00Z')
   let published = false
   const calls = []
   const opts = { enabled: '1', root, key: 'fixture', clock: () => now, fetchImpl(url) {
@@ -386,10 +390,10 @@ test('member collector reserves windows, retains older OHLCV and accepts trades 
   let member = configureMemberKrx(opts)
   await member.collect()
   assert.equal(calls.length, 6)
-  now = Date.parse('2026-11-23T06:59:00Z')
+  now = Date.parse('2026-11-23T12:14:00Z')
   assert.equal((await member.stockHistory('005930')).history.bars[0].tradingDate, '2026-11-20')
   assert.equal(calls.length, 6)
-  now = Date.parse('2026-11-23T07:00:00Z')
+  now = Date.parse('2026-11-23T12:15:00Z')
   await Promise.all([member.collect(), member.collect()])
   assert.equal(calls.length, 12)
   let stock = await member.stockHistory('005930')
@@ -399,26 +403,26 @@ test('member collector reserves windows, retains older OHLCV and accepts trades 
   await member.collect()
   assert.equal(calls.length, 12)
   published = true
-  now = Date.parse('2026-11-23T07:30:00Z')
+  now = Date.parse('2026-11-24T01:10:00Z')
   await member.collect()
   stock = await member.stockHistory('005930')
   assert.equal(stock.quote.price, 102)
-  assert.equal(stock.collectedAt, '2026-11-23T07:30:00.000Z')
+  assert.equal(stock.collectedAt, '2026-11-24T01:10:00.000Z')
   assert.deepEqual(stock.history.bars.map(bar => bar.tradingDate), ['2026-11-20', '2026-11-23'])
   assert.ok(stock.afterHours.every(row => row.price === null && row.eligibility === 'unknown' && row.connectionCheckedAt === null))
-  now = Date.parse('2026-11-23T11:15:00Z')
+  now = Date.parse('2026-11-24T11:15:00Z')
   await member.collect()
   stock = await member.stockHistory('005930')
   assert.deepEqual(stock.afterHours.map(row => row.venue), ['KRX', 'NXT'])
   assert.ok(stock.afterHours.every(row => row.status === 'provider-unavailable' &&
-    row.price === null && row.connectionCheckedAt === '2026-11-23T11:15:00.000Z'))
+    row.price === null && row.connectionCheckedAt === '2026-11-24T11:15:00.000Z'))
   assert.equal(calls.filter(([date, path]) => date === '20261123' && path.endsWith('/stk_bydd_trd')).length, 2)
 })
 
 test('scheduled rate limiting stops other endpoints until the next allowed window', async t => {
   const root = await mkdtemp(join(tmpdir(), 'krx-rate-'))
   t.after(() => rm(root, { recursive: true, force: true }))
-  let now = Date.parse('2026-11-23T07:00:00Z')
+  let now = Date.parse('2026-11-23T12:15:00Z')
   let calls = 0
   const options = { enabled: '1', root, key: 'fixture', clock: () => now, fetchImpl() {
     calls++
@@ -429,11 +433,11 @@ test('scheduled rate limiting stops other endpoints until the next allowed windo
   await member.collect()
   assert.equal((await member.indices('KOSPI')).errorCode, 'PROVIDER_RATE_LIMITED')
   assert.equal(calls, 2)
-  now = Date.parse('2026-11-23T07:31:00Z')
+  now = Date.parse('2026-11-23T12:46:00Z')
   member = configureMemberKrx(options)
   await member.collect()
   assert.equal(calls, 2)
-  now = Date.parse('2026-11-23T08:30:00Z')
+  now = Date.parse('2026-11-24T01:10:00Z')
   await member.collect()
   assert.equal(calls, 3)
 })
@@ -446,20 +450,26 @@ test('KST schedule handles weekends, holidays, next-session retry, year coverage
   assert.equal(at('2026-07-17T08:00Z').canCollect, false)
   assert.equal(at('2026-11-22T16:00Z').today, '2026-11-23')
   assert.equal(at('2026-11-22T23:00Z').date, '2026-11-20')
-  assert.equal(at('2026-11-22T23:00Z').canCollect, true)
-  assert.equal(at('2026-11-23T07:00Z').date, '2026-11-23')
-  assert.equal(at('2026-11-19T07:59Z').date, '2026-11-18')
-  assert.equal(at('2026-11-19T08:00Z').date, '2026-11-19')
+  assert.equal(at('2026-11-22T23:09Z').canCollect, false)
+  assert.equal(at('2026-11-22T23:10Z').canCollect, true)
+  assert.equal(at('2026-11-23T01:10Z').date, '2026-11-20')
+  assert.equal(at('2026-09-28T01:10Z').date, '2026-09-23')
+  assert.equal(at('2026-11-23T12:15Z').date, '2026-11-23')
+  assert.equal(at('2026-11-19T12:14Z').date, '2026-11-18')
+  assert.equal(at('2026-11-19T12:15Z').date, '2026-11-19')
   assert.equal(at('2027-01-06T08:00Z').canCollect, false)
-  const override = createKrxCalendar('{"years":[2027],"closed":["2027-01-07"],"regularClose":{"2027-01-06":"13:00"},"afterClose":{"2027-01-06":"20:30"}}')
+  const override = createKrxCalendar('{"years":[2027],"closed":["2027-01-07"],"regularClose":{"2027-01-06":"21:30"},"afterClose":{"2027-01-06":"20:30"}}')
   assert.equal(krxCollectionSession(Date.parse('2027-01-06T07:00Z'), override).afterCheckAt, '2027-01-06T11:45:00.000Z')
+  assert.equal(krxCollectionSession(Date.parse('2027-01-06T12:59Z'), override).date, '2027-01-05')
+  assert.equal(krxCollectionSession(Date.parse('2027-01-06T13:00Z'), override).date, '2027-01-06')
   assert.equal(krxCollectionSession(Date.parse('2027-01-07T07:00Z'), override).canCollect, false)
+  assert.equal(krxCollectionSession(Date.parse('2027-01-08T01:10Z'), override).date, '2027-01-06')
 })
 
 test('scheduled OHLCV persistence failure retains the last successful close', async t => {
   const root = await mkdtemp(join(tmpdir(), 'krx-write-failure-'))
   t.after(() => rm(root, { recursive: true, force: true }))
-  let now = Date.parse('2026-11-20T07:00:00Z')
+  let now = Date.parse('2026-11-20T12:15:00Z')
   const fetched = []
   const member = configureMemberKrx({ enabled: '1', root, key: 'fixture', clock: () => now, fetchImpl(url) {
     const date = url.searchParams.get('basDd')
@@ -475,7 +485,7 @@ test('scheduled OHLCV persistence failure retains the last successful close', as
   await member.collect()
   const blocked = join(root, 'ohlcv-KOSPI-2026-11-23.json')
   await mkdir(blocked)
-  now = Date.parse('2026-11-23T07:00:00Z')
+  now = Date.parse('2026-11-23T12:15:00Z')
   await member.collect()
   const fallback = await member.stockHistory('005930')
   assert.equal(fallback.reason, 'provider-error')
@@ -485,7 +495,7 @@ test('scheduled OHLCV persistence failure retains the last successful close', as
   await member.collect()
   assert.deepEqual(fetched, ['20261120', '20261123'])
   await rmdir(blocked)
-  now = Date.parse('2026-11-23T07:30:00Z')
+  now = Date.parse('2026-11-24T01:10:00Z')
   await member.collect()
   assert.equal((await member.stockHistory('005930')).quote.price, 102)
 })
@@ -640,4 +650,212 @@ test('malformed, oversized, and unclassified bodies and HTTP 429 do not retry', 
         .map(({ httpStatus, code }) => [httpStatus, code]), [[status, code]])
     })
   }
+})
+
+function recoveryFixture(url) {
+  const date = url.searchParams.get('basDd')
+  const path = url.pathname
+  const kosdaq = /ksq_|kosdaq/.test(path)
+  const market = kosdaq ? 'KOSDAQ' : 'KOSPI'
+  const symbol = kosdaq ? '263860' : '005930'
+  if (path.includes('/idx/')) return response([
+    { IDX_CLSS: market, IDX_NM: kosdaq ? '코스닥' : '코스피', BAS_DD: date, CLSPRC_IDX: '105' },
+  ])
+  if (path.endsWith('_base_info')) return response([
+    { LIST_DD: '20261120', MKT_TP_NM: market, ISU_ABBRV: symbol, ISU_SRT_CD: symbol },
+  ])
+  return response([{ BAS_DD: date, MKT_NM: market, ISU_CD: symbol, ISU_NM: symbol,
+    TDD_CLSPRC: '105', TDD_OPNPRC: '100', TDD_HGPRC: '110', TDD_LWPRC: '99',
+    ACC_TRDVOL: '20', ACC_TRDVAL: '2100', MKTCAP: '1000', FLUC_RT: '1' }])
+}
+
+test('automatic recovery fills the November 23 gap after November 24 is current', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-auto-recovery-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  let now = Date.parse('2026-11-20T12:15Z')
+  let recovery = false
+  const calls = []
+  const options = { root, key: 'fixture', scheduledOnly: true, clock: () => now, log: () => {},
+    fetchImpl(url) {
+      const date = url.searchParams.get('basDd')
+      calls.push([date, url.pathname.split('/').at(-1)])
+      if (date === '20261123' && !recovery) {
+        if (!url.pathname.endsWith('/kospi_dd_trd')) return response([])
+      }
+      return recoveryFixture(url)
+    } }
+  let provider = createKrxProvider(options)
+  await provider.collect()
+  const old = join(root, 'ohlcv-KOSPI-2026-11-20.json')
+  const original = await readFile(old, 'utf8')
+  now = Date.parse('2026-11-23T12:15Z')
+  await provider.collect()
+  now = Date.parse('2026-11-24T12:15Z')
+  await provider.collect()
+  assert.equal((await provider.stockHistory('005930')).stoppedAt, '2026-11-23')
+  const historicalPlan = await provider.backfillMissingDates({ dates: ['2026-11-23', '2026-11-24', '2026-11-22'] })
+  assert.deepEqual(historicalPlan.deferredDates, ['2026-11-24', '2026-11-22'])
+  assert.equal(historicalPlan.targets.length, 3)
+  now = Date.parse('2026-11-25T01:10Z')
+  recovery = true
+  const count = calls.length
+  provider = createKrxProvider(options)
+  await Promise.all([provider.collect(), createKrxProvider(options).collect()])
+  assert.deepEqual(new Set(calls.slice(count).map(([, path]) => path)),
+    new Set(['stk_bydd_trd', 'ksq_bydd_trd', 'kosdaq_dd_trd']))
+  assert.equal(calls.length - count, 3)
+  await createKrxProvider(options).collect()
+  assert.equal(calls.length - count, 3)
+  assert.equal(await readFile(old, 'utf8'), original)
+  for (const [market, symbol] of [['KOSPI', '005930'], ['KOSDAQ', '263860']]) {
+    assert.equal((await provider.indices(market)).tradingDate, '2026-11-24')
+    assert.deepEqual((await provider.stockHistory(symbol)).history.bars.map(bar => bar.tradingDate),
+      ['2026-11-20', '2026-11-23', '2026-11-24'])
+  }
+  const overview = await provider.overview()
+  assert.equal(overview.tradingDate, '2026-11-24')
+  assert.equal(overview.leaders.advances.length, 2)
+  assert.equal(overview.leaders.volume.length, 2)
+  assert.equal(overview.leaders.turnover[0].turnover, 2100)
+  assert.equal(overview.tiles.length, 2)
+  assert.equal((await provider.backfillMissingDates({ dates: ['2026-11-23', '2026-11-24'] })).maxRequests, 0)
+})
+
+test('selective recovery plans two consecutive gaps and repairs only the selected datasets', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-selective-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  let now = Date.parse('2026-11-25T01:10Z')
+  const calls = []
+  const options = { root, key: 'fixture', scheduledOnly: true, clock: () => now, log: () => {},
+    fetchImpl(url) {
+      calls.push(url.pathname)
+      if (calls.length === 1) throw new TypeError('socket', { cause: { code: 'ECONNRESET' } })
+      return recoveryFixture(url)
+    } }
+  const provider = createKrxProvider(options)
+  const selector = { dates: ['2026-11-23', '2026-11-24'], markets: ['KOSPI'], kinds: ['trades'] }
+  const plan = await provider.backfillMissingDates(selector)
+  assert.equal(plan.maxRequests, 2)
+  assert.equal(calls.length, 0)
+  const run = await provider.backfillMissingDates({ ...selector, dryRun: false })
+  assert.equal(run.attempts, 2)
+  assert.deepEqual(run.outcomes.map(item => item.status), ['error', 'available'])
+  assert.equal((await provider.stocks({ market: 'KOSPI' })).trades.tradingDate, null)
+  const otherMarket = await provider.backfillMissingDates({ ...selector, markets: ['KOSDAQ'], dates: ['2026-11-24'] })
+  assert.equal(otherMarket.targets.length, 1)
+  assert.equal((await provider.backfillMissingDates(selector)).targets[0].status, 'retry-pending')
+  await provider.collect()
+  assert.equal((await provider.stocks({ market: 'KOSPI' })).trades.tradingDate, '2026-11-24')
+  assert.equal(calls.filter(path => path.endsWith('/stk_bydd_trd')).length, 2)
+  now += 24 * 3_600_000
+  const resumed = await provider.backfillMissingDates({ ...selector, dryRun: false })
+  assert.equal(resumed.attempts, 1)
+  assert.equal(resumed.outcomes[0].date, '2026-11-23')
+  assert.equal((await provider.backfillMissingDates(selector)).maxRequests, 0)
+})
+
+test('selective recovery shares its request budget, lock and cooldown with scheduled collection', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-recovery-budget-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  let now = Date.parse('2026-11-25T01:10Z')
+  let release, dispatch
+  const queued = new Promise(resolve => { dispatch = resolve })
+  const inbound = new Promise(resolve => { release = resolve })
+  const ledger = join(root, 'krx-request-budget.json')
+  await writeFile(ledger, JSON.stringify({ requests: Array(299).fill(now - 60_000), blockedUntil: 0, lastDispatch: 0 }))
+  let calls = 0
+  const options = { root, key: 'fixture', scheduledOnly: true, clock: () => now, log: () => {},
+    async fetchImpl() {
+      calls++
+      dispatch()
+      await inbound
+      return new Response(null, { status: 429, headers: { 'retry-after': '3600' } })
+    } }
+  const selector = { dates: ['2026-11-23'], kinds: ['index'], dryRun: false }
+  const running = createKrxProvider(options).backfillMissingDates(selector)
+  await queued
+  try {
+    await assert.rejects(createKrxProvider(options).backfillMissingDates(selector), { code: 'KRX_BACKFILL_BUSY' })
+    await createKrxProvider(options).collect()
+    assert.equal(calls, 1)
+  } finally {
+    release()
+  }
+  const result = await running
+  assert.equal(result.stopped, 'PROVIDER_RATE_LIMITED')
+  assert.equal(result.attempts, 1)
+  const planned = await createKrxProvider(options).backfillMissingDates({ ...selector, dryRun: true })
+  assert.equal(planned.remainingRequests, 0)
+  assert.equal(planned.cooldownUntil, '2026-11-25T02:10:00.000Z')
+  now += 61 * 60_000
+  await createKrxProvider(options).collect()
+  assert.equal(calls, 1)
+})
+
+test('selective recovery preserves readable snapshots and stops on write or auth failure', async t => {
+  for (const mode of ['write', 'auth']) {
+    await t.test(mode, async t => {
+      const root = await mkdtemp(join(tmpdir(), 'krx-recovery-failure-'))
+      t.after(() => rm(root, { recursive: true, force: true }))
+      const badDate = join(root, 'ohlcv-KOSPI-2026-11-23.json')
+      if (mode === 'write') await mkdir(badDate)
+      const latest = join(root, 'sto-stk_bydd_trd.json')
+      const snapshot = JSON.stringify({ version: 1, history: [], data: { date: '2026-11-24', rows: [
+        { symbol: '005930', tradingDate: '2026-11-24', price: 105, open: 101, high: 110, low: 99, volume: 20 },
+      ] } })
+      await writeFile(latest, snapshot)
+      let calls = 0
+      const provider = createKrxProvider({ root, key: 'fixture', scheduledOnly: true, log: () => {},
+        clock: () => Date.parse('2026-11-25T01:10Z'), fetchImpl(url) {
+          calls++
+          return mode === 'auth' ? new Response(null, { status: 401 }) : recoveryFixture(url)
+        } })
+      const result = await provider.backfillMissingDates({ dates: ['2026-11-23'], kinds: ['trades'], dryRun: false })
+      assert.equal(result.stopped, mode === 'auth' ? 'KRX_AUTH_REJECTED' : 'KRX_HISTORY_CACHE_FAILED')
+      assert.equal(calls, 1)
+      assert.equal(await readFile(latest, 'utf8'), snapshot)
+    })
+  }
+})
+
+test('a partial publish keeps both markets on the last common date and reports the last attempt', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-common-close-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  let now = Date.parse('2026-11-20T12:15Z')
+  const provider = createKrxProvider({ root, key: 'fixture', scheduledOnly: true, log: () => {}, clock: () => now,
+    fetchImpl(url) {
+      if (url.searchParams.get('basDd') === '20261123' && url.pathname.endsWith('/ksq_bydd_trd')) return response([])
+      return recoveryFixture(url)
+    } })
+  await provider.collect()
+  now = Date.parse('2026-11-23T12:15Z')
+  await provider.collect()
+  const stocks = await provider.stocks({ market: 'KOSDAQ', symbols: ['263860'] })
+  assert.equal(stocks.items[0].quote.tradingDate, '2026-11-20')
+  assert.equal(stocks.trades.status, 'stale')
+  assert.equal(stocks.trades.reason, 'not-published')
+  assert.equal(stocks.trades.lastAttemptAt, '2026-11-23T12:15:00.000Z')
+  assert.equal(stocks.trades.usingPreviousClose, true)
+  const overview = await provider.overview()
+  assert.equal(overview.tradingDate, '2026-11-20')
+  assert.equal(overview.usingPreviousClose, true)
+  assert.equal(overview.leaders.volume.length, 2)
+})
+
+test('HTTP failures and a malformed observation never publish index data', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-http-errors-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const failures = [500, 502, 504]
+  let now = Date.parse('2026-11-23T12:15Z')
+  const log = []
+  const provider = createKrxProvider({ root, key: 'fixture', clock: () => now, log: entry => log.push(entry),
+    fetchImpl() {
+      return failures.length ? new Response(null, { status: failures.shift() }) : response([
+        { IDX_CLSS: 'KOSPI', IDX_NM: '코스피', BAS_DD: '20261124', CLSPRC_IDX: 'invalid' },
+      ])
+    } })
+  assert.equal((await provider.indices('KOSPI')).errorCode, 'PROVIDER_UNAVAILABLE')
+  now = Date.parse('2026-11-24T12:15Z')
+  assert.equal((await provider.indices('KOSPI')).errorCode, 'KRX_INVALID_OBSERVATIONS')
+  assert.deepEqual(log.filter(entry => entry.event === 'krx-request').map(entry => entry.httpStatus), [500, 502, 504, 200])
 })

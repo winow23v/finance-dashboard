@@ -34,7 +34,9 @@ function StockList({ rows, saved, onToggle, label, blocked }: {
             {' · ' + quote.tradingDate + ' 기준'}
           </small>}
           {regular && <small className="watchlist-quote">{regular.source}
-            {regular.collectedAt && ' · 수집 ' + formatKrxCollectionTime(regular.collectedAt)}
+            {regular.usingPreviousClose && ' · 이전 정상 종가 사용'}
+            {regular.collectedAt && ' · 마지막 정상 수집 ' + formatKrxCollectionTime(regular.collectedAt)}
+            {regular.lastAttemptAt && ' · 마지막 시도 ' + formatKrxCollectionTime(regular.lastAttemptAt)}
             {regular.reason && ' · ' + regularQuoteStatus(regular.reason)}
           </small>}
           {afterHours && <KrxAfterHoursStatus details={afterHours} compact />}

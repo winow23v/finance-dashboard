@@ -75,6 +75,8 @@ export interface KrxStatus {
   status: 'available' | 'stale' | 'unavailable'
   reason: KrxReason | null
   collectedAt: string | null
+  lastAttemptAt?: string | null
+  usingPreviousClose?: boolean
   source: string
 }
 export type KrxAfterHours = {
@@ -109,7 +111,7 @@ export interface KrxStocks {
   market: KrxMarket
   listingDate: string | null
   listings: KrxStatus
-  trades: KrxStatus
+  trades: KrxStatus & { tradingDate?: string | null }
   afterHours?: KrxAfterHours[]
   items: KrxStock[]
 }
@@ -122,6 +124,8 @@ export interface KrxAnalysis {
   reason: KrxReason | null
   latestDate: string | null
   collectedAt: string | null
+  lastAttemptAt?: string | null
+  usingPreviousClose?: boolean
   afterHours?: KrxAfterHours[]
   stoppedAt: string | null
   stoppedReason: 'missing-observation' | 'not-collected' | null
@@ -138,6 +142,7 @@ export interface KrxMarketRow {
   price: number
   changePercent: number | null
   volume: number
+  turnover?: number | null
   marketCap: number | null
 }
 
@@ -145,8 +150,10 @@ export interface KrxOverview {
   source: string
   tradingDate: string | null
   collectedAt: string | null
+  lastAttemptAt?: string | null
+  usingPreviousClose?: boolean
   reason: KrxReason | 'same-date-data-unavailable' | null
-  leaders: { advances: KrxMarketRow[]; declines: KrxMarketRow[]; volume: KrxMarketRow[] } | null
+  leaders: { advances: KrxMarketRow[]; declines: KrxMarketRow[]; volume: KrxMarketRow[]; turnover?: KrxMarketRow[] } | null
   tiles: KrxMarketRow[]
   marketTiles: Record<KrxMarket, KrxMarketRow[]>
 }

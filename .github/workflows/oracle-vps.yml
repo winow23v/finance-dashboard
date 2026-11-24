@@ -94,7 +94,7 @@ jobs:
           printf '%s\n' "$ORACLE_SSH_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
           unset ORACLE_SSH_PRIVATE_KEY ORACLE_SSH_KNOWN_HOSTS
           release_files=(
-            vps-api/server.mjs vps-api/market-cache.mjs
+            vps-api/server.mjs vps-api/market-cache.mjs vps-api/krx-backfill.mjs
             ':(glob)vps-api/*-provider.mjs' ':(glob)vps-api/*.test.mjs'
             vps-api/package.json vps-api/package-lock.json
             ':(exclude)vps-api/sec-provider.mjs'

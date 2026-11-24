@@ -12,9 +12,9 @@ const time = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyl
 export const krxStateLabels: Record<KrxReason, string> = {
   'provider-not-configured': 'KRX 공급자 미연결',
   'provider-error': 'KRX 조회 실패',
-  'not-published': '기준일 자료 미확인',
+  'not-published': '기준 거래일 확정 종가 미확인',
   weekend: '거래소 휴장',
-  'before-collection': '당일 수집 대기',
+  'before-collection': '다음 확정 종가 수집 대기',
 }
 
 export function KrxStocks({ selected, onToggle, symbol, blocked }: {
@@ -71,7 +71,10 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
         return <div key={dataset.market}>
           <p className="state">{dataset.market} · {dataset.listings.source}
             {dataset.listingDate && ' · 종목 기준 ' + dataset.listingDate}
-            {dataset.trades.collectedAt && <> · 시세 수집 <time dateTime={dataset.trades.collectedAt}>{time.format(new Date(dataset.trades.collectedAt))}</time> (KST)</>}
+            {dataset.trades.tradingDate && ' · 종가 기준 ' + dataset.trades.tradingDate}
+            {dataset.trades.usingPreviousClose && ' · 이전 정상 종가 사용'}
+            {dataset.trades.lastAttemptAt && <> · 마지막 시도 <time dateTime={dataset.trades.lastAttemptAt}>{time.format(new Date(dataset.trades.lastAttemptAt))}</time> (KST)</>}
+            {dataset.trades.collectedAt && <> · 마지막 정상 수집 <time dateTime={dataset.trades.collectedAt}>{time.format(new Date(dataset.trades.collectedAt))}</time> (KST)</>}
             {details.map(reason => ' · ' + krxStateLabels[reason])}
           </p>
           {dataset.items.length ? <ul className="stock-list">
