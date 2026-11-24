@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -8,6 +8,66 @@ import { createIndexSnapshot } from './market-index-provider.mjs'
 import { buildApp } from './server.mjs'
 
 const response = rows => Response.json({ OutBlock_1: rows })
+
+test('scheduled collection keeps old bars on errors and publishes recovered trades even if listings lag', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-scheduled-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const symbol = '263860'
+  const oldDate = '2026-11-20'
+  const newDate = '2026-11-23'
+  const collectedAt = '2026-11-21T00:00:00.000Z'
+  const bar = { symbol, price: 100, open: 99, high: 101, low: 98, volume: 10, tradingDate: oldDate }
+  const listing = { symbol, name: '지니언스', fullName: '지니언스', listedOn: '2026-11-20', market: 'KOSDAQ' }
+  const oldFile = join(root, 'ohlcv-KOSDAQ-' + oldDate + '.json')
+  const oldHistory = JSON.stringify({ date: oldDate, rows: [[symbol, 99, 101, 98, 100, 10]] })
+  await Promise.all([
+    writeFile(oldFile, oldHistory),
+    ...[['ksq_isu_base_info', listing], ['ksq_bydd_trd', bar]].map(([name, row]) =>
+      writeFile(join(root, 'sto-' + name + '.json'), JSON.stringify({
+        version: 1, history: [], data: { date: oldDate, collectedAt, rows: [row] },
+      }))),
+  ])
+  const log = []
+  let now = Date.parse('2026-11-23T07:31:00Z')
+  let available = false
+  let checks = 0
+  const provider = createKrxProvider({ scheduled: true, root, key: 'fixture', clock: () => now,
+    log: event => log.push(event),
+    fetchImpl(url) {
+      checks++
+      if (!url.pathname.endsWith('/ksq_bydd_trd')) return new Response(null, { status: 403 })
+      if (!available) return new Response(null, { status: 503 })
+      return response([{ BAS_DD: '20261123', MKT_NM: 'KOSDAQ', ISU_CD: symbol, ISU_NM: '지니언스',
+        TDD_CLSPRC: '105', TDD_OPNPRC: '100', TDD_HGPRC: '107', TDD_LWPRC: '97', ACC_TRDVOL: '20' }])
+    },
+  })
+  assert.equal((await provider.stockHistory(symbol)).latestDate, oldDate)
+  assert.equal(checks, 0)
+  await provider.collect()
+  const stale = await provider.stockHistory(symbol)
+  assert.equal(stale.latestDate, oldDate)
+  assert.equal(stale.collectedAt, collectedAt)
+  assert.equal(stale.reason, 'provider-error')
+  assert.equal(stale.errorCode, 'PROVIDER_UNAVAILABLE')
+  assert.deepEqual(log.filter(entry => entry.endpoint.endsWith('/ksq_bydd_trd') && entry.event === 'krx-request')
+    .map(({ attempt, httpStatus }) => [attempt, httpStatus]), [[1, 503], [2, 503], [3, 503]])
+  assert.equal(log.filter(entry => entry.httpStatus === 403 && entry.attempt > 1).length, 0)
+  available = true
+  now = Date.parse('2026-11-23T08:31:00Z')
+  await provider.collect()
+  const list = await provider.stocks({ market: 'KOSDAQ', symbol })
+  const detail = await provider.stockHistory(symbol)
+  assert.equal(list.listingDate, oldDate)
+  assert.equal(list.trades.tradingDate, newDate)
+  assert.equal(list.trades.collectedAt, detail.collectedAt)
+  assert.deepEqual(list.items[0].quote, detail.quote)
+  assert.equal(detail.latestDate, newDate)
+  assert.equal(detail.reason, null)
+  assert.deepEqual(detail.history.bars.map(row => row.tradingDate), [oldDate, newDate])
+  assert.equal(await readFile(oldFile, 'utf8'), oldHistory)
+  const snapshot = JSON.parse(await readFile(join(root, 'sto-ksq_bydd_trd.json'), 'utf8'))
+  assert.deepEqual(snapshot.history.map(entry => entry.result), ['error', 'available'])
+})
 
 test('member KRX is opt-in and cannot be mounted without membership', async t => {
   const fetchImpl = () => assert.fail('disabled provider must not call KRX')
@@ -129,7 +189,8 @@ test('joins KRX short codes, preserves preferred shares, and protects local stoc
       { ...common, ISU_CD: 'KR7005930003', ISU_SRT_CD: '005930', KIND_STKCERT_TP_NM: '보통주' },
       { ...common, ISU_CD: 'KR7005931001', ISU_SRT_CD: '005935', KIND_STKCERT_TP_NM: '우선주' },
     ]) : response([
-      { BAS_DD: '20261120', ISU_CD: '005930', ISU_NM: '삼성전자', MKT_NM: 'KOSPI', TDD_CLSPRC: '100,400', ACC_TRDVOL: '1,234' },
+      { BAS_DD: '20261120', ISU_CD: '005930', ISU_NM: '삼성전자', MKT_NM: 'KOSPI',
+        TDD_CLSPRC: '100,400', TDD_OPNPRC: '100000', TDD_HGPRC: '101000', TDD_LWPRC: '99000', ACC_TRDVOL: '1,234' },
     ]),
   })
   const app = await buildApp({ logger: false, localKrx: krx, localIndexResearch: createIndexSnapshot(undefined, krx),
@@ -180,7 +241,7 @@ test('history excludes closed dates, stops at an invalid session, and ranks only
   const history = await krx.stockHistory('005930')
   assert.deepEqual(history.history.bars.map(row => row.tradingDate), ['2026-11-18', '2026-11-20'])
   assert.equal(history.stoppedAt, '2026-11-17')
-  assert.equal(history.stoppedReason, 'missing-observation')
+  assert.equal(history.stoppedReason, 'no-trades')
   assert.equal(history.history.adjustment, 'unadjusted')
   const overview = await krx.overview()
   assert.equal(overview.tradingDate, '2026-11-20')
@@ -224,4 +285,62 @@ test('backfill stops on HTTP 429 and a rerun skips the saved latest session', as
   assert.deepEqual(log.slice(2), ['20261119', '20261120', '20261119'])
   assert.equal(result.KOSPI.sessions, 1)
   assert.equal(result.KOSDAQ.sessions, 1)
+})
+
+
+test('a member cache supports 500 shared sessions without fetches and stops before listing', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-member-history-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const latest = '2026-11-20'
+  const dates = []
+  for (let offset = 0; dates.length < 501; offset++) {
+    const date = new Date(Date.parse(latest) - offset * 86_400_000)
+    if (![0, 6].includes(date.getUTCDay())) dates.push(date.toISOString().slice(0, 10))
+  }
+  const symbols = ['005930', '000660', '263860']
+  const state = (file, rows) => writeFile(join(root, file + '.json'),
+    JSON.stringify({ version: 1, history: [], data: { date: latest, rows } }))
+  const bars = symbols.map(symbol => [symbol, 100, 110, 98, 105, 1000])
+  await Promise.all([
+    state('sto-stk_bydd_trd', symbols.map(symbol => ({
+      symbol, price: 105, open: 100, high: 110, low: 98, volume: 1000, tradingDate: latest,
+    }))),
+    state('sto-stk_isu_base_info', symbols.map(symbol => ({
+      symbol, market: 'KOSPI', name: symbol, fullName: symbol,
+      listedOn: symbol === '263860' ? dates[2] : '2010-01-04',
+    }))),
+    state('sto-ksq_isu_base_info', [{ symbol: '123456', market: 'KOSDAQ', fullName: 'Fixture' }]),
+  ])
+  for (const date of dates) {
+    await writeFile(join(root, 'ohlcv-KOSPI-' + date + '.json'), JSON.stringify({ date, rows: bars }))
+  }
+  const provider = configureMemberKrx({ enabled: '1', root, key: '',
+    clock: () => Date.parse('2026-11-21T08:00:00Z'),
+    fetchImpl: () => assert.fail('Reading/planning must never contact KRX'),
+  })
+  const plan = await provider.backfillPlan(145)
+  assert.equal(plan.maxRequestsPerRun, 300)
+  assert.equal(plan.markets.KOSPI.cachedSessions, 500)
+  assert.equal(plan.markets.KOSPI.minimumAdditionalSessions, 0)
+  const [samsung, hynix, listedRecently] = await Promise.all(symbols.map(symbol => provider.stockHistory(symbol)))
+  for (const result of [samsung, hynix]) {
+    assert.equal(result.history.bars.length, 500)
+    assert.equal(result.history.bars[0].tradingDate, dates[499])
+    assert.equal(result.history.bars.at(-1).tradingDate, latest)
+  }
+  assert.equal(listedRecently.history.bars.length, 3)
+  assert.equal(listedRecently.stoppedAt, dates[3])
+  assert.equal(listedRecently.stoppedReason, 'pre-listing')
+})
+
+test('backfill does not start historical requests after a latest session 429', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-backfill-throttle-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  let calls = 0
+  const provider = createKrxProvider({
+    key: 'fixture', root, clock: () => Date.parse('2026-11-21T08:00:00Z'),
+    fetchImpl: () => { calls++; return new Response('', { status: 429 }) },
+  })
+  await assert.rejects(provider.backfill(1), { code: 'PROVIDER_RATE_LIMITED' })
+  assert.equal(calls, 1)
 })
