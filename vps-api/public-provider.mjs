@@ -17,6 +17,14 @@ export function isDay(value) {
   return Number.isFinite(+date) && date.toISOString().slice(0, 10) === value
 }
 
+const retryableNetwork = new Set(['EAI_AGAIN', 'ECONNABORTED', 'ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH',
+  'ENETRESET', 'ENETUNREACH', 'EPIPE', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_SOCKET'])
+
+export function isTransientNetworkError(error) {
+  return retryableNetwork.has(error?.cause?.code ?? error?.code)
+}
+
 export function providerClient(fetchImpl, intervalMs, {
   binary = false, maxBytes = 16 * 1024 * 1024, queue = false, dailyLimit = 0, timeoutMs = 6000, detailedErrors = false,
 } = {}) {
@@ -63,7 +71,9 @@ export function providerClient(fetchImpl, intervalMs, {
       } catch (error) {
         if (signal.aborted) throw new ProviderError(504, 'PROVIDER_TIMEOUT')
         if (error instanceof ProviderError) throw error
-        throw bodyError('PROVIDER_BODY_ERROR')
+        const failure = bodyError('PROVIDER_BODY_ERROR')
+        if (isTransientNetworkError(error)) failure.transientNetwork = true
+        throw failure
       }
     } catch (error) {
       if (error instanceof ProviderError) throw error

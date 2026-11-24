@@ -87,9 +87,14 @@ test('Frankfurter errors and schema changes produce sanitized provider statuses'
   }
 })
 
-test('Frankfurter timeout and connection failures differ and cold failures are throttled', async t => {
+test('Frankfurter timeout, connection, and body failures differ and cold failures are throttled', async t => {
   for (const [fetchImpl, status, code] of [
     [async () => { throw new Error('private upstream error') }, 502, 'PROVIDER_CONNECTION_ERROR'],
+    [async () => new Response(new ReadableStream({
+      pull(controller) {
+        controller.error(new TypeError('private upstream error', { cause: { code: 'UND_ERR_SOCKET' } }))
+      },
+    })), 502, 'PROVIDER_BODY_ERROR'],
     [async (_url, { signal }) => {
       await new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }))
     }, 504, 'PROVIDER_TIMEOUT'],
