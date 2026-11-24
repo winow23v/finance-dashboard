@@ -93,14 +93,15 @@ class Downloader:
     attempts: int = 3
     next_request: float = 0.0
 
-    def history(self, symbol, adjusted):
+    def history(self, symbol, adjusted, *, start=None, end=None):
+        window = {"period": "2y"} if start is None else {"start": start, "end": end}
         for attempt in range(self.attempts):
             sleep(max(0, self.next_request - monotonic()))
             try:
                 # One ticker at a time. Ticker.history propagates classified provider errors.
                 self.ticker = yf.Ticker(symbol)
                 frame = self.ticker.history(
-                    interval="1d", period="2y", auto_adjust=adjusted, keepna=True,
+                    interval="1d", auto_adjust=adjusted, keepna=True, **window,
                     timeout=12,
                 )
                 return normalize(frame, symbol)
