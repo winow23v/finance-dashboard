@@ -88,16 +88,22 @@ function isKrxStock(value: unknown): value is KrxStock {
     && isKrxMarket(value.market) && isKrxQuote(value.quote)
 }
 
+function hasKrxCollectionMetadata(value: Record<string, unknown>) {
+  return (value.lastAttemptAt === undefined || isOptionalDate(value.lastAttemptAt))
+    && (value.usingPreviousClose === undefined || typeof value.usingPreviousClose === 'boolean')
+}
+
 export async function getKrxStocks(market: KrxMarket, filters: { q?: string; symbol?: string }, signal: AbortSignal): Promise<KrxStocks> {
   const query = new URLSearchParams({ market, ...filters })
   const value = await getJson('/api/v1/market/kr/stocks?' + query, false, signal)
   const validStatus = (status: unknown) => isRecord(status) && ['available', 'stale', 'unavailable'].includes(String(status.status))
     && typeof status.source === 'string' && (status.collectedAt === null || isDate(status.collectedAt))
-    && isKrxReason(status.reason)
+    && isKrxReason(status.reason) && hasKrxCollectionMetadata(status)
   if (!isRecord(value) || value.market !== market || !Array.isArray(value.items)
     || !value.items.every(item => isKrxStock(item) && item.market === market)
     || (value.afterHours !== undefined && !isKrxAfterHours(value.afterHours))
     || !validStatus(value.listings) || !validStatus(value.trades)
+    || (isRecord(value.trades) && value.trades.tradingDate !== undefined && !isOptionalDate(value.trades.tradingDate))
     || (value.listingDate !== null && !isDate(value.listingDate))) throw new Error('Invalid KRX stock response')
   return value as unknown as KrxStocks
 }
@@ -107,7 +113,7 @@ export async function getKrxAnalysis(symbol: string, signal: AbortSignal): Promi
   if (!isRecord(value) || value.symbol !== symbol || !isText(value.name) || !isKrxMarket(value.market)
     || value.source !== 'KRX OPEN API' || !isKrxQuote(value.quote) || !isKrxReason(value.reason)
     || (value.afterHours !== undefined && !isKrxAfterHours(value.afterHours))
-    || !isOptionalDate(value.latestDate) || !isOptionalDate(value.collectedAt) || !isOptionalDate(value.stoppedAt)
+    || !hasKrxCollectionMetadata(value) || !isOptionalDate(value.latestDate) || !isOptionalDate(value.collectedAt) || !isOptionalDate(value.stoppedAt)
     || !(value.stoppedReason === null || value.stoppedReason === 'missing-observation' || value.stoppedReason === 'not-collected')
     || !isRecord(value.history) || value.history.currency !== 'KRW' || value.history.timeZone !== 'Asia/Seoul'
     || value.history.adjustment !== 'unadjusted' || !['complete', 'missing-observations'].includes(String(value.history.completeness))
@@ -122,15 +128,17 @@ function isKrxMarketRow(value: unknown): value is KrxMarketRow {
     && isText(value.shortName) && typeof value.mapped === 'boolean'
     && isKrxMarket(value.market) && isNumber(value.price) && value.price > 0 && isNumber(value.volume) && value.volume > 0
     && isNullableNumber(value.changePercent) && isNullableNumber(value.marketCap)
+    && (value.turnover === undefined || isNullableNumber(value.turnover))
 }
 
 export async function getKrxOverview(signal: AbortSignal): Promise<KrxOverview> {
   const data = await getJson('/api/v1/market/kr/overview', false, signal)
   const rows = (value: unknown, limit: number) => Array.isArray(value) && value.length <= limit && value.every(isKrxMarketRow)
-  if (!isRecord(data) || data.source !== 'KRX OPEN API' || !isOptionalDate(data.tradingDate) || !isOptionalDate(data.collectedAt)
+  if (!isRecord(data) || !hasKrxCollectionMetadata(data) || data.source !== 'KRX OPEN API' || !isOptionalDate(data.tradingDate) || !isOptionalDate(data.collectedAt)
     || !(isKrxReason(data.reason) || data.reason === 'same-date-data-unavailable')
     || !(data.leaders === null || (isRecord(data.leaders) &&
-      [data.leaders.advances, data.leaders.declines, data.leaders.volume].every(value => rows(value, 5))))
+      [data.leaders.advances, data.leaders.declines, data.leaders.volume].every(value => rows(value, 5))
+      && (data.leaders.turnover === undefined || rows(data.leaders.turnover, 5))))
     || !rows(data.tiles, 60) || !isRecord(data.marketTiles)
     || !rows(data.marketTiles.KOSPI, 60) || !rows(data.marketTiles.KOSDAQ, 60)) throw new Error('Invalid KRX overview')
   return data as unknown as KrxOverview

@@ -70,19 +70,38 @@ Phase 19-L member collection
 - Use FINANCE_MEMBER_KRX=1, the existing KRX_API_KEY and the existing
   KRX_MEMBER_CACHE_DIR. Back up that directory and verify that the API service
   account can write to it. Preserve the existing OHLCV history and permissions.
-- Normal KST slots are 16:00, 16:30, 17:30, 18:15, 19:00, 20:15 and 21:15.
-  A missing prior close gets two additional checks at 08:00 and 10:00 on the
-  next trading day. Each endpoint reserves its window on disk before the HTTP
-  call. Missed slots are not replayed. A 429 stops calls across the collector
-  for at least 30 minutes or Retry-After, whichever is longer. The cooldown
-  file persists across restarts.
+- The collector checks the current trading date at 21:15 KST. It checks the
+  previous trading date at 08:10 and 10:10 KST on the next trading day if
+  a dataset is still pending. These are collection windows based on the
+  incident history. Confirm upstream publication timing from a normal run.
+- The 10:10 window also examines up to ten older trading sessions for gaps.
+  Automatic recovery handles up to four datasets per trading day after the
+  regular collection. It shares backfill.flock and a persistent rolling
+  24-hour budget of 300 attempts with the CLI for this cache directory.
+  A 429 pauses calls for at least 30 minutes or Retry-After, whichever is
+  longer. Both the window reservations and cooldown survive restarts.
+- Before validating a release containing the CLI, compare the installed
+  /usr/local/bin/finance-dashboard-release with .github/scripts/oracle-release.sh.
+  The installed script must explicitly accept and install krx-backfill.mjs.
+  Update the root-managed script through the approved administrative process.
+  Validate and deploy stage the CLI file without invoking it.
+- For a read-only plan, use the API service account and the same KRX_MEMBER_CACHE_DIR
+  and KRX_CALENDAR_OVERRIDES settings as the running service:
+    node /opt/finance-dashboard/vps-api/krx-backfill.mjs --member --plan 2026-11-23 2026-11-24
+  If the service has no cache override, leave KRX_MEMBER_CACHE_DIR unset so both
+  use the same application-relative member cache. Confirm the plan reports the
+  live cache path. If the service uses a relative override, resolve it against
+  the service WorkingDirectory and pass the absolute path to the CLI.
+  Use --markets=KOSPI,KOSDAQ or --kinds=trades,index to narrow the plan.
+  After separate approval, use --apply instead of --plan with the service's
+  credentials and environment. Each invocation processes up to four datasets.
 - The included holiday calendar covers 2026. Set KRX_CALENDAR_OVERRIDES to a JSON
   object when an official special close or a new year is announced. The following
   illustrates the format only:
   {"years":[2027],"closed":["2027-01-01"],"regularClose":{"2027-01-04":"15:30"},"afterClose":{"2027-01-04":"20:00"}}
   Include the complete official holiday list before enabling a new year.
   Collection is held for an uncovered year. The regular check never starts
-  before 16:00 or 30 minutes after a late official close.
+  before 21:15 or 30 minutes after a late official close.
 - The after-hours connection check runs at 20:15 or 15 minutes after an
   overridden late close. The check records an unconnected state for each
   venue. It does not call a quote endpoint or write an OHLCV bar.

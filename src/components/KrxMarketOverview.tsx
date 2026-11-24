@@ -14,27 +14,41 @@ const state = (data?: KrxOverview | null) => data === undefined ? 'KRX 시장 �
     : data.reason && data.reason !== 'same-date-data-unavailable' ? krxStateLabels[data.reason]
       : '두 시장의 동일 거래일 자료를 확인할 수 없습니다.'
 const description = (data: KrxOverview) => [
-  data.tradingDate && '거래일 ' + data.tradingDate, data.source,
-  data.collectedAt && '수집 ' + time.format(new Date(data.collectedAt)) + ' (KST)',
+  data.tradingDate && '확정 종가 기준 ' + data.tradingDate, data.source,
+  data.usingPreviousClose && '이전 정상 종가 사용',
+  data.collectedAt && '마지막 정상 수집 ' + time.format(new Date(data.collectedAt)) + ' (KST)',
+  data.lastAttemptAt && '마지막 시도 ' + time.format(new Date(data.lastAttemptAt)) + ' (KST)',
   data.reason && data.reason !== 'same-date-data-unavailable' ? krxStateLabels[data.reason] : null,
 ].filter(Boolean).join(' · ')
 
+const rankings = [
+  { key: 'advances', label: '상승률 상위', format: rate },
+  { key: 'declines', label: '하락률 상위', format: rate },
+  { key: 'volume', label: '거래량 상위', format: (row: KrxMarketRow) => number.format(row.volume) + '주' },
+  { key: 'turnover', label: '거래대금 상위', format: (row: KrxMarketRow) =>
+    row.turnover == null ? '거래대금 미확인' : number.format(row.turnover) + '원' },
+] as const
+
 export function KrxMovers({ data, message, summary }: { data?: KrxOverview | null; message?: string; summary?: boolean }) {
+  const leaders = data?.leaders
   return <section className="panel movers-panel" aria-label="주요 등락 현황">
     <div className="section-heading"><h2>주요 등락 현황</h2>{summary && <a href="#domestic" className="text-link">국내시장 보기</a>}</div>
-    {!data?.leaders ? <p className="state" role="status">{message ?? state(data)}</p> : <>
+    {!data || !leaders ? <p className="state" role="status">{message ?? state(data)}</p> : <>
       <p className="heatmap-meta">{description(data)}</p>
       <div className="krx-rankings">
-        {([['상승률 상위', data.leaders.advances], ['하락률 상위', data.leaders.declines], ['거래량 상위', data.leaders.volume]] as const)
-          .filter(([label]) => !summary || label !== '거래량 상위').map(([label, rows]) => <div key={label}>
+        {(summary ? rankings.slice(0, 2) : rankings).map(({ key, label, format }) => {
+          const rows = leaders[key]
+          if (!rows) return null
+          return <div key={key}>
             <h3>{label}</h3>
             {rows.length ? <ol className="stock-list">
               {(summary ? rows.slice(0, 3) : rows).map(row => <li key={row.market + ':' + row.symbol}>
                 <a className="stock-detail-link" href={link(row)}>{row.name}{!row.mapped && ' (명칭 미매핑)'}<small>{row.market} · {row.symbol}</small></a>
-                <span>{label === '거래량 상위' ? number.format(row.volume) + '주' : rate(row)}</span>
+                <span>{format(row)}</span>
               </li>)}
             </ol> : <p className="state">해당 종목 없음</p>}
-          </div>)}
+          </div>
+        })}
       </div>
     </>}
   </section>

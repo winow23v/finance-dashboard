@@ -10,8 +10,8 @@ const holidays = [
   '01-01', '02-16', '02-17', '02-18', '03-02', '05-01', '05-05', '05-25', '06-03',
   '07-17', '08-17', '09-24', '09-25', '10-05', '10-09', '12-25', '12-31',
 ].map(date => '2026-' + date)
-const regularSlots = [960, 990, 1050, 1095, 1140, 1215, 1275]
-const morningSlots = [480, 600]
+const eveningSlot = 1275
+const morningSlots = [490, 610]
 
 export function createKrxCalendar(raw = process.env.KRX_CALENDAR_OVERRIDES) {
   const config = raw ? JSON.parse(raw) : {}
@@ -40,9 +40,8 @@ export function krxCollectionSession(time, calendar) {
   const nowMinutes = (time - midnight) / 60_000
   const closed = calendar.closed(today)
   const known = calendar.known(today)
-  const start = Math.max(960, calendar.regular(today) + 30)
-  const slots = regularSlots.filter(slot => slot > start)
-  const slot = !closed && known ? [start, ...slots].findLast(minute => nowMinutes >= minute) : undefined
+  const evening = Math.max(eveningSlot, calendar.regular(today) + 30)
+  const slot = !closed && known && nowMinutes >= evening ? evening : undefined
   const at = minute => midnight + minute * 60_000
   const previous = () => {
     let prior = Date.parse(today) - dayMs
@@ -55,6 +54,7 @@ export function krxCollectionSession(time, calendar) {
   return {
     today, date: prior, slot: slot ?? catchup ?? null,
     slotStart: at(slot ?? catchup ?? 0), canCollect: slot !== undefined || catchup !== undefined,
+    recoveryWindow: catchup === morningSlots.at(-1), recoveryStartsAt: at(morningSlots.at(-1)),
     closed, known, beforeClose: !closed && slot === undefined,
     afterCheckAt: new Date(at(Math.max(1215, calendar.after(today) + 15))).toISOString(),
   }

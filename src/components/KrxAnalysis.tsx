@@ -85,8 +85,10 @@ export function KrxAnalysis({ symbol, actions, refresh = 0 }: { symbol: string; 
             <div className="analysis-meta">
               {quote && <span><Clock size={14} aria-hidden="true" /> 거래일 <time dateTime={quote.tradingDate}>{quote.tradingDate}</time></span>}
               <span>{data.source} · 공식 미수정 종가</span>
-              {data.reason && <span>{krxStateLabels[data.reason]}{data.reason === 'provider-error' && ' (마지막 유효값)'}</span>}
-              {data.collectedAt && <span>수집 <time dateTime={data.collectedAt}>{timestamp.format(new Date(data.collectedAt))}</time> (KST)</span>}
+              {data.reason && <span>{krxStateLabels[data.reason]}</span>}
+              {data.usingPreviousClose && <span>이전 정상 종가 사용</span>}
+              {data.collectedAt && <span>마지막 정상 수집 <time dateTime={data.collectedAt}>{timestamp.format(new Date(data.collectedAt))}</time> (KST)</span>}
+              {data.lastAttemptAt && <span>마지막 시도 <time dateTime={data.lastAttemptAt}>{timestamp.format(new Date(data.lastAttemptAt))}</time> (KST)</span>}
             </div>
           </header>
           <KrxAfterHoursStatus details={data.afterHours} />

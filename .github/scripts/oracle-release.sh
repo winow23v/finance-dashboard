@@ -77,7 +77,7 @@ runuser -u "$deploy_user" -- bash -euc '
     [[ -f $entry && ! -L $entry ]]
     case "$entry" in
       sec-provider.mjs) exit 1 ;;
-      server.mjs|market-cache.mjs|*-provider.mjs|*.test.mjs|package.json|package-lock.json) ;;
+      server.mjs|market-cache.mjs|krx-backfill.mjs|*-provider.mjs|*.test.mjs|package.json|package-lock.json) ;;
       *) exit 1 ;;
     esac
   done
@@ -94,8 +94,12 @@ rm -f -- "$release/api/sec-provider.mjs"
 rm -rf -- "$release/api/node_modules"
 cp -a -- "$work/node_modules" "$release/api/node_modules"
 chown -hR --reference="$api/node_modules" "$release/api/node_modules"
-for file in "$work"/server.mjs "$work"/market-cache.mjs "$work"/*-provider.mjs \
-  "$work"/package.json "$work"/package-lock.json; do
+runtime_files=("$work"/server.mjs "$work"/market-cache.mjs "$work"/*-provider.mjs
+  "$work"/package.json "$work"/package-lock.json)
+if [[ -f $work/krx-backfill.mjs ]]; then
+  runtime_files+=("$work/krx-backfill.mjs")
+fi
+for file in "${runtime_files[@]}"; do
   target="$release/api/${file##*/}"
   if [[ -f $target && ! -L $target ]]; then
     install -o "$(stat -c %u "$target")" -g "$(stat -c %g "$target")" \

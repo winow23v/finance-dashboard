@@ -7,7 +7,8 @@ import type { KrxAfterHours, KrxStock } from '../types/finance'
 
 export type Observation = {
   name?: string; segment?: string; currency?: 'KRW' | 'USD'
-  regular?: { source: string; collectedAt: string | null; reason: string | null }
+  regular?: { source: string; collectedAt: string | null; reason: string | null
+    lastAttemptAt?: string; usingPreviousClose?: boolean }
   afterHours?: KrxAfterHours[]
   quote?: { price: number; changePercent: number | null; tradingDate: string }
 }
@@ -54,7 +55,11 @@ export async function watchlistObservations(items: MarketSymbol[], signal: Abort
       if (isRecord(regular) && regular.source === 'KRX OPEN API'
         && (regular.collectedAt === null || typeof regular.collectedAt === 'string' && Number.isFinite(Date.parse(regular.collectedAt)))
         && (regular.reason === null || typeof regular.reason === 'string')) {
-        observation.regular = { source: regular.source, collectedAt: regular.collectedAt, reason: regular.reason }
+        observation.regular = { source: regular.source, collectedAt: regular.collectedAt, reason: regular.reason,
+          ...(typeof regular.lastAttemptAt === 'string' && Number.isFinite(Date.parse(regular.lastAttemptAt)) &&
+            { lastAttemptAt: regular.lastAttemptAt }),
+          ...(typeof regular.usingPreviousClose === 'boolean' && { usingPreviousClose: regular.usingPreviousClose }),
+        }
       }
       if (isKrxAfterHours(row.afterHours)) observation.afterHours = row.afterHours
       entries.set(key, { ...observation, name: row.name, segment: row.segment, currency: 'KRW' })
