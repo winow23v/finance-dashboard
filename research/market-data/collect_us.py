@@ -476,18 +476,23 @@ def main():
     logging.getLogger("yfinance").setLevel(logging.CRITICAL)
     calendar = xcals.get_calendar("XNYS")
     now = pd.Timestamp.now(tz="UTC")
-    queued = []
-    if args.queue:
-        for path in sorted(args.queue.iterdir()):
-            if not TICKER.fullmatch(path.name) or path.is_symlink() or not path.is_file():
-                continue
-            if now.timestamp() - path.stat().st_mtime < 30 * 86400:
-                queued.append(path.name)
-    symbols = list(dict.fromkeys(symbols or (*INDICES, *STOCKS, *queued[:32])))
+    def selected_symbols(*, expire_queue=False):
+        queued = []
+        if args.queue:
+            for path in sorted(args.queue.iterdir()):
+                if not TICKER.fullmatch(path.name) or path.is_symlink() or not path.is_file():
+                    continue
+                if now.timestamp() - path.stat().st_mtime >= 30 * 86400:
+                    if expire_queue:
+                        path.unlink(missing_ok=True)
+                else:
+                    queued.append(path.name)
+        return list(dict.fromkeys(symbols or (*INDICES, *STOCKS, *queued[:32])))
+
     if args.check:
-        return check_cache(args.cache, symbols, calendar, now)
+        return check_cache(args.cache, selected_symbols(), calendar, now)
     if args.plan:
-        target, targets = plan(args.cache, symbols, calendar, now, dates)
+        target, targets = plan(args.cache, selected_symbols(), calendar, now, dates)
         outside = [iso(date) for date in dates if date > target or not calendar.is_session(date)
                    or calendar.sessions_distance(date, target) > LOOKBACK] if dates is not None else []
         print(json.dumps(dict(targetDate=iso(target), targets=targets, deferredDates=outside,
@@ -502,7 +507,7 @@ def main():
             except BlockingIOError:
                 logging.info("US_COLLECTION_BUSY")
                 return 0
-            return collect(args.cache, symbols, Downloader(attempts=1, minimum_interval=args.minimum_interval),
+            return collect(args.cache, selected_symbols(expire_queue=not args.apply), Downloader(attempts=1, minimum_interval=args.minimum_interval),
                            calendar, now, apply_only=args.apply, dates=dates,
                            max_requests=args.max_requests, minimum_interval=args.minimum_interval)
     except (OSError, ValueError, TypeError, KeyError, AttributeError):

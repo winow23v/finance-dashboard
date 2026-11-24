@@ -419,3 +419,30 @@ def test_partial_status_and_rate_limit_cooldown_survive_restart(tmp_path, capsys
     assert us.collect(tmp_path, ["V"], downloader, CALENDAR, US_NOW + pd.Timedelta(minutes=30),
                       apply_only=True, minimum_interval=0) == 75
     assert not downloader.calls
+
+
+def test_only_regular_collection_expires_queue_entries(tmp_path, monkeypatch):
+    import os
+    import sys
+    import collect_us as us
+
+    queue = tmp_path / "queue"
+    queue.mkdir()
+    expired = queue / "OLD"
+    active = queue / "FRESH"
+    for path, age in ((expired, 31), (active, 1)):
+        path.touch()
+        timestamp = (US_NOW - pd.Timedelta(days=age)).timestamp()
+        os.utime(path, (timestamp, timestamp))
+
+    monkeypatch.setattr(pd.Timestamp, "now", lambda tz: US_NOW)
+    monkeypatch.setattr(us, "Downloader", lambda **kwargs: object())
+    monkeypatch.setattr(us, "collect", lambda *args, **kwargs: 0)
+    command = ["collect_us.py", "--cache", str(tmp_path), "--queue", str(queue)]
+    for mode in ("--plan", "--check", "--apply"):
+        monkeypatch.setattr(sys, "argv", [*command, mode, "V"])
+        us.main()
+        assert expired.exists() and active.exists()
+    monkeypatch.setattr(sys, "argv", [*command, "V"])
+    assert us.main() == 0
+    assert not expired.exists() and active.exists()
