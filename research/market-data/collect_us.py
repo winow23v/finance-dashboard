@@ -170,18 +170,23 @@ def merge(pair, fresh, selected):
     # Keep the stored adjusted price scale across a provider-wide rebase.
     overlap = raw.index.intersection(adjusted.index).intersection(new_raw.index)
     if len(overlap):
-        old_factor = adjusted.loc[overlap, PRICE_COLUMNS].to_numpy() / raw.loc[overlap, PRICE_COLUMNS].to_numpy()
-        new_factor = new_adjusted.loc[overlap, PRICE_COLUMNS].to_numpy() / new_raw.loc[overlap, PRICE_COLUMNS].to_numpy()
+        old_prices = raw.loc[overlap, PRICE_COLUMNS].to_numpy()
+        new_prices = new_raw.loc[overlap, PRICE_COLUMNS].to_numpy()
+        # A split can rebase both series while leaving their ratio unchanged.
+        if not np.allclose(old_prices, new_prices, rtol=1e-4, atol=1e-8):
+            raise DataError("raw-adjusted-basis-mismatch")
+        old_factor = adjusted.loc[overlap, PRICE_COLUMNS].to_numpy() / old_prices
+        new_factor = new_adjusted.loc[overlap, PRICE_COLUMNS].to_numpy() / new_prices
         scale = old_factor / new_factor
         if not np.allclose(scale, scale[-1, -1], rtol=1e-4, atol=1e-8):
             raise DataError("raw-adjusted-basis-mismatch")
         if not np.isclose(scale[-1, -1], 1, rtol=1e-6):
             new_adjusted = new_adjusted.copy()
             new_adjusted[PRICE_COLUMNS] *= scale[-1, -1]
-    elif len(selected):
+    else:
         raise DataError("raw-adjusted-no-overlap")
     return tuple(pd.concat([old, new.loc[new.index.intersection(selected).difference(old.index)]])
-                 .sort_index() for old, new in zip(pair, fresh))
+                 .sort_index() for old, new in zip(pair, (new_raw, new_adjusted)))
 
 
 def build_snapshot(symbol, pair, now, calendar, expected, previous=None, *, rolling=False):

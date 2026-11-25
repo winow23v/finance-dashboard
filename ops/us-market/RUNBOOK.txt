@@ -133,7 +133,10 @@ Selective recovery and service status
   a validated cache and does not replace existing bars. For work outside the
   rolling window or a listing with undocumented trading interruptions, review
   the source history separately. An incompatible adjustment basis or a series
-  that still fails validation is left in place.
+  that still fails validation is left in place. A raw price basis change
+  (such as a split) records raw-adjusted-basis-mismatch and retains the last
+  good snapshot. Review corporate actions and verify a coherent full-history
+  candidate in a disposable directory before an approved cache replacement.
 - The run limit counts history operations, with defaults of 40 per invocation
   and a minimum two-second interval. These settings do not describe an upstream
   Yahoo quota or the HTTP calls inside yfinance. Regular attempts and recovery

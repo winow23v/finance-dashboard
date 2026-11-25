@@ -212,7 +212,7 @@ def us_series(last=VISA):
                                        Close=value, Volume=100), index=dates), "V")
 
 
-def us_seed(root, symbol="V", end=PRIOR, gap=None):
+def us_seed(root, symbol="V", end=PRIOR, gap=None, *, attempt_count=3):
     import collect_us as us
 
     frame = us_series().loc[:end]
@@ -222,7 +222,7 @@ def us_seed(root, symbol="V", end=PRIOR, gap=None):
             if snapshot[key] is not None:
                 snapshot[key] = [row for row in snapshot[key] if row["tradingDate"] != gap]
     record = dict(version=1, symbol=symbol, snapshot=snapshot,
-                  attempt=dict(target="2026-11-23", count=3, reason="not-published"))
+                  attempt=dict(target="2026-11-23", count=attempt_count, reason="not-published"))
     us.publish(us.path_for(root, symbol), record)
     return record
 
@@ -274,6 +274,41 @@ def test_visa_plan_apply_and_idempotence(tmp_path):
                       dates=[VISA], minimum_interval=0) == 0
     assert len(downloader.calls) == 2
     assert path.read_bytes() == after
+
+
+@pytest.mark.parametrize("apply_only", [True, False], ids=["recovery", "regular"])
+def test_adjusted_rebase_uses_stored_price_scale(tmp_path, apply_only):
+    import collect_us as us
+
+    original = us_seed(tmp_path, attempt_count=0)
+    raw = us_series()
+    adjusted = raw.copy()
+    adjusted[us.PRICE_COLUMNS] *= 0.5
+    downloader = USDownloader(raw, adjusted=adjusted)
+    assert us.collect(tmp_path, ["V"], downloader, CALENDAR, US_NOW,
+                      apply_only=apply_only, minimum_interval=0) == 0
+    updated = us.read_json(us.path_for(tmp_path, "V"))["snapshot"]
+    assert updated["adjusted"][:-1] == original["snapshot"]["adjusted"]
+    assert updated["adjusted"][-1] == updated["raw"][-1]
+
+
+@pytest.mark.parametrize("apply_only", [True, False], ids=["recovery", "regular"])
+def test_raw_rebase_preserves_last_good_snapshot(tmp_path, apply_only):
+    import collect_us as us
+
+    original = us_seed(tmp_path, attempt_count=0)
+    rebased = us_series()
+    rebased[us.PRICE_COLUMNS] *= 0.5
+    downloader = USDownloader(rebased)
+    assert us.collect(tmp_path, ["V"], downloader, CALENDAR, US_NOW,
+                      apply_only=apply_only, minimum_interval=0) == 1
+    assert us.read_json(us.path_for(tmp_path, "V"))["snapshot"] == original["snapshot"]
+    if apply_only:
+        journal = us.read_json(tmp_path / ".collection-state.json")
+        attempt = journal["recovery"]["V"]["2026-11-23"]
+    else:
+        attempt = us.read_json(us.path_for(tmp_path, "V"))["attempt"]
+    assert attempt["detail"] == "raw-adjusted-basis-mismatch"
 
 
 @pytest.mark.parametrize("kind", ["empty", "stale", "duplicate", "mismatch", "network", "rate"])
