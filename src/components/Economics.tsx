@@ -3,7 +3,6 @@ import { ChartNoAxesCombined } from 'lucide-react'
 import { FinanceApiError, getEconomyIndicators } from '../services/apiFinanceService'
 import type { EconomyIndicators, Indicator } from '../types/finance'
 
-const timestamp = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
 const percent = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const indexValue = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
 const pointChange = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 3, signDisplay: 'exceptZero' })
@@ -71,9 +70,7 @@ export function Economics({ api, demo, detailed, revision, onRefreshReady }: {
           ? (item.id === 'CPIAUCSL_YOY' && (!('missingReason' in item) || item.missingReason !== 'CURRENT_MISSING')
             ? '전년 동월 관측값 없음' : '미발표 / 관측값 없음') : item.unit === 'index'
           ? `${indexValue.format(item.value)} (1982–84=100)` : `${percent.format(item.value)}%`}</strong>
-        {'source' in item && <div className="indicator-source"><small>
-          출처 <a href={item.source.url}>{item.source.agency} · FRED ({item.seriesId})</a>
-        </small></div>}
+
         {(detailed || 'source' in item) && <dl>
           {'change' in item && item.change != null && item.previousObservationDate && <div>
             <dt>{item.frequency === 'monthly' ? '전월 대비' : '직전 관측 대비'}</dt>
@@ -82,7 +79,6 @@ export function Economics({ api, demo, detailed, revision, onRefreshReady }: {
           {'comparisonPeriod' in item && item.comparisonPeriod && <div><dt>전년 동월 기준</dt>
             <dd><time dateTime={item.comparisonPeriod}>{item.comparisonPeriod.slice(0, 7)}</time></dd></div>}
           <div><dt>발표일</dt><dd>{item.releaseDate ?? '미확인'}</dd></div>
-          <div><dt>수집 시각 (KST)</dt><dd><time dateTime={item.collectedAt}>{timestamp.format(new Date(item.collectedAt))}</time></dd></div>
         </dl>}
       </li>)}
     </ul>}

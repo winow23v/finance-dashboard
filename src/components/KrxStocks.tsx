@@ -7,7 +7,6 @@ import { marketSymbolKey, type MarketSymbol } from '../types/marketSymbol'
 import { Change } from './QuoteDisplay'
 
 const number = new Intl.NumberFormat('ko-KR')
-const time = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
 
 export const krxStateLabels: Record<KrxReason, string> = {
   'provider-not-configured': 'KRX 공급자 미연결',
@@ -69,13 +68,11 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
       : current.data.map(dataset => {
         const details = [...new Set([dataset.listings.reason, dataset.trades.reason].filter(reason => reason !== null))]
         return <div key={dataset.market}>
-          <p className="state">{dataset.market} · {dataset.listings.source}
+          <p className="state">{dataset.market}
             {dataset.listingDate && ' · 종목 기준 ' + dataset.listingDate}
             {dataset.trades.tradingDate && ' · 종가 기준 ' + dataset.trades.tradingDate}
             {dataset.trades.usingPreviousClose && ' · 이전 정상 종가 사용'}
-            {dataset.trades.lastAttemptAt && <> · 마지막 시도 <time dateTime={dataset.trades.lastAttemptAt}>{time.format(new Date(dataset.trades.lastAttemptAt))}</time> (KST)</>}
-            {dataset.trades.collectedAt && <> · 마지막 정상 수집 <time dateTime={dataset.trades.collectedAt}>{time.format(new Date(dataset.trades.collectedAt))}</time> (KST)</>}
-            {details.map(reason => ' · ' + krxStateLabels[reason])}
+            {details.length > 0 && <span className="muted-badge">{details.map(reason => krxStateLabels[reason]).join(' · ')}</span>}
           </p>
           {dataset.items.length ? <ul className="stock-list">
             {dataset.items.map(item => {

@@ -11,7 +11,6 @@ const indicators = [
   { id: 'cpi', name: '소비자물가지수', agency: '국가데이터처', url: 'https://kosis.kr/visual/economyBoard/economyDash.do' },
   { id: 'unemployment', name: '실업률 (원계열)', agency: '국가데이터처', url: 'https://kosis.kr/visual/economyBoard/economyDash.do' },
 ]
-const timestamp = new Intl.DateTimeFormat('ko-KR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Seoul' })
 const twoDecimals = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const oneDecimal = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 
@@ -64,7 +63,7 @@ export function KoreaEconomy({ revision, visible, onRefreshReady }: { revision: 
   const current = data?.find(item => item.id === selected)
   const name = indicators.find(item => item.id === selected)?.name
   return <section className="market-sections" aria-label="한국 경제지표">
-    <div className="section-heading"><h2>한국 경제지표</h2><a className="badge" href="https://ecos.bok.or.kr/">한국은행 ECOS</a></div>
+    <div className="section-heading"><h2>한국 경제지표</h2></div>
     {result?.refreshFailed && result.revision === revision && <p className="data-message" data-state="stale" role="status">갱신에 실패해 이전 조회값을 표시합니다.</p>}
     <div className="quote-grid ecos-indicators">
       {indicators.map(({ id, name, agency, url }) => {
@@ -82,7 +81,6 @@ export function KoreaEconomy({ revision, visible, onRefreshReady }: { revision: 
           {row?.collectedAt && <dl className="observation-dates">
             <div><dt>{row.observationDate ? '관측일' : '관측월'}</dt><dd><time dateTime={row.observationDate ?? row.observationPeriod}>{row.observationDate ?? row.observationPeriod}</time></dd></div>
             <div><dt>공표일</dt><dd>{row.releaseDate ? <time dateTime={row.releaseDate}>{row.releaseDate}</time> : '미확인'}</dd></div>
-            <div><dt>수집 시각 (KST)</dt><dd><time dateTime={row.collectedAt}>{timestamp.format(new Date(row.collectedAt))}</time></dd></div>
           </dl>}
           {visible && hasHistory && <button type="button" className="button indicator-chart-button" id={chartId + id}
             aria-label={name + ' 상세 차트'} aria-expanded={selected === id} aria-controls={selected === id ? chartId : undefined}
@@ -91,7 +89,7 @@ export function KoreaEconomy({ revision, visible, onRefreshReady }: { revision: 
       })}
     </div>
     {visible && name && current?.collectedAt && current.unit && current.history && current.history.length >= 2 && <Suspense fallback={<p role="status">차트를 준비하는 중입니다.</p>}>
-      <EcosHistoryChart id={chartId} name={name} unit={current.unit} collectedAt={current.collectedAt} points={current.history} onClose={() => {
+      <EcosHistoryChart id={chartId} name={name} unit={current.unit} points={current.history} onClose={() => {
         document.getElementById(chartId + selected)?.focus()
         setSelected(undefined)
       }} />

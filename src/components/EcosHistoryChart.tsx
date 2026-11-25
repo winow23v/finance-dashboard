@@ -3,8 +3,8 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 
 export type EcosPoint = { period: string; value: number }
 
-export default function EcosHistoryChart({ id, name, points, unit, collectedAt, onClose }: {
-  id: string; name: string; points: EcosPoint[]; unit: string; collectedAt: string; onClose: () => void
+export default function EcosHistoryChart({ id, name, points, unit, onClose }: {
+  id: string; name: string; points: EcosPoint[]; unit: string; onClose: () => void
 }) {
   const heading = useRef<HTMLHeadingElement>(null)
   const tooltipTrigger = matchMedia('(hover: none)').matches ? 'click' : 'hover'
@@ -40,6 +40,5 @@ export default function EcosHistoryChart({ id, name, points, unit, collectedAt, 
         <tbody>{points.map(point => <tr key={point.period}><th scope="row"><time dateTime={point.period}>{point.period}</time></th><td>{format.format(point.value)}</td></tr>)}</tbody>
       </table></div>
     </details>
-    <p className="chart-note">출처 한국은행 ECOS · 수집 시각 (KST) <time dateTime={collectedAt}>{new Intl.DateTimeFormat('ko-KR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'Asia/Seoul' }).format(new Date(collectedAt))}</time></p>
   </section>
 }

@@ -4,7 +4,6 @@ import { createRequestCache } from '../services/requestCache'
 import { guestPreferences } from '../storage/guestStorage'
 import { usePublicData } from '../services/usePublicData'
 
-const source = { name: '금융감독원 OPEN DART', url: 'https://opendart.fss.or.kr/' }
 const path = '/api/v1/disclosures/kr'
 const metricNames = { revenue: '매출액', operatingIncome: '영업이익', netIncome: '당기순이익' }
 const periods = { annual: '연간', q1: '1분기', half: '반기', q3: '3분기', quarter: '분기' }
@@ -185,7 +184,7 @@ export function Disclosures({ revision, visible = true, searchFocus = 0, onRefre
   return <div className="company-grid" data-detail={showDetail}>
     <section className="panel disclosures-panel company-search">
     <div className="section-heading"><h2>국내 기업 검색</h2>
-      <a className="text-link" href={source.url}>{source.name}</a></div>
+      </div>
     <form className="disclosure-controls" onSubmit={event => {
       event.preventDefault()
       const query = term.trim()

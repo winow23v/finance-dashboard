@@ -4,15 +4,15 @@
   color-scheme: dark;
   font-family: system-ui, "Noto Sans KR", sans-serif;
   font-variant-numeric: tabular-nums;
-  --background: #101619;
-  --sidebar: #151e23;
-  --panel: #151e23;
-  --control: #1b282f;
-  --line: #34454e;
-  --text: #edf4f5;
-  --muted: #aabcc5;
-  --accent: #53dec2;
-  --accent-bg: #173732;
+  --background: #14171c;
+  --sidebar: #1b2028;
+  --panel: #1b2028;
+  --control: #252c36;
+  --line: #384352;
+  --text: #edf1f6;
+  --muted: #aeb8c6;
+  --accent: #c3cfe0;
+  --accent-bg: #2a3442;
   --green: #5de2a9;
   --red: #ff8793;
   --blue: #89bfff;
@@ -30,15 +30,15 @@
 }
 :root[data-theme="light"] {
   color-scheme: light;
-  --background: #f0f5f5;
+  --background: #f2f4f7;
   --sidebar: #fff;
   --panel: #fff;
-  --control: #e8f0f1;
-  --line: #b9cace;
-  --text: #18272e;
-  --muted: #4b616d;
-  --accent: #076858;
-  --accent-bg: #def3ed;
+  --control: #e9edf3;
+  --line: #bdc8d5;
+  --text: #202936;
+  --muted: #526176;
+  --accent: #344964;
+  --accent-bg: #e1e8f2;
   --green: #087345;
   --red: #ad293e;
   --blue: #205caf;
@@ -130,8 +130,6 @@ h2 svg { flex: none; color: var(--accent); }
 .quote-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .quote-card { padding: clamp(10px, 1.4vw, 16px); }
 .quote-card .index-source { display: block; line-height: 1.35; overflow-wrap: anywhere; }
-.index-metadata { max-width: 100%; color: var(--muted); font-size: var(--text-caption); overflow-wrap: anywhere; }
-.index-metadata summary { cursor: pointer; min-height: 24px; }
 .market-index-quotes .quote-card { display: grid; align-content: start; justify-items: start; gap: 5px; }
 .market-index-quotes .quote-label { width: 100%; align-items: baseline; }
 .market-index-quotes .quote-card strong { margin-top: 2px; font-variant-numeric: tabular-nums; }
@@ -169,8 +167,6 @@ select { border: 1px solid var(--line); border-radius: var(--radius-control); ba
 .indicator-list dl { display: flex; flex-wrap: wrap; gap: 4px 18px; width: 100%; font-size: .8125rem; color: var(--muted); }
 .indicator-list dl div { display: flex; gap: 6px; }
 .indicator-list dd { color: var(--text); }
-.indicator-source { width: 100%; overflow-wrap: anywhere; }
-.indicator-source a, .indicator-notice a { text-decoration: underline; }
 .indicator-notice { padding: 10px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: .8125rem; }
 .economy-panel .panel-heading { flex-wrap: wrap; gap: 6px; }
 .setting { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 12px; border-top: 1px solid var(--line); font-size: .875rem; }
@@ -398,10 +394,6 @@ dialog::backdrop { background: #04080bcc; }
 .heatmap-sector { position: absolute; outline: 1px solid var(--panel); outline-offset: -1px; pointer-events: none; }
 .heatmap-sector span { display: block; width: max-content; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-caption); background: var(--panel); color: var(--text); padding: 1px 5px; }
 .heatmap-tooltip { position: absolute; z-index: 3; right: 8px; bottom: 8px; max-width: calc(100% - 16px); padding: 8px; pointer-events: none; overflow-wrap: anywhere; }
-.heatmap-sources { display: grid; gap: 4px; margin: 8px 0 0; font-size: var(--text-caption); overflow-wrap: anywhere; }
-.heatmap-sources div { display: flex; flex-wrap: wrap; gap: 4px 8px; }
-.heatmap-sources dd { color: var(--muted); margin: 0; }
-.heatmap-sources a { color: var(--accent); text-decoration: underline; }
 
 @media (max-width: 480px) {
   .settings-panel .setting { align-items: flex-start; flex-direction: column; }
@@ -518,7 +510,6 @@ dialog::backdrop { background: #04080bcc; }
 .market-index-quotes .quote-label h3 { overflow-wrap: anywhere; }
 .index-source svg { display: inline; vertical-align: -2px; }
 .index-source time { white-space: nowrap; }
-.index-metadata summary { padding-block: 3px; }
 .krx-search-controls { margin: 0; padding-inline: 12px; gap: 8px; }
 .krx-search-controls label:has(input) { flex: 1 1 13rem; }
 .krx-search-controls input { width: 100%; min-height: 44px; }
@@ -530,7 +521,6 @@ dialog::backdrop { background: #04080bcc; }
 .krx-heatmap-list { grid-column: 1 / -1; order: 1; }
 .krx-heatmap-list summary { padding-block: 12px; cursor: pointer; color: var(--accent); }
 .krx-heatmap-list li a { display: flex; flex-direction: column; justify-content: center; min-height: 44px; }
-.economy-panel :is(.indicator-source, .indicator-notice), .source-timing dd { overflow-wrap: anywhere; }
 @media (max-width: 480px) {
   .fx-info-button { width: 44px; height: 44px; }
 }
@@ -618,8 +608,6 @@ img.brand-icon { padding: 0; }
 }
 .terminal-quotes .change { white-space: normal; min-width: 0; overflow-wrap: anywhere; }
 .terminal-quotes .change svg { flex: none; }
-.terminal-quotes .index-metadata { margin-top: auto; }
-.terminal-quotes .index-metadata summary { min-height: 44px; padding-block: 12px; }
 .terminal-quotes .index-source { margin-top: 4px; }
 .terminal-quotes .index-source[data-stale] { color: var(--favorite); }
 .market-overview :is(.overview-data, .movers-panel, .market-heatmap, .overview-market-note, .fx-summary) {
@@ -892,7 +880,6 @@ html { scroll-padding-top: 70px; }
   padding-inline: var(--terminal-inset);
   overflow-wrap: anywhere;
 }
-.economy-workspace .indicator-list :is(dl, .indicator-source) { grid-column: 1 / -1; }
 .economy-workspace .indicator-list dl div { flex-wrap: wrap; }
 .economy-workspace .indicator-chart-button { align-self: flex-start; margin-block-start: auto; }
 .economy-workspace .indicator-chart-button::after { content: none; }
@@ -927,4 +914,15 @@ html { scroll-padding-top: 70px; }
   -webkit-line-clamp: 2;
   overflow: hidden;
 }
-.watch-provenance { grid-column: 1 / -1; }
+
+/* Shared control states */
+:where(.button, .icon-button, .favorite-button, .periods button, .quote-card, .side-navigation a) {
+  transition: background-color 180ms cubic-bezier(.2, 0, 0, 1), border-color 180ms cubic-bezier(.2, 0, 0, 1), color 180ms cubic-bezier(.2, 0, 0, 1);
+}
+.quote-card:has(a):hover { border-color: var(--muted); }
+.favorite-button svg, .technical-detail-group > summary::before, details summary > svg {
+  transition: transform 180ms cubic-bezier(.2, 0, 0, 1);
+}
+.favorite-button:active svg { transform: scale(.85); }
+.watch-state { grid-column: 1 / -1; grid-row: 2; justify-self: start; }
+.index-source + .muted-badge { align-self: start; }

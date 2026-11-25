@@ -35,13 +35,14 @@ function DataSources() {
         <p><a href="https://opendart.fss.or.kr/">금융감독원 OPEN DART</a></p>
       </section>
       <section>
-        <h2>시장 가격과 등락</h2>
-        <p><strong>데이터 미연결</strong> · 시장 지수와 개별 종목은 승인된 시세 공급자가 연결되면 표시합니다. 기존 샘플 시세는 공개 화면에서 제외했습니다.</p>
+        <h2>시장 가격과 등락 · KRX 및 Yahoo Finance</h2>
+        <p>국내 시장과 종목의 정규장 시세는 KRX 자료를 사용합니다. 미국 시장은 Yahoo Finance의 일봉을 사용합니다. 최근 종가와 지수는 비조정 값이며 미국 종목의 기술적 분석과 OHLCV 표는 배당·분할 조정 가격을 사용합니다.</p>
+        <p><a href="https://data.krx.co.kr/">KRX 정보데이터시스템</a> · <a href="https://finance.yahoo.com/">Yahoo Finance</a></p>
         <p><a href="https://github.com/winow23v/finance-dashboard">Finance Dashboard 프로젝트</a></p>
       </section>
       <section>
         <h2>미국 거시경제 지표 · FRED</h2>
-        <p><strong>승인 회원 전용</strong> · 세인트루이스 연방준비은행 FRED를 통해 제공하는 지표는 원 제공기관과 FRED를 함께 표시합니다. 지표별 갱신 주기가 다릅니다.</p>
+        <p><strong>승인 회원 전용</strong> · 세인트루이스 연방준비은행 FRED를 통해 제공하는 지표는 원 제공기관과 지표의 정보는 FRED에서 확인할 수 있습니다. 지표별 갱신 주기가 다릅니다.</p>
         <p><a href="https://fred.stlouisfed.org/">FRED</a> · <a href="https://fred.stlouisfed.org/legal/">FRED 이용약관과 출처 안내</a></p>
       </section>
     </div>

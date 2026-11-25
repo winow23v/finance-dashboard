@@ -58,7 +58,7 @@ const marketIndices: readonly { id: string; name: string; market: EquityMarket }
 ]
 const indexPage = (path: string) => marketIndices.find(index => path === 'index/' + index.id)
 
-const timestamp = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
+const timestamp = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "short", timeStyle: "short" })
 const indexPrice = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const indexUnavailable = {
   'provider-not-configured': '지수 시세 공급자 미연결',
@@ -70,21 +70,17 @@ const indexUnavailable = {
   'before-collection': '당일 수집 대기',
 }
 
-function MarketIndexValue({ quote, message, overview }: { quote?: MarketIndex; message?: string; overview?: boolean }) {
+function MarketIndexValue({ quote, message }: { quote?: MarketIndex; message?: string }) {
   if (message) return <small role="status">{message}</small>
   if (!quote) return <small role="status">지수 시세를 불러오는 중입니다.</small>
   if (quote.status === 'unavailable') return <small>{indexUnavailable[quote.reason]}</small>
   return <>
     <strong>{indexPrice.format(quote.price)}</strong>
     {quote.change !== null && quote.changePercent !== null && <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
-    <small className="index-source" data-stale={quote.status === 'stale' ? true : undefined}><Clock size={14} aria-hidden="true" /> <time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가
-      {quote.reason ? ' · ' + (quote.market === 'KR' && quote.reason !== 'rate-limited' ? krxStateLabels[quote.reason] : indexUnavailable[quote.reason]) : quote.status === 'stale' ? ' · 갱신 지연' : ''}
-      {quote.reason === 'provider-error' && ' (마지막 유효값)'}</small>
-    <details className="index-metadata">
-      <summary>{quote.source}{!overview && ' · 수집 정보'}</summary>
-      {quote.observedAt.includes('T') && <small>관측 <time dateTime={quote.observedAt}>{timestamp.format(new Date(quote.observedAt))}</time> (KST)</small>}
-      <small>수집 <time dateTime={quote.collectedAt}>{timestamp.format(new Date(quote.collectedAt))}</time> (KST)</small>
-    </details>
+    <small className="index-source"><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가</small>
+    {(quote.reason || quote.status === 'stale') && <small className="muted-badge" data-stale={quote.status === 'stale'}>
+      {quote.reason === 'provider-error' ? '마지막 유효값' : quote.reason ? indexUnavailable[quote.reason] : '갱신 지연'}
+    </small>}
   </>
 }
 function hashPage(): Page | undefined {
@@ -333,7 +329,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
                   {isApi && marketResult?.quotes && !marketResult.quotes.some(quote => quote.id === index.id)
                     ? <small>지수 응답 없음</small>
                     : isApi ? <MarketIndexValue quote={marketResult?.quotes?.find(quote => quote.id === index.id)}
-                      message={marketResult?.message} overview={overview} /> : <small>지수 시세 공급자 미연결</small>}
+                      message={marketResult?.message} /> : <small>지수 시세 공급자 미연결</small>}
                 </article>)}
             </div>
           </section>
@@ -343,7 +339,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
               {isApi ? <p role="status">{marketResult?.message ? <>시장지수 · {marketResult.message}</> : !marketResult ? '시장지수 갱신 중'
                 : !marketResult.quotes?.length ? '시장지수 응답 없음'
                   : marketResult.quotes.every(quote => quote.status === 'unavailable') ? '표시 가능한 지수 관측값 없음'
-                    : '지수별 종가 기준일과 출처는 위 카드에서 확인할 수 있습니다.'}</p>
+                    : '지수별 종가 기준일은 위 카드에서 확인할 수 있습니다.'}</p>
                 : <p role={error ? 'alert' : 'status'}>{pending ? '데모 데이터를 불러오는 중입니다.'
                   : error ? '데이터 갱신에 실패했습니다.' : '데모 데이터가 표시됩니다.'}</p>}
               {error && !isApi && <button className="button" onClick={refresh} disabled={!!refreshUntil}>다시 시도</button>}
@@ -441,6 +437,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
           </nav>
         </div>
         <p>금융 데이터는 공급자에 따라 지연될 수 있으며 정확성과 완전성을 보장하지 않습니다. 투자 참고용 정보이며 투자 권유가 아닙니다.</p>
+        <p>데이터 출처 · KRX · Yahoo Finance · 한국은행 ECOS · FRED · ECB/Frankfurter · OPEN DART <a href="#sources">이용안내</a></p>
         <small>© Finance Dashboard</small>
       </footer>
     </div>

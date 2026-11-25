@@ -21,6 +21,11 @@ const description = (data: KrxOverview) => [
   data.reason && data.reason !== 'same-date-data-unavailable' ? krxStateLabels[data.reason] : null,
 ].filter(Boolean).join(' · ')
 
+function MarketBasis({ data }: { data: KrxOverview }) {
+  const status = data.usingPreviousClose ? '이전 정상 종가 사용' : data.reason && data.reason !== 'same-date-data-unavailable' ? krxStateLabels[data.reason] : null
+  return <p className="heatmap-meta">{data.tradingDate && <time dateTime={data.tradingDate}>{data.tradingDate}</time>}{status && <> <span className="muted-badge">{status}</span></>}</p>
+}
+
 export function KrxOverviewStatus({ data, message }: { data?: KrxOverview | null; message?: string }) {
   return <p role="status">{message ? <>KRX 시장 · {message}</> : data?.tradingDate ? description(data) : state(data)}</p>
 }
@@ -38,7 +43,7 @@ export function KrxMovers({ data, message, summary }: { data?: KrxOverview | nul
   return <section className="panel movers-panel" aria-label="주요 등락 현황">
     <div className="section-heading"><h2>주요 등락 현황</h2>{summary && <a href="#domestic" className="text-link">국내시장 보기</a>}</div>
     {!data || !leaders ? <p className="state" role="status">{message ?? state(data)}</p> : <>
-      {!summary && <p className="heatmap-meta">{description(data)}</p>}
+      {!summary && <MarketBasis data={data} />}
       <div className="krx-rankings">
         {(summary ? rankings.slice(0, 2) : rankings).map(({ key, label, format }) => {
           const rows = leaders[key]
@@ -96,7 +101,8 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
           </span>)}
         </div>
       </div>
-      <p className="heatmap-meta">{!summary && description(data) + ' · '}시가총액 상위 {selected?.length}종목</p>
+      {!summary && <MarketBasis data={data} />}
+      <p className="heatmap-meta">시가총액 상위 {selected?.length}종목</p>
       {groups.length ? <div className="krx-heatmap-layout">
         <div className="heatmap-map">
           {groups.map(({ row, tiles }) => <div key={row.market} role="group" aria-label={row.market}>

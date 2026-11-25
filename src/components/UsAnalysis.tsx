@@ -9,7 +9,6 @@ import { formatAnalysisPrice, formatPercent, formatVolume } from '../services/an
 const StockHistoryChart = lazy(() => import('./StockHistoryChart'))
 
 const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
-const dateTime = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
 const format = (value?: number | null) => value == null ? '자료 부족' : number.format(value)
 const messages = {
   'provider-not-configured': '미국시장 데이터 공급자 미연결',
@@ -67,23 +66,21 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
           </div>{stock?.actions}
           <p className="heatmap-meta analysis-meta">
             <span>거래일 <time dateTime={quote.tradingDate}>{quote.tradingDate}</time></span>
-            <span>수집 시각 <time dateTime={data.collectedAt}>{dateTime.format(new Date(data.collectedAt))}</time> (KST)</span>
-            <span>{data.source} · Yahoo 제공 종가 (Adj Close 미적용)</span>
           </p>
           {data.status === 'stale' && <>
-            <p className="detail-attention" role="status">마지막 정상 데이터 · {data.reason ? messages[data.reason] : '갱신 지연'}</p>
+            <p className="detail-attention" role="status">{data.reason ? ({ 'not-published': '공표 대기', collecting: '수집 대기', 'provider-error': '마지막 유효값', 'rate-limited': '요청 제한', 'provider-not-configured': '공급 미연결', unsupported: '지원되지 않음' })[data.reason] : '갱신 지연'}</p>
             {!indexId && !requested && data.reason === 'not-published' &&
               <button className="button" type="button" onClick={() => setRequestedAt(refresh)}>갱신 요청</button>}
           </>}
         </header>
         {stock && history && <Suspense fallback={<p className="detail-state" role="status">가격 차트를 준비하는 중입니다.</p>}>
-          <StockHistoryChart history={history} source={data.source} />
+          <StockHistoryChart history={history} />
         </Suspense>}
         <details className={stock ? "chart-data" : undefined}>
           <summary>최근 20거래일 OHLCV {indexId ? '' : '(기업행위 조정)'}</summary>
           <div className="us-history-scroll chart-data-scroll" tabIndex={0} role="region" aria-label="최근 20거래일 시세 표">
             <table className="us-history-table">
-              <caption className="sr-only">최근 20거래일 OHLCV · {indexId ? 'Yahoo 제공 지수 종가' : '배당·분할 조정 가격'}</caption>
+              <caption className="sr-only">최근 20거래일 OHLCV · {indexId ? '지수 종가' : '배당·분할 조정 가격'}</caption>
               <thead><tr>{['거래일', '시가', '고가', '저가', '종가', '거래량'].map(label =>
                 <th key={label} scope="col">{label}</th>)}</tr></thead>
               <tbody>{data.history.bars.slice(-20).reverse().map(bar => <tr key={bar.tradingDate}>
@@ -97,7 +94,7 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
         {history && <TechnicalSummary indicators={indicators} history={history} index={!!indexId} stale={data.status === 'stale'} />}
         {indicators && <details className="technical-detail-group"><summary>이동평균·모멘텀·수익률 상세</summary><div className="analysis-details">
             <details>
-              <summary>추세 분석 <ChevronDown size={16} aria-hidden="true" /></summary><p>{indexId ? 'Yahoo 제공 지수 종가 기준' : 'Yahoo 배당·분할 조정 종가 기준'}</p>
+              <summary>추세 분석 <ChevronDown size={16} aria-hidden="true" /></summary><p>{indexId ? '지수 종가 기준' : '배당·분할 조정 종가 기준'}</p>
               <dl className="stock-detail-fields">
                 {(['sma', 'ema'] as const).flatMap(kind => (kind === 'sma' ? smaWindows : emaWindows)
                   .filter(period => period !== 365 || indicators.sma[365] !== null).map(period =>

@@ -13,7 +13,6 @@ import type { KrxStocks } from '../types/finance'
 const StockHistoryChart = lazy(() => import('./StockHistoryChart'))
 
 const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
-const timestamp = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
 const format = (value?: number | null) => value == null ? '자료 부족' : number.format(value)
 
 const historyStop = {
@@ -86,16 +85,12 @@ export function KrxAnalysis({ symbol, actions, refresh = 0 }: { symbol: string; 
             {actions}
             <div className="analysis-meta">
               {quote && <span><Clock size={14} aria-hidden="true" /> 거래일 <time dateTime={quote.tradingDate}>{quote.tradingDate}</time></span>}
-              <span>{data.source} · 공식 미수정 종가</span>
-              {data.reason && <span className="detail-attention">{krxStateLabels[data.reason]}</span>}
-              {data.usingPreviousClose && <span className="detail-attention">이전 정상 종가 사용</span>}
-              {data.collectedAt && <span>마지막 정상 수집 <time dateTime={data.collectedAt}>{timestamp.format(new Date(data.collectedAt))}</time> (KST)</span>}
-              {data.lastAttemptAt && <span>마지막 시도 <time dateTime={data.lastAttemptAt}>{timestamp.format(new Date(data.lastAttemptAt))}</time> (KST)</span>}
+              {(data.reason || data.usingPreviousClose) && <span className="detail-attention">{data.usingPreviousClose ? "이전 정상 종가 사용" : data.reason && krxStateLabels[data.reason]}</span>}
             </div>
           </header>
           <KrxAfterHoursStatus details={data.afterHours} />
           <Suspense fallback={<p className="detail-state" role="status">가격 차트를 준비하는 중입니다.</p>}>
-            <StockHistoryChart history={data.history} source={data.source} />
+            <StockHistoryChart history={data.history} />
           </Suspense>
           <TechnicalSummary indicators={indicator} history={data.history} tick={tick} stale={data.reason === 'provider-error' || data.reason === 'provider-not-configured' || data.reason === 'not-published'} />
           <details className="technical-detail-group"><summary>이동평균·모멘텀·수익률 상세</summary><div className="analysis-details">
