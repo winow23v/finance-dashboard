@@ -111,6 +111,7 @@ export async function getKrxStocks(market: KrxMarket, filters: { q?: string; sym
 export async function getKrxAnalysis(symbol: string, signal: AbortSignal): Promise<KrxAnalysis> {
   const value = await getJson('/api/v1/market/kr/stocks/' + encodeURIComponent(symbol) + '/history', false, signal)
   if (!isRecord(value) || value.symbol !== symbol || !isText(value.name) || !isKrxMarket(value.market)
+    || (value.shareClass !== undefined && typeof value.shareClass !== 'string')
     || value.source !== 'KRX OPEN API' || !isKrxQuote(value.quote) || !isKrxReason(value.reason)
     || (value.afterHours !== undefined && !isKrxAfterHours(value.afterHours))
     || !hasKrxCollectionMetadata(value) || !isOptionalDate(value.latestDate) || !isOptionalDate(value.collectedAt) || !isOptionalDate(value.stoppedAt)

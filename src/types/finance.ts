@@ -119,6 +119,7 @@ export interface KrxStocks {
 export interface KrxAnalysis {
   symbol: string
   name: string
+  shareClass?: string
   market: KrxMarket
   source: string
   reason: KrxReason | null

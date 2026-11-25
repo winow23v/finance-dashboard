@@ -73,7 +73,7 @@ export function KrxAnalysis({ symbol, actions, refresh = 0 }: { symbol: string; 
           <header className="analysis-quote">
             <div className="stock-identity">
               <h1>{data.name}</h1>
-              <small>{data.symbol} · {data.market} (XKRX) · KRW</small>
+              <small>{data.symbol} · {data.market} (XKRX) · KRW{data.shareClass && ' · ' + data.shareClass}</small>
             </div>
             {quote ? <div className="analysis-price">
               <small>KRX 정규장 종가</small>

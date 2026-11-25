@@ -137,6 +137,7 @@ h2 svg { flex: none; color: var(--accent); }
 .market-index-quotes .quote-card strong { margin-top: 2px; font-variant-numeric: tabular-nums; }
 .market-index-quotes .change { font-size: .8125rem; }
 .krx-rankings { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 12px; }
+.krx-rankings .stock-detail-link, .krx-heatmap-list .stock-detail-link { min-width: 0; overflow-wrap: anywhere; }
 .krx-rankings .stock-detail-link small { display: block; }
 .quote-label { flex-wrap: wrap; }
 .quote-label h3 { font-size: .875rem; font-weight: 750; }
