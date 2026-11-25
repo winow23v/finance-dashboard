@@ -35,8 +35,7 @@ const isApi = dataMode === 'api'
 
 const tabs = [
   { id: 'overview', label: '시장 개요', icon: LayoutDashboard },
-  { id: 'domestic', label: '국내시장', icon: BarChart3 },
-  { id: 'global', label: '해외시장', icon: Globe2 },
+  { id: 'market', label: '시장', icon: BarChart3 },
   { id: 'companies', label: '기업 검색·공시', icon: FileSearch },
   { id: 'economy', label: '환율·경제지표', icon: ArrowLeftRight },
   { id: 'watchlist', label: '관심종목', icon: Star },
@@ -45,14 +44,15 @@ const tabs = [
 const memberAdminTab = { id: 'members', label: '회원 승인 관리', icon: ShieldCheck } as const
 const trends = { id: 'trends', label: '키워드 트렌드', icon: TrendingUp } as const
 const mobileTabs = [
-  { ...tabs[0], label: '개요' }, { ...tabs[1], label: '국내' },
-  { ...tabs[2], label: '해외' }, { ...tabs[5], label: '관심' },
+  { ...tabs[0], label: '개요' }, tabs[1], { ...tabs[4], label: '관심' },
 ] as const
 const refreshInterval = 30_000
 const compactRailQuery = '(min-width: 781px) and (max-width: 1300px)'
 const mobileQuery = '(max-width: 780px)'
 type Tab = typeof tabs[number]['id']
-type Page = Tab | 'members' | 'trends' | 'economy/fx-settings' | InformationPage | `stock/${string}` | `index/${string}`
+const marketTabs = [{ id: 'domestic', label: '국내시장' }, { id: 'global', label: '해외시장' }] as const
+type MarketPage = typeof marketTabs[number]['id']
+type Page = Exclude<Tab, 'market'> | MarketPage | 'members' | 'trends' | 'economy/fx-settings' | InformationPage | `stock/${string}` | `index/${string}`
 
 const marketIndices: readonly { id: string; name: string; market: EquityMarket }[] = [
   { id: 'kospi', name: 'KOSPI', market: 'KR' }, { id: 'kosdaq', name: 'KOSDAQ', market: 'KR' },
@@ -96,20 +96,23 @@ function MarketQuote({ index, quote, message, missing }: {
   </article>
 }
 
-function hashPage(): Page | undefined {
+function hashPage(defaultMarket: SettingsState['market']): Page | undefined {
   const hash = location.hash.slice(1)
+  if (hash === 'market') return defaultMarket === 'global' ? 'global' : 'domestic'
+  if (hash === 'domestic' || hash === 'global') return hash
   if (hash === 'companies/us') return 'global'
   if (parseStockPage(hash)) return hash as `stock/${string}`
   if (indexPage(hash)) return hash as `index/${string}`
   if (Object.hasOwn(informationPages, hash)) return hash as InformationPage
   if (hash === 'members' || hash === 'trends' || hash === 'economy/fx-settings') return hash
-  return tabs.find(item => item.id === hash)?.id
+  const route = tabs.find(item => item.id === hash)?.id
+  return route === 'market' ? undefined : route
 }
 export function App({ member, signOut, accountBusy, accountError }: {
   member?: MemberSession; signOut?: () => void; accountBusy?: boolean; accountError?: string
 } = {}) {
   const [settings, setSettings] = useState(guestStorage.loadSettings)
-  const [tab, setTab] = useState<Page>(() => hashPage() ?? settings.market)
+  const [tab, setTab] = useState<Page>(() => hashPage(settings.market) ?? settings.market)
   const { selected: watchlist, toggle, localError, blocked, sync } = useWatchlist(member?.userId)
   const [settingsFailure, setSettingsFailure] = useState(false)
   const [snapshot, setSnapshot] = useState<FinanceSnapshot>()
@@ -173,7 +176,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
   })
   const showKrxOverview = isMarket && market !== 'US'
   const krxOverview = krxResult?.request === request ? krxResult : undefined
-  const section = economyPage ? 'economy' : tab
+  const section = market ? 'market' : economyPage ? 'economy' : tab
   const providerValues = Object.values(statuses)
   const dataLabel = !isApi ? 'DEMO 모드' : !providerValues.length ? '연결 확인되지 않음'
     : providerValues.every(status => status === 'published') ? '공표 데이터 확인'
@@ -203,7 +206,8 @@ export function App({ member, signOut, accountBusy, accountError }: {
   }, [showFx, economyPage])
   useEffect(() => {
     const change = () => {
-      setTab(hashPage() ?? guestStorage.loadSettings().market)
+      const { market: defaultMarket } = guestStorage.loadSettings()
+      setTab(hashPage(defaultMarket) ?? defaultMarket)
       window.scrollTo(0, 0)
     }
     window.addEventListener('hashchange', change)
@@ -290,7 +294,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const current = [...tabs, trends].find(item => item.id === section)
   const index = indexPage(tab)
   const detailMarket = stock?.market ?? index?.market
-  const navSection = detailMarket ? (detailMarket === 'KR' ? 'domestic' : 'global') : section
+  const navSection = detailMarket ? 'market' : section
   const information = Object.hasOwn(informationPages, tab) ? tab as InformationPage : undefined
   const pageLabel = tab === 'members' ? '회원 승인 관리' : index?.name ?? current?.label ?? (information && informationPages[information])
   const fx = snapshot?.quotes.find(quote => quote.kind === 'fx')
@@ -298,7 +302,12 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const navigationLinks = (items: readonly (typeof tabs[number] | typeof trends | typeof memberAdminTab | typeof mobileTabs[number])[]) =>
     items.map(({ id, label, icon: Icon }) => <a key={id} href={'#' + id} title={label} aria-label={label}
       aria-current={id === navSection ? (id === section ? 'page' : 'location') : undefined}
-      onClick={() => { if (id === tab) window.scrollTo(0, 0) }}>
+      onClick={event => {
+        if (id === 'market' && market && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+          event.preventDefault()
+          window.scrollTo(0, 0)
+        } else if (id === tab) window.scrollTo(0, 0)
+      }}>
       <Icon className="navigation-icon" size={19} strokeWidth={1.75} aria-hidden="true" /><span>{label}</span>
     </a>)
   const themeLabel = settings.theme === 'dark' ? '라이트 테마로 전환' : '다크 테마로 전환'
@@ -325,6 +334,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
         <CommandSearch entries={[
           ...[...tabs, ...(!isApi || tab === 'trends' ? [trends] : []), ...(member?.admin ? [memberAdminTab] : [])]
             .map(item => ({ label: item.label, href: '#' + item.id, detail: '메뉴' })),
+          ...marketTabs.map(({ id, label }) => ({ label, href: '#' + id, detail: '시장' })),
           ...marketIndices.map(item => ({ label: item.name, href: '#index/' + item.id, detail: marketNames[item.market] + ' 지수', keywords: item.id })),
           ...marketListings.map(({ listing, name }) => ({ label: name, href: stockHref(listing), detail: listing.symbol + ' · ' + marketNames[listing.market], keywords: listing.symbol })),
         ]} />
@@ -352,6 +362,10 @@ export function App({ member, signOut, accountBusy, accountError }: {
       <main id="main-content" ref={mainContent} className={overview ? 'market-overview' : market ? 'market-explorer'
         : economyPage ? 'economy-workspace' : tab === 'settings' ? 'settings-workspace' : undefined} tabIndex={-1}>
         {!stock && <div className="page-heading"><h1>{pageLabel}</h1></div>}
+        {market && <nav className="periods market-switch" aria-label="시장 구분">
+          {marketTabs.map(({ id, label }) => <a key={id} href={'#' + id}
+            aria-current={tab === id ? 'page' : undefined}>{label}</a>)}
+        </nav>}
         {sync && !information && <WatchlistStatus sync={sync} email={member?.email} compact={!!stock} />}
         {information ? <>
           <SiteInformation page={information} />
@@ -476,7 +490,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
               options={{ normal: '기본', large: '크게' }} onChange={fontSize => setSettings(previous => ({ ...previous, fontSize }))} />
             <SettingSelect label="기본 표시 시장" description="대시보드를 처음 열 때 표시" value={settings.market} options={{ overview: '개요', domestic: '국내시장', global: '해외시장' }} onChange={market => setSettings({ ...settings, market })} />
             <SettingSelect label="데이터 표시 단위" description="큰 종목 가격의 표시 방식" value={settings.units} options={{ full: '전체 숫자', compact: '간략 단위' }} onChange={units => setSettings({ ...settings, units })} />
-            <SettingSelect label="상승·하락 색상" description="등락 방향별 색상" value={settings.colors} options={{ green: '상승 초록 · 하락 빨강', red: '상승 빨강 · 하락 파랑' }} onChange={colors => setSettings({ ...settings, colors })} />
+            <SettingSelect label="상승·하락 색상" description="등락 수치의 색상입니다. 히트맵은 시장별 색상 범례를 사용합니다." value={settings.colors} options={{ green: '상승 초록 · 하락 빨강', red: '상승 빨강 · 하락 파랑' }} onChange={colors => setSettings({ ...settings, colors })} />
             {isApi && <div className="setting"><strong>환율 설정</strong><a href="#economy/fx-settings" className="button">환율 설정 열기</a></div>}
           </section>
         </>}
