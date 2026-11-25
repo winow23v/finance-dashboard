@@ -19,6 +19,8 @@ function average(values: readonly number[], period: number): number | null {
   return values.length < period ? null : values.slice(-period).reduce((sum, value) => sum + value, 0) / period
 }
 
+export { average as simpleMovingAverage }
+
 // All recursive averages start at the SMA of the first full window.
 function smoothed(values: readonly number[], period: number, alpha: number): number[] {
   const seed = average(values.slice(0, period), period)

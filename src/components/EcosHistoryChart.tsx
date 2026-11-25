@@ -7,6 +7,7 @@ export default function EcosHistoryChart({ id, name, points, unit, collectedAt, 
   id: string; name: string; points: EcosPoint[]; unit: string; collectedAt: string; onClose: () => void
 }) {
   const heading = useRef<HTMLHeadingElement>(null)
+  const tooltipTrigger = matchMedia('(hover: none)').matches ? 'click' : 'hover'
   useEffect(() => { heading.current?.focus() }, [name])
   const daily = points[0].period.length === 10
   const format = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
@@ -25,15 +26,16 @@ export default function EcosHistoryChart({ id, name, points, unit, collectedAt, 
           <XAxis dataKey="at" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={dateLabel}
             minTickGap={24} tick={{ fill: 'var(--muted)', fontSize: 11 }} />
           <YAxis width={48} domain={['auto', 'auto']} tickFormatter={value => format.format(value)} tick={{ fill: 'var(--muted)', fontSize: 11 }} />
-          <Tooltip labelFormatter={value => dateLabel(Number(value))} formatter={value => format.format(Number(value)) + (unit.includes('%') ? '%' : '')}
+          <Tooltip trigger={tooltipTrigger} isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }} labelFormatter={value => dateLabel(Number(value))} formatter={value => format.format(Number(value)) + (unit.includes('%') ? '%' : '')}
             contentStyle={{ background: 'var(--panel)', borderColor: 'var(--line)' }} />
           <Line name={name} dataKey="value" stroke="var(--accent)" strokeWidth={2} dot={points.length <= 24} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>
-    <details className="chart-note">
+    <details className="chart-note chart-data">
       <summary>관측값 표</summary>
-      <div className="disclosure-table"><table>
+      <div className="chart-data-scroll" role="region" aria-label={name + ' 관측값 표'} tabIndex={0}><table>
+        <caption className="sr-only">{name} 관측값 및 단위</caption>
         <thead><tr><th scope="col">{daily ? '관측일' : '관측월'}</th><th scope="col">값 ({unit})</th></tr></thead>
         <tbody>{points.map(point => <tr key={point.period}><th scope="row"><time dateTime={point.period}>{point.period}</time></th><td>{format.format(point.value)}</td></tr>)}</tbody>
       </table></div>

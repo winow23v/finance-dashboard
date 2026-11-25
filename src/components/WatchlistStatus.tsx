@@ -21,12 +21,12 @@ export function WatchlistStatus({ sync, email, compact }: { sync: NonNullable<Wa
   const status = sync.status === 'ready' || sync.status === 'saved' ? null : messages[sync.status]
   const visible = !!status && !(compact && sync.status === 'loading') || prompt || !!sync.failure || !!sync.unsupported
   return <>
-    {sync.status === 'saved' && saved && <div className="notice watchlist-saved">
+    {sync.status === 'saved' && saved && <div className="notice watchlist-saved data-message" data-state="success">
       <span role="status">{messages.saved}</span>
       <button type="button" className="icon-button" aria-label="저장 알림 닫기" onClick={() => setSaved(false)}><X size={16} aria-hidden="true" /></button>
     </div>}
     {!visible && status && <span className="sr-only" role="status">{status}</span>}
-    {visible && <div className="notice watchlist-status">
+    {visible && <div className="notice watchlist-status data-message" data-state={sync.status}>
     {status && <p role="status">{status}</p>}
     {sync.failure && <div className="member-actions">
       <button className="button" onClick={sync.retry}>다시 시도</button>

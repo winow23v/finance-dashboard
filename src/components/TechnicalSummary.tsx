@@ -38,7 +38,10 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
   const assessment = useMemo(() => indicators && assessTechnicalTrend(history.bars, indicators), [history, indicators])
   const plan = useMemo(() => assessment && indicators && buildTechnicalScenarios(assessment, indicators), [assessment, indicators])
   const risk = technicalRisk(assessment, indicators, stale, !index)
-  if (!assessment || !indicators || !plan) return <p className="state" role="status">분석 불가 · {risk.status} · 유효한 연속 확정 일봉을 확인할 수 없습니다.</p>
+  if (!assessment || !indicators || !plan) return <section className="technical-summary" aria-label="기술적 분석">
+    <h2>기술적 분석</h2>
+    <p className="heatmap-meta" role="status">분석 불가 · {risk.status} · 기준일에 맞는 유효한 연속 확정 일봉이 필요합니다.</p>
+  </section>
   const { trend, reasons, zones, invalidation, breakVolumeConfirmed, tradingDate } = assessment
   const { dmi, bands, volume, atr14, cross, sma, sma20Slope, rsi14, macd } = indicators
   const display: PriceDisplay = { unit: index ? 'pt' : history.currency, tick }
@@ -49,7 +52,7 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
   return <>
     <section className="technical-summary" aria-label="종합 기술적 판단">
       <div className="analysis-heading">
-        <h3>종합 기술적 판단</h3>
+        <h2>기술적 분석 요약</h2>
         <small><time dateTime={tradingDate}>{tradingDate}</time> 확정 일봉 · {basis}</small>
       </div>
       <dl className="technical-status">
@@ -58,8 +61,11 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
         <div><dt>위험</dt><dd><span className={stale || risk.signals.length ? "technical-risk-attention" : undefined}>{risk.status}</span></dd></div>
       </dl>
       <dl className="technical-key-metrics">
+        {!index && <div><dt>SMA 20</dt><dd>{format(sma[20])}</dd></div>}
         <div><dt>RSI 14</dt><dd>{format(rsi14)}</dd></div>
-        <div><dt>MACD</dt><dd>{macd.histogram === null ? '자료 부족' : macd.histogram > 0 ? '시그널 위' : macd.histogram < 0 ? '시그널 아래' : '시그널과 같음'}</dd></div>
+        <div><dt>MACD 12·26</dt><dd>{format(macd.line)}
+          {macd.line !== null && <small>{macd.histogram === null ? '시그널 자료 부족'
+            : macd.histogram > 0 ? '시그널 위' : macd.histogram < 0 ? '시그널 아래' : '시그널과 같음'}</small>}</dd></div>
         <div><dt>ADX 14</dt><dd>{format(dmi.adx)}</dd></div>
         <div><dt>직전 20봉 대비 거래량</dt><dd>{volume.ratio === null ? '비교 불가' : format(volume.ratio) + '배'}</dd></div>
         <div><dt>변동성</dt><dd>{stale ? '최신 상태 미확인' : atr14 === null ? '자료 부족' : risk.signals.includes('변동성 확대') ? '확대' : 'ATR ' + format(atr14)}</dd></div>
@@ -72,10 +78,14 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
           : check.value ? '조건 감지' : '조건 미충족'}</li>)}</ul>
         <p className="heatmap-meta">기준에 잡히지 않는 위험도 있습니다. 거래량 미확인은 방향 판단과 별개입니다.</p>
       </details>
-      <ul className="technical-evidence">{reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>
+      <details className="technical-risk-checks">
+        <summary>추세 판단 근거 <ChevronDown size={16} aria-hidden="true" /></summary>
+        <ul className="technical-evidence">{reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>
+      </details>
       {invalidation !== undefined && <p className="heatmap-meta">
         추세 가설 재검토 · 확정 종가가 {formatThreshold(invalidation, display, upward ? 'down' : 'up')} {upward ? '아래' : '위'}로 이동할 때
       </p>}
+      {!index && <p className="heatmap-meta">기술 지표는 과거 확정 일봉을 해석하는 참고 자료입니다.</p>}
       {trend === 'unavailable' && <p className="heatmap-meta">장기 추세 분류에는 유효한 일봉 200개가 필요합니다.</p>}
     </section>
     <section className="technical-price-zones" aria-label="지지 · 저항 구간">

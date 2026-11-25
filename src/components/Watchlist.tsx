@@ -10,48 +10,66 @@ import { krxObservation, registeredObservation, watchlistObservations, type Obse
 type Props = {
   selected: MarketSymbol[]; onToggle: (symbol: MarketSymbol) => void; market?: EquityMarket
   blocked?: boolean; loading?: boolean; live?: boolean; summary?: boolean
+  standalone?: boolean; storage?: 'account' | 'browser'
 }
 
 type Row = { listing: MarketSymbol; observation?: Observation }
 const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
+const usd = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const percent = new Intl.NumberFormat('ko-KR', { signDisplay: 'exceptZero', maximumFractionDigits: 2 })
 
-function StockList({ rows, saved, onToggle, label, blocked }: {
-  rows: Row[]; saved: Set<string>; onToggle: Props['onToggle']; label: string; blocked?: boolean
+function StockList({ rows, saved, onToggle, label, blocked, terminal, standalone, showQuoteStatus }: {
+  rows: Row[]; saved: Set<string>; onToggle: Props['onToggle']; label: string; blocked?: boolean; terminal?: boolean; standalone?: boolean; showQuoteStatus?: boolean
 }) {
   return <ul className="stock-list" aria-label={label}>
     {rows.map(({ listing, observation }) => {
       const { name, segment, currency, quote, regular, afterHours } = { ...registeredObservation(listing), ...observation }
       const active = saved.has(favoriteKey(listing))
       const venue = segment ?? (listing.exchange === 'US' ? '거래소 미확인' : listing.exchange)
-      return <li key={marketSymbolKey(listing)}>
-        <div>
-          <a className="stock-detail-link" href={stockHref(listing)}>{name ?? '종목명 미확인'}</a>
+      const provenance = <>
+        {regular && <small className="watchlist-quote">{regular.source}
+          {regular.usingPreviousClose && ' · 이전 정상 종가 사용'}
+          {regular.collectedAt && ' · 마지막 정상 수집 ' + formatKrxCollectionTime(regular.collectedAt)}
+          {regular.lastAttemptAt && ' · 마지막 시도 ' + formatKrxCollectionTime(regular.lastAttemptAt)}
+          {regular.reason && ' · ' + regularQuoteStatus(regular.reason)}
+        </small>}
+        {afterHours && <KrxAfterHoursStatus details={afterHours} compact />}
+      </>
+      return <li className={terminal ? "terminal-stock-row" : undefined} key={marketSymbolKey(listing)}>
+        <div className={terminal ? "terminal-symbol" : undefined}>
+          <a className="stock-detail-link" href={stockHref(listing)} title={standalone ? name : undefined}>
+            <span>{name ?? '종목명 미확인'}</span>
+          </a>
           <small>{listing.symbol} · {listing.market === 'KR' ? '국내' : '미국'} · {venue} · {currency ?? '통화 미확인'}</small>
-          {quote && <small className="watchlist-quote">
+          {quote && !terminal && <small className="watchlist-quote">
             {listing.market === 'KR' && '정규장 종가 '}{number.format(quote.price)} {currency}
             {quote.changePercent !== null && ' · ' + percent.format(quote.changePercent) + '%'}
             {' · ' + quote.tradingDate + ' 기준'}
           </small>}
-          {regular && <small className="watchlist-quote">{regular.source}
-            {regular.usingPreviousClose && ' · 이전 정상 종가 사용'}
-            {regular.collectedAt && ' · 마지막 정상 수집 ' + formatKrxCollectionTime(regular.collectedAt)}
-            {regular.lastAttemptAt && ' · 마지막 시도 ' + formatKrxCollectionTime(regular.lastAttemptAt)}
-            {regular.reason && ' · ' + regularQuoteStatus(regular.reason)}
-          </small>}
-          {afterHours && <KrxAfterHoursStatus details={afterHours} compact />}
+          {!standalone && provenance}
         </div>
+        {terminal && <div className="terminal-metrics">
+          {quote ? <>
+            <strong>{(currency === 'USD' ? usd : number).format(quote.price)} {currency}</strong>
+            {quote.changePercent !== null && <span className={quote.changePercent > 0 ? 'up' : quote.changePercent < 0 ? 'down' : undefined}>
+              {percent.format(quote.changePercent)}%
+            </span>}
+            <small><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> {listing.market === 'KR' ? '정규장 종가' : '거래일 기준'}</small>
+          </> : showQuoteStatus && <small>확인된 종가 없음</small>}
+        </div>}
         <button type="button" className="favorite-button" disabled={blocked} aria-pressed={active}
           aria-label={(name ?? listing.symbol) + (active ? ' 관심종목에서 삭제' : ' 관심종목에 추가')}
           onClick={() => onToggle(listing)}><Star size={19} fill={active ? 'currentColor' : 'none'} aria-hidden="true" /></button>
+        {standalone && (regular || afterHours) && <div className="watch-provenance">{provenance}</div>}
       </li>
     })}
   </ul>
 }
 
-export function Watchlist({ selected, onToggle, market, blocked, loading, live, summary }: Props) {
+export function Watchlist({ selected, onToggle, market, blocked, loading, live, summary, standalone, storage }: Props) {
   const [query, setQuery] = useState('')
   const [observations, setObservations] = useState(new Map<string, Observation>())
+  const [quoteStatus, setQuoteStatus] = useState<'loading' | 'ready' | 'error'>()
   const [search, setSearch] = useState<{ query: string; rows: Row[]; failed: boolean }>()
   const titleId = useId()
   const inputId = useId()
@@ -72,18 +90,21 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
     if (!items.length) return
     const controller = new AbortController()
     async function load() {
+      if (standalone) setQuoteStatus('loading')
       for (let start = 0; start < items.length && !controller.signal.aborted; start += 20) {
         try {
           const entries = await watchlistObservations(items.slice(start, start + 20), controller.signal)
           if (!controller.signal.aborted) setObservations(previous => new Map([...previous, ...entries]))
         } catch {
-          break
+          if (standalone && !controller.signal.aborted) setQuoteStatus('error')
+          return
         }
       }
+      if (standalone && !controller.signal.aborted) setQuoteStatus('ready')
     }
     void load()
     return () => controller.abort()
-  }, [selected, live, market, summary])
+  }, [selected, live, market, summary, standalone])
 
   useEffect(() => {
     if (!domesticSearch) return
@@ -122,18 +143,38 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
   }
   const title = market === 'KR' ? '국내 관심종목' : market === 'US' ? '해외 관심종목' : '관심종목'
 
-  return <section className={summary ? 'panel watch-panel overview-watch' : 'panel watch-panel'}>
+  const renderRows = (items: MarketSymbol[], label: string) => <StockList
+    rows={items.map(listing => ({ listing, observation: observations.get(marketSymbolKey(listing)) }))}
+    saved={saved} onToggle={onToggle} label={label} blocked={blocked} terminal={!!market || standalone}
+    standalone={standalone} showQuoteStatus={standalone && live && quoteStatus === 'ready'} />
+
+  return <section className={summary ? 'panel watch-panel overview-watch' : standalone ? 'panel watch-panel watch-workspace' : 'panel watch-panel'}>
     <div className="panel-heading">
-      <div><h2><Star size={17} aria-hidden="true" /> {title}</h2>{!loading && <p>{marketRows.length}개 종목</p>}</div>
+      <div><h2><Star size={17} aria-hidden="true" /> {standalone ? '저장한 종목' : title}</h2>
+        {!loading && <p>{marketRows.length}개 종목{storage && (storage === 'account' ? ' · 회원 계정에 저장' : ' · 이 브라우저에 저장')}</p>}</div>
       <button type="button" className="button" onClick={() => {
         setQuery('')
         editor.current?.showModal()
         input.current?.focus()
       }}><Plus size={16} aria-hidden="true" /> 종목 검색</button>
     </div>
-    {rows.length ? <StockList rows={rows.map(listing => ({ listing, observation: observations.get(marketSymbolKey(listing)) }))}
-      saved={saved} onToggle={onToggle} label={title} blocked={blocked} />
-      : !loading && <p className="state">등록된 관심종목이 없습니다.</p>}
+    {standalone && rows.length > 0 && (quoteStatus === 'loading' || quoteStatus === 'error') &&
+      <p className="data-message watch-quote-message" data-state={quoteStatus} role="status">
+        {quoteStatus === 'loading' ? '종가 정보를 불러오는 중입니다.' : '일부 종가를 조회하지 못했습니다. 기존 조회값은 계속 표시합니다.'}
+      </p>}
+    {rows.length ? standalone ? (['KR', 'US'] as const).map(region => {
+      const items = rows.filter(item => item.market === region)
+      if (!items.length) return null
+      const label = region === 'KR' ? '국내 관심종목' : '해외 관심종목'
+      return <section className="watch-market-group" key={region} aria-label={label}>
+        <h3>{label} <small>{items.length}개</small></h3>
+        {renderRows(items, label)}
+      </section>
+    }) : renderRows(rows, title)
+      : !loading && <div className="state watch-empty" data-state="empty">
+        <strong>등록된 관심종목이 없습니다.</strong>
+        {standalone && <p>종목 검색에서 이름이나 코드를 입력하고 별 버튼으로 추가하세요.</p>}
+      </div>}
     {summary && <a className="text-link overview-watch-link" href="#watchlist">관심종목 전체 보기</a>}
     <dialog className="stock-search-dialog" ref={editor} aria-labelledby={titleId} onClose={() => setQuery('')} onClick={event => {
       if (event.target instanceof Element && event.target.closest('a')) editor.current?.close()
@@ -150,9 +191,9 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
           input.current?.focus()
         }}><X size={18} aria-hidden="true" /></button>}
       </div>
-      {domesticSearch && !searchResult && <p className="state" role="status">KRX 종목 검색 중입니다.</p>}
-      {searchResult?.failed && <p className="state" role="status">일부 KRX 종목 정보를 확인할 수 없습니다.</p>}
-      {results.size > 0 ? <StockList rows={[...results.values()]} saved={saved} onToggle={onToggle} label="종목 검색 결과" blocked={blocked} />
+      {domesticSearch && !searchResult && <p className="state data-message" data-state="loading" role="status">KRX 종목 검색 중입니다.</p>}
+      {searchResult?.failed && <p className="state data-message" data-state="error" role="status">일부 KRX 종목 정보를 확인할 수 없습니다.</p>}
+      {results.size > 0 ? <StockList rows={[...results.values()]} saved={saved} onToggle={onToggle} label="종목 검색 결과" blocked={blocked} terminal={!!market || standalone} standalone={standalone} />
         : (!domesticSearch || searchResult) && <p className="state" role="status">검색 결과가 없습니다.</p>}
     </dialog>
   </section>

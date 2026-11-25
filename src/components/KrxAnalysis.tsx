@@ -1,5 +1,5 @@
 import { ChevronDown, Clock } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { FinanceApiError, getKrxAnalysis, getKrxStocks, marketRequestMessage } from '../services/apiFinanceService'
 import { calculatePriceReturns, calculateTechnicalIndicators, emaWindows, smaWindows } from '../services/technicalIndicators'
 import type { KrxAnalysis as Analysis } from '../types/finance'
@@ -9,6 +9,8 @@ import { KrxAfterHoursStatus } from './KrxAfterHoursStatus'
 import { TechnicalSummary } from './TechnicalSummary'
 import { confirmedKrxTick, formatAnalysisPrice, formatPercent } from '../services/analysisPrices'
 import type { KrxStocks } from '../types/finance'
+
+const StockHistoryChart = lazy(() => import('./StockHistoryChart'))
 
 const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
 const timestamp = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
@@ -63,10 +65,10 @@ export function KrxAnalysis({ symbol, actions, refresh = 0 }: { symbol: string; 
 
   const histogram = macd?.histogram
 
-  return <section className="panel stock-detail krx-analysis" aria-label="기술적 분석">
-    {!data && <header className="stock-identity"><h1>{symbol}</h1>{actions}</header>}
-    {!result ? <p className="state" role="status">KRX 시세를 불러오는 중입니다.</p>
-      : 'message' in result || !data ? <div className="state"><p role="status">{'message' in result ? result.message : '자료 없음'}</p>
+  return <section className="panel stock-detail krx-analysis terminal-detail" aria-label="종목 상세">
+    {!data && <header className="stock-identity"><h1>{symbol}</h1><small>국내시장 · XKRX · KRW</small>{actions}</header>}
+    {!result ? <p className="detail-state" role="status">KRX 시세를 불러오는 중입니다.</p>
+      : 'message' in result || !data ? <div className="detail-state"><p role="alert">{'message' in result ? result.message : '자료 없음'}</p>
         <p>최신 위험 상태 확인 불가</p>
         <button className="button" onClick={() => { setResult(undefined); retry(value => value + 1) }}>다시 조회</button></div>
         : <>
@@ -85,17 +87,16 @@ export function KrxAnalysis({ symbol, actions, refresh = 0 }: { symbol: string; 
             <div className="analysis-meta">
               {quote && <span><Clock size={14} aria-hidden="true" /> 거래일 <time dateTime={quote.tradingDate}>{quote.tradingDate}</time></span>}
               <span>{data.source} · 공식 미수정 종가</span>
-              {data.reason && <span>{krxStateLabels[data.reason]}</span>}
-              {data.usingPreviousClose && <span>이전 정상 종가 사용</span>}
+              {data.reason && <span className="detail-attention">{krxStateLabels[data.reason]}</span>}
+              {data.usingPreviousClose && <span className="detail-attention">이전 정상 종가 사용</span>}
               {data.collectedAt && <span>마지막 정상 수집 <time dateTime={data.collectedAt}>{timestamp.format(new Date(data.collectedAt))}</time> (KST)</span>}
               {data.lastAttemptAt && <span>마지막 시도 <time dateTime={data.lastAttemptAt}>{timestamp.format(new Date(data.lastAttemptAt))}</time> (KST)</span>}
             </div>
           </header>
           <KrxAfterHoursStatus details={data.afterHours} />
-          <div className="analysis-heading analysis-history-status">
-            <small>{bars.length ? `${bars.length}거래일 · ${bars[0].tradingDate} ~ ${bars.at(-1)?.tradingDate}`
-              : '연속 일봉 부족'}</small>
-          </div>
+          <Suspense fallback={<p className="detail-state" role="status">가격 차트를 준비하는 중입니다.</p>}>
+            <StockHistoryChart history={data.history} source={data.source} />
+          </Suspense>
           <TechnicalSummary indicators={indicator} history={data.history} tick={tick} stale={data.reason === 'provider-error' || data.reason === 'provider-not-configured' || data.reason === 'not-published'} />
           <details className="technical-detail-group"><summary>이동평균·모멘텀·수익률 상세</summary><div className="analysis-details">
             <details>

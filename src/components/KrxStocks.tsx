@@ -45,9 +45,9 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
     return () => controller.abort()
   }, [market, query, revision, symbol])
 
-  return <section className="panel watch-panel" aria-label="국내 종목 시세">
+  return <section className="panel watch-panel krx-stock-search" aria-label="국내 종목 시세">
     <div className="panel-heading"><h2><Search size={18} aria-hidden="true" /> 국내 종목 시세</h2></div>
-    {!symbol && <form className="disclosure-controls krx-search-controls" onSubmit={event => {
+    {!symbol && <form className="disclosure-controls terminal-filters krx-search-controls" onSubmit={event => {
       event.preventDefault()
       if (!input.trim() || (input.trim() === query && current?.data !== null)) return
       setQuery(input.trim())
@@ -82,13 +82,19 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
               const listing = { market: 'KR', exchange: 'XKRX', symbol: item.symbol } as const
               const saved = selected.some(entry => marketSymbolKey(entry) === marketSymbolKey(listing))
               const quote = item.quote
-              return <li key={item.symbol}>
-                <div>
+              return <li className="terminal-stock-row" key={item.symbol}>
+                <div className="terminal-symbol">
                   <a className="stock-detail-link" href={stockHref(listing)}>{item.name}</a>
                   <small>{item.symbol} · {item.market}{item.shareClass && ' · ' + item.shareClass}</small>
-                  <small>{quote ? <>{quote.tradingDate} 종가 {number.format(quote.price)}원
-                    {quote.change !== null && quote.changePercent !== null && <> · <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed /></>}
-                    {' · 거래량 '}{quote.volume === null ? '미확인' : number.format(quote.volume)}</> : '유효한 시세 없음'}</small>
+                </div>
+                <div className="terminal-metrics">
+                  {quote ? <>
+                    <strong>{number.format(quote.price)}원</strong>
+                    {quote.change !== null && quote.changePercent !== null &&
+                      <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
+                    <small><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가</small>
+                    <small>거래량 {quote.volume === null ? '미확인' : number.format(quote.volume)}</small>
+                  </> : <small>유효한 시세 없음</small>}
                 </div>
                 <button type="button" className="favorite-button" disabled={blocked} aria-pressed={saved} aria-label={item.name + ' 관심종목'}
                   onClick={() => onToggle(listing)}><Star size={19} fill={saved ? 'currentColor' : 'none'} aria-hidden="true" /></button>
