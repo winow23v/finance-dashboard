@@ -1,6 +1,7 @@
 import { LoadingSkeleton } from "./LoadingSkeleton"
 import { lazy, Suspense, useEffect, useId, useState } from 'react'
 import { isNumber, isRecord } from '../services/apiFinanceService'
+import { ecosRefreshFailed } from '../services/ecosRefresh'
 import { createRequestCache } from '../services/requestCache'
 import { usePublicData } from '../services/usePublicData'
 import type { EcosPoint } from './EcosHistoryChart'
@@ -33,7 +34,7 @@ function parseIndicators(value: unknown) {
   if (!isRecord(value) || !Array.isArray(value.indicators)) throw new Error('Invalid ECOS response')
   return value.indicators.map((item: unknown) => {
     if (!isRecord(item) || typeof item.id !== 'string') throw new Error('Invalid ECOS indicator')
-    if (item.status === 'unavailable') return { id: item.id, code: item.code }
+    if (item.status === 'unavailable') return { id: item.id, status: 'unavailable' as const, code: typeof item.code === 'string' ? item.code.trim() : undefined }
     if (item.status !== 'published' || !isNumber(item.value) || typeof item.unit !== 'string' || (typeof item.observationDate !== 'string' && typeof item.observationPeriod !== 'string')
       || (item.releaseDate !== null && typeof item.releaseDate !== 'string')
       || typeof item.collectedAt !== 'string' || !Number.isFinite(Date.parse(item.collectedAt))) throw new Error('Invalid ECOS observation')
@@ -43,7 +44,7 @@ function parseIndicators(value: unknown) {
       isRecord(comparison) && isNumber(comparison.value) &&
       comparison.comparisonPeriod === `${Number(period.slice(0, 4)) - 1}${period.slice(4)}`
       ? { value: comparison.value, period: comparison.comparisonPeriod } : undefined
-    return { id: item.id, value: item.value, unit: item.unit,
+    return { id: item.id, status: 'published' as const, value: item.value, unit: item.unit,
       observationDate: typeof item.observationDate === 'string' ? item.observationDate : undefined,
       observationPeriod: typeof period === 'string' ? period : undefined,
       releaseDate: item.releaseDate, collectedAt: item.collectedAt, yearOverYear,
@@ -57,8 +58,8 @@ export function KoreaEconomy({ revision, visible, onRefreshReady, onRefreshResul
   const result = usePublicData('/api/v1/economy/korea', revision, parseIndicators, undefined, true, ecosCache)
   const ready = result?.revision === revision
   useEffect(() => { onRefreshReady(ready) }, [onRefreshReady, ready])
-  const refreshFailed = !result?.data || !!result.refreshFailed
-  useEffect(() => { if (ready) onRefreshResult?.('ecos', refreshFailed) }, [ready, refreshFailed, revision, onRefreshResult])
+  const failed = ready && ecosRefreshFailed(result)
+  useEffect(() => { if (ready) onRefreshResult?.('ecos', failed) }, [ready, failed, revision, onRefreshResult])
   const data = result?.data
   const rateLimited = result?.errorCode === 'PROVIDER_RATE_LIMITED'
   const [selected, setSelected] = useState<string>()

@@ -4,9 +4,9 @@ import type { MarketSymbol } from '../types/marketSymbol'
 import { UsAnalysis } from './UsAnalysis'
 import { KrxAnalysis } from './KrxAnalysis'
 
-export function StockDetail({ listing, saved, onToggle, liveQuote, usQuote, favoriteDisabled, revision, onRefresh, refreshDisabled, refreshing, onRefreshResult }: {
+export function StockDetail({ listing, saved, onToggle, liveQuote, usQuote, favoriteDisabled, revision, onRefresh, refreshDisabled, refreshing, refreshLabel, onRefreshResult }: {
   listing: MarketSymbol; saved: boolean; onToggle: () => void; liveQuote?: boolean; usQuote?: boolean; favoriteDisabled?: boolean
-  revision: number; onRefresh: () => void; refreshDisabled: boolean; refreshing: boolean; onRefreshResult: (key: string, failed: boolean) => void
+  revision: number; onRefresh: () => void; refreshDisabled: boolean; refreshing: boolean; refreshLabel: string; onRefreshResult: (key: string, failed: boolean) => void
 }) {
   const { name, segment, currency } = registeredObservation(listing)
   const market = listing.market === 'KR' ? '국내시장' : '해외시장'
@@ -19,7 +19,7 @@ export function StockDetail({ listing, saved, onToggle, liveQuote, usQuote, favo
     <button type="button" className="button stock-favorite" aria-pressed={saved} disabled={favoriteDisabled} onClick={onToggle}>
       <Star size={16} aria-hidden="true" fill={saved ? 'currentColor' : 'none'} /> {saved ? '관심종목 삭제' : '관심종목 추가'}
     </button>
-    {(liveQuote || usQuote) && <button type="button" className="button" onClick={onRefresh} disabled={refreshDisabled}>
+    {(liveQuote || usQuote) && <button type="button" className="button" onClick={onRefresh} disabled={refreshDisabled} aria-label={refreshLabel} title={refreshLabel}>
       <RefreshCw className={refreshing ? "refresh-spin" : undefined} size={16} aria-hidden="true" /> 갱신
     </button>}
   </div>

@@ -127,6 +127,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const [menuOpen, setMenuOpen] = useState(false)
   const collapsed = railOverride ?? compactRail
   const [refreshUntil, setRefreshUntil] = useState(0)
+  const [refreshingPage, setRefreshingPage] = useState<Page>()
   const refreshLock = useRef(0)
   const refreshWork = useRef<{ page: Page; keys: Set<string>; failed: boolean } | null>(null)
   const [notice, setNotice] = useState<{ message: string; failed?: boolean }>()
@@ -137,6 +138,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
     current.failed ||= failed
     if (current.keys.size) return
     refreshWork.current = null
+    setRefreshingPage(undefined)
     setNotice({ message: current.failed ? '일부 데이터를 갱신하지 못했습니다.' : '데이터를 갱신했습니다.', failed: current.failed })
   }, [])
   const menuDialog = useRef<HTMLDialogElement>(null)
@@ -186,7 +188,10 @@ export function App({ member, signOut, accountBusy, accountError }: {
   useEffect(() => {
     if (previousTab.current === tab) return
     previousTab.current = tab
-    if (refreshWork.current?.page !== tab) refreshWork.current = null
+    if (refreshWork.current && refreshWork.current.page !== tab) {
+      refreshWork.current = null
+      setRefreshingPage(undefined)
+    }
     const main = mainContent.current
     if (main && !main.contains(document.activeElement)) main.focus({ preventScroll: true })
   }, [tab])
@@ -258,7 +263,8 @@ export function App({ member, signOut, accountBusy, accountError }: {
 
   const stock = parseStockPage(tab)
   const canRefresh = isApi ? !!stock || isMarket || economyPage || companyPage : showFx || tab === 'trends'
-  const refreshing = pending || (isApi && ((isMarket && !marketResult) || (showFx && !fxReady) || (economyPage && !(ecosReady && fredReady))))
+  const loading = pending || (isApi && ((isMarket && !marketResult) || (showFx && !fxReady) || (economyPage && !(ecosReady && fredReady))))
+  const refreshing = canRefresh && (loading || refreshingPage === tab)
   const refreshDisabled = !canRefresh || refreshing || !!refreshUntil || (tab === 'companies' && !dartReady)
   const refresh = () => {
     if (refreshDisabled || Date.now() < refreshLock.current) return
@@ -270,6 +276,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
       ...(showFx ? ['fx'] : []), ...(economyPage ? ['ecos', 'fred'] : []),
     ]
     refreshWork.current = { page: tab, keys: new Set(keys), failed: false }
+    setRefreshingPage(tab)
     setError(false)
     if (!isApi) {
       setPending(true)
@@ -295,8 +302,9 @@ export function App({ member, signOut, accountBusy, accountError }: {
       <Icon className="navigation-icon" size={19} strokeWidth={1.75} aria-hidden="true" /><span>{label}</span>
     </a>)
   const themeLabel = settings.theme === 'dark' ? '라이트 테마로 전환' : '다크 테마로 전환'
-  const refreshLabel = refreshing || refreshUntil ? '데이터 새로고침 대기 중'
-    : refreshDisabled ? '새로고침할 데이터 없음' : '데이터 새로고침'
+  const refreshLabel = refreshing ? '데이터 새로고침 진행 중'
+    : canRefresh && refreshUntil ? '데이터 새로고침 제한 시간 대기 중'
+      : refreshDisabled ? '새로고침할 데이터 없음' : '데이터 새로고침'
   const RailIcon = collapsed ? PanelLeftOpen : PanelLeftClose
 
   return <div className={collapsed ? 'app rail-collapsed' : 'app'}>
@@ -321,7 +329,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
           ...marketListings.map(({ listing, name }) => ({ label: name, href: stockHref(listing), detail: listing.symbol + ' · ' + marketNames[listing.market], keywords: listing.symbol })),
         ]} />
         {!stock && <button className="icon-button" onClick={refresh} disabled={refreshDisabled}
-          aria-label={refreshLabel} title={refreshLabel}><RefreshCw className={refreshing || refreshUntil ? "refresh-spin" : undefined} size={17} /></button>}
+          aria-label={refreshLabel} title={refreshLabel}><RefreshCw className={refreshing ? "refresh-spin" : undefined} size={17} /></button>}
         <button className="icon-button" aria-label={themeLabel} title={themeLabel}
           onClick={() => setSettings(previous => ({ ...previous, theme: previous.theme === 'dark' ? 'light' : 'dark' }))}>
           {settings.theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
@@ -351,7 +359,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
             <DataStatus api={isApi} indices={indexResult?.quotes} krx={krxResult?.data} />
           </section>}
         </> : stock ?
-          <StockDetail revision={request} onRefreshResult={onRefreshResult} refreshing={refreshing || !!refreshUntil} onRefresh={refresh} refreshDisabled={refreshDisabled} favoriteDisabled={blocked || !!member && !isWatchlistSymbol(stock)} listing={stock} saved={watchlist.some(item => favoriteKey(item) === favoriteKey(stock))}
+          <StockDetail revision={request} onRefreshResult={onRefreshResult} refreshing={refreshing} refreshLabel={refreshLabel} onRefresh={refresh} refreshDisabled={refreshDisabled} favoriteDisabled={blocked || !!member && !isWatchlistSymbol(stock)} listing={stock} saved={watchlist.some(item => favoriteKey(item) === favoriteKey(stock))}
             onToggle={() => toggle(stock)} usQuote={isApi && stock.market === 'US'} liveQuote={isApi && stock.market === 'KR' && stock.exchange === 'XKRX'} />
           : index ? <section className="panel stock-detail" aria-label="지수 상세">
             <div className="section-heading"><h2>지수 추이</h2>
