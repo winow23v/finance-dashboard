@@ -43,6 +43,8 @@ function DataSources() {
       <section>
         <h2>미국 거시경제 지표 · FRED</h2>
         <p><strong>승인 회원 전용</strong> · 세인트루이스 연방준비은행 FRED를 통해 제공하는 지표는 원 제공기관과 지표의 정보는 FRED에서 확인할 수 있습니다. 지표별 갱신 주기가 다릅니다.</p>
+        <p lang="en">This product uses the FRED® API but is not endorsed or certified by the Federal Reserve Bank of St. Louis.</p>
+        <p>FRED 연동 기능을 이용하면 <a href="https://fred.stlouisfed.org/docs/api/terms_of_use.html">FRED API 이용약관</a>의 적용에 동의하게 됩니다.</p>
         <p><a href="https://fred.stlouisfed.org/">FRED</a> · <a href="https://fred.stlouisfed.org/legal/">FRED 이용약관과 출처 안내</a></p>
       </section>
     </div>

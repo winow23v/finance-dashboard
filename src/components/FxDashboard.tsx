@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from "./LoadingSkeleton"
 import { useEffect, useRef, useId, useState } from 'react'
 import { Info, X } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
@@ -132,8 +133,8 @@ function basisLabel(code: string, multiplier: number) {
   return code === 'JPY' ? `${multiplier}엔당` : `${multiplier} ${code}당`
 }
 
-export default function FxDashboard({ revision, detailed, showSettings, onRefreshReady }: {
-  revision: number; detailed: boolean; showSettings: boolean; onRefreshReady: (ready: boolean) => void
+export default function FxDashboard({ revision, detailed, showSettings, onRefreshReady, onRefreshResult }: {
+  revision: number; detailed: boolean; showSettings: boolean; onRefreshReady: (ready: boolean) => void; onRefreshResult?: (key: string, failed: boolean) => void
 }) {
   const settings = useRef<HTMLDetailsElement>(null)
   useEffect(() => {
@@ -154,6 +155,9 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
   const chart = chartResult?.data === null ? null : chartResult?.data?.points
   const ready = latestResult?.revision === revision && (!detailed || chartResult?.revision === revision)
   useEffect(() => { onRefreshReady(ready) }, [onRefreshReady, ready])
+  const refreshFailed = !latest || !!latest.refreshError || !!latestResult?.refreshFailed
+    || (detailed && (!chart || !!chartResult?.refreshFailed || !!chartResult?.data?.refreshError))
+  useEffect(() => { if (ready) onRefreshResult?.('fx', refreshFailed) }, [ready, refreshFailed, revision, onRefreshResult])
   const chartMultiplier = base === 'JPY' && yen100 ? 100 : 1
 
   useEffect(() => { guestPreferences.save(fxKey, preferences) }, [preferences])
@@ -203,7 +207,7 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
           </div>
           <strong className="economic-value" data-state={rate != null ? undefined : latest === undefined ? 'loading' : latest === null ? 'error' : 'unpublished'}>
             {rate != null ? <>{displayRate(rate * multiplier, reference)} <span>{unit}</span></>
-              : latest === undefined ? '조회 중' : latest === null ? '조회 불가' : '공표 관측값 없음'}</strong>
+              : latest === undefined ? <LoadingSkeleton message="환율을 불러오는 중입니다." shape="value" /> : latest === null ? '조회 불가' : '공표 관측값 없음'}</strong>
           {rate != null && row?.observationDate && <small><time dateTime={row.observationDate}>{row.observationDate.replaceAll('-', '.')}</time> 기준</small>}
           {rate != null && row?.calculated && <small>교차환율</small>}
           {(status || rate != null) && <small className="fx-quote-state" data-state={latestResult?.errorCode === 'PROVIDER_RATE_LIMITED' ? 'rate-limited' : status && (rate != null ? 'stale' : 'error')}>{status ?? '최근 공표값'}</small>}
@@ -241,7 +245,8 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
         갱신 실패 · 이전 공표 이력{chartResult?.data?.refreshError && ` (${chartResult.data.refreshError})`}
       </p>}
       <div className="chart-body">
-        {!chart?.length ? <p className="state data-message" data-state={chart === undefined ? 'loading' : chart === null ? 'error' : 'empty'} role="status">{chart === undefined ? '조회 중' : chart === null ? refreshError(chartResult?.errorCode) ?? '조회 불가' : '표시할 관측값 없음'}</p>
+        {chart === undefined ? <LoadingSkeleton message="환율 추이를 불러오는 중입니다." shape="chart" contained />
+          : !chart?.length ? <p className="state data-message" data-state={chart === null ? 'error' : 'empty'} role="status">{chart === null ? refreshError(chartResult?.errorCode) ?? '조회 불가' : '표시할 관측값 없음'}</p>
           : <ResponsiveContainer width="100%" height="100%" minWidth={0}>
             <AreaChart accessibilityLayer title="공표 기준환율 추이" data={chart.map(point => ({ ...point, rate: point.rate * chartMultiplier, dateTime: Date.parse(point.observationDate) }))} margin={{ top: 10, right: 12, left: 12, bottom: 8 }}>
               <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="4 5" />

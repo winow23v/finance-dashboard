@@ -23,10 +23,11 @@ function StockList({ rows, saved, onToggle, label, blocked, terminal, standalone
 }) {
   return <ul className="stock-list" aria-label={label}>
     {rows.map(({ listing, observation }) => {
-      const { name, segment, currency, quote, regular } = { ...registeredObservation(listing), ...observation }
+      const { name, segment, currency, quote, regular, afterHours } = { ...registeredObservation(listing), ...observation }
       const active = saved.has(favoriteKey(listing))
       const venue = segment ?? (listing.exchange === 'US' ? '거래소 미확인' : listing.exchange)
-      const status = regular?.usingPreviousClose ? '이전 정상 종가 사용' : regular?.reason ? regularQuoteStatus(regular.reason) : undefined
+      const status = regular?.usingPreviousClose ? '이전 정상 종가 사용' : regular?.reason ? regularQuoteStatus(regular.reason)
+        : afterHours?.every(entry => entry.status === 'market-closed') && afterHours.length ? '시간외 휴장' : undefined
       return <li className={terminal ? "terminal-stock-row" : undefined} key={marketSymbolKey(listing)}>
         <div className={terminal ? "terminal-symbol" : undefined}>
           <a className="stock-detail-link" href={stockHref(listing)} title={standalone ? name : undefined}>

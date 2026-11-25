@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from "./LoadingSkeleton"
 import { lazy, Suspense, useEffect, useId, useState } from 'react'
 import { isNumber, isRecord } from '../services/apiFinanceService'
 import { createRequestCache } from '../services/requestCache'
@@ -7,9 +8,9 @@ import type { EcosPoint } from './EcosHistoryChart'
 const EcosHistoryChart = lazy(() => import('./EcosHistoryChart'))
 
 const indicators = [
-  { id: 'base-rate', name: '한국은행 기준금리', agency: '한국은행', url: 'https://www.bok.or.kr/portal/singl/baseRate/list.do?menuNo=200656' },
-  { id: 'cpi', name: '소비자물가지수', agency: '국가데이터처', url: 'https://kosis.kr/visual/economyBoard/economyDash.do' },
-  { id: 'unemployment', name: '실업률 (원계열)', agency: '국가데이터처', url: 'https://kosis.kr/visual/economyBoard/economyDash.do' },
+  { id: 'base-rate', name: '한국은행 기준금리' },
+  { id: 'cpi', name: '소비자물가지수' },
+  { id: 'unemployment', name: '실업률 (원계열)' },
 ]
 const twoDecimals = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const oneDecimal = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
@@ -52,10 +53,12 @@ function parseIndicators(value: unknown) {
 
 const ecosCache = createRequestCache<ReturnType<typeof parseIndicators>>(2, 5 * 60_000)
 
-export function KoreaEconomy({ revision, visible, onRefreshReady }: { revision: number; visible: boolean; onRefreshReady: (ready: boolean) => void }) {
+export function KoreaEconomy({ revision, visible, onRefreshReady, onRefreshResult }: { revision: number; visible: boolean; onRefreshReady: (ready: boolean) => void; onRefreshResult?: (key: string, failed: boolean) => void }) {
   const result = usePublicData('/api/v1/economy/korea', revision, parseIndicators, undefined, true, ecosCache)
   const ready = result?.revision === revision
   useEffect(() => { onRefreshReady(ready) }, [onRefreshReady, ready])
+  const refreshFailed = !result?.data || !!result.refreshFailed
+  useEffect(() => { if (ready) onRefreshResult?.('ecos', refreshFailed) }, [ready, refreshFailed, revision, onRefreshResult])
   const data = result?.data
   const rateLimited = result?.errorCode === 'PROVIDER_RATE_LIMITED'
   const [selected, setSelected] = useState<string>()
@@ -66,7 +69,7 @@ export function KoreaEconomy({ revision, visible, onRefreshReady }: { revision: 
     <div className="section-heading"><h2>한국 경제지표</h2></div>
     {result?.refreshFailed && result.revision === revision && <p className="data-message" data-state="stale" role="status">갱신에 실패해 이전 조회값을 표시합니다.</p>}
     <div className="quote-grid ecos-indicators">
-      {indicators.map(({ id, name, agency, url }) => {
+      {indicators.map(({ id, name }) => {
         const row = data?.find(item => item.id === id)
         const hasHistory = (row?.history?.length ?? 0) >= 2
         return <article className={hasHistory ? 'panel quote-card indicator-has-chart' : 'panel quote-card'} key={id}>
@@ -74,10 +77,9 @@ export function KoreaEconomy({ revision, visible, onRefreshReady }: { revision: 
           <strong className="economic-value" data-state={row?.value !== undefined ? undefined : data === undefined ? 'loading'
             : (rateLimited || row?.code === 'PROVIDER_RATE_LIMITED') ? 'rate-limited' : data === null || row?.code ? 'error' : 'unpublished'}>{row?.value !== undefined
             ? `${(id === 'unemployment' ? oneDecimal : twoDecimals).format(row.value)}${id === 'cpi' ? '' : ' ' + row.unit}`
-            : data === undefined ? '조회 중' : (rateLimited || row?.code === 'PROVIDER_RATE_LIMITED') ? '요청 한도 초과' : data === null || row?.code ? '조회 불가' : '공표 관측값 없음'}</strong>
+            : data === undefined ? <LoadingSkeleton message="한국 경제지표를 불러오는 중입니다." shape="value" /> : (rateLimited || row?.code === 'PROVIDER_RATE_LIMITED') ? '요청 한도 초과' : data === null || row?.code ? '조회 불가' : '공표 관측값 없음'}</strong>
           {id === 'cpi' && row?.value !== undefined && <small>기준연도 {row.unit}</small>}
           {row?.yearOverYear && <small>전년 동월 대비 {twoDecimals.format(row.yearOverYear.value)}% · 비교월 <time dateTime={row.yearOverYear.period}>{row.yearOverYear.period}</time></small>}
-          <small><a href={url}>{agency}</a></small>
           {row?.collectedAt && <dl className="observation-dates">
             <div><dt>{row.observationDate ? '관측일' : '관측월'}</dt><dd><time dateTime={row.observationDate ?? row.observationPeriod}>{row.observationDate ?? row.observationPeriod}</time></dd></div>
             <div><dt>공표일</dt><dd>{row.releaseDate ? <time dateTime={row.releaseDate}>{row.releaseDate}</time> : '미확인'}</dd></div>
@@ -88,7 +90,7 @@ export function KoreaEconomy({ revision, visible, onRefreshReady }: { revision: 
         </article>
       })}
     </div>
-    {visible && name && current?.collectedAt && current.unit && current.history && current.history.length >= 2 && <Suspense fallback={<p role="status">차트를 준비하는 중입니다.</p>}>
+    {visible && name && current?.collectedAt && current.unit && current.history && current.history.length >= 2 && <Suspense fallback={<LoadingSkeleton message="차트를 준비하는 중입니다." shape="chart" />}>
       <EcosHistoryChart id={chartId} name={name} unit={current.unit} points={current.history} onClose={() => {
         document.getElementById(chartId + selected)?.focus()
         setSelected(undefined)

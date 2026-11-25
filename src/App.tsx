@@ -1,6 +1,7 @@
+import { LoadingSkeleton } from "./components/LoadingSkeleton"
 import { CommandSearch } from "./components/CommandSearch"
 import { IndexCarousel } from "./components/IndexCarousel"
-import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { ArrowLeftRight, BarChart3, ChevronDown, Clock, FileSearch, Globe2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, ShieldCheck, Star, Sun, TrendingUp, UserRound, X } from 'lucide-react'
 import { dataMode } from './services/financeService'
 import { getKrxOverview, getMarketIndices, marketRequestMessage } from './services/apiFinanceService'
@@ -22,7 +23,7 @@ import { MarketHeatmap } from './components/MarketHeatmap'
 import { Watchlist } from './components/Watchlist'
 import { useWatchlist } from './storage/useWatchlist'
 import { favoriteKey, isWatchlistSymbol } from './services/watchlist'
-import { WatchlistStatus } from './components/WatchlistStatus'
+import { ActivityNotice, WatchlistStatus } from './components/WatchlistStatus'
 import { Change, marketNames, price } from './components/QuoteDisplay'
 import { guestStorage, type SettingsState } from './storage/guestStorage'
 import { type EquityMarket } from './types/marketSymbol'
@@ -60,7 +61,7 @@ const marketIndices: readonly { id: string; name: string; market: EquityMarket }
 ]
 const indexPage = (path: string) => marketIndices.find(index => path === 'index/' + index.id)
 
-const timestamp = new Intl.DateTimeFormat("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "short", timeStyle: "short" })
+const timestamp = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
 const indexPrice = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const indexUnavailable = {
   'provider-not-configured': '지수 시세 공급자 미연결',
@@ -74,7 +75,7 @@ const indexUnavailable = {
 
 function MarketIndexValue({ quote, message }: { quote?: MarketIndex; message?: string }) {
   if (message) return <small role="status">{message}</small>
-  if (!quote) return <small role="status">지수 시세를 불러오는 중입니다.</small>
+  if (!quote) return <LoadingSkeleton message="지수 시세를 불러오는 중입니다." shape="value" />
   if (quote.status === 'unavailable') return <small>{indexUnavailable[quote.reason]}</small>
   return <>
     <strong>{indexPrice.format(quote.price)}</strong>
@@ -127,6 +128,17 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const collapsed = railOverride ?? compactRail
   const [refreshUntil, setRefreshUntil] = useState(0)
   const refreshLock = useRef(0)
+  const refreshWork = useRef<{ page: Page; keys: Set<string>; failed: boolean } | null>(null)
+  const [notice, setNotice] = useState<{ message: string; failed?: boolean }>()
+  const clearNotice = useCallback(() => setNotice(undefined), [])
+  const onRefreshResult = useCallback((key: string, failed: boolean) => {
+    const current = refreshWork.current
+    if (!current?.keys.delete(key)) return
+    current.failed ||= failed
+    if (current.keys.size) return
+    refreshWork.current = null
+    setNotice({ message: current.failed ? '일부 데이터를 갱신하지 못했습니다.' : '데이터를 갱신했습니다.', failed: current.failed })
+  }, [])
   const menuDialog = useRef<HTMLDialogElement>(null)
   const mainContent = useRef<HTMLElement>(null)
   const previousTab = useRef(tab)
@@ -174,6 +186,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
   useEffect(() => {
     if (previousTab.current === tab) return
     previousTab.current = tab
+    if (refreshWork.current?.page !== tab) refreshWork.current = null
     const main = mainContent.current
     if (main && !main.contains(document.activeElement)) main.focus({ preventScroll: true })
   }, [tab])
@@ -191,12 +204,17 @@ export function App({ member, signOut, accountBusy, accountError }: {
     window.addEventListener('hashchange', change)
     return () => window.removeEventListener('hashchange', change)
   }, [])
+  const previousSettings = useRef(settings)
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme
     document.documentElement.dataset.fontSize = settings.fontSize
     document.documentElement.dataset.colors = settings.colors
     const saved = guestStorage.saveSettings(settings)
     setSettingsFailure(!saved)
+    if (previousSettings.current !== settings) {
+      previousSettings.current = settings
+      setNotice({ message: saved ? '화면 설정을 저장했습니다.' : '화면 설정을 저장하지 못했습니다. 현재 화면에만 적용됩니다.', failed: !saved })
+    }
   }, [settings])
   useEffect(() => {
     if (isApi) return
@@ -206,10 +224,12 @@ export function App({ member, signOut, accountBusy, accountError }: {
       setSnapshot(data)
       setRevision(value => value + 1)
       setPending(false)
+      onRefreshResult("demo", false)
     }, () => {
       if (!active) return
       setError(true)
       setPending(false)
+      onRefreshResult("demo", true)
     })
     return () => { active = false }
   }, [request])
@@ -217,7 +237,9 @@ export function App({ member, signOut, accountBusy, accountError }: {
     if (!isApi || !isMarket) return
     const controller = new AbortController()
     const finish = (quotes: MarketIndex[] | null, message?: string) => {
-      if (!controller.signal.aborted) setIndexResult({ request, quotes, message })
+      if (controller.signal.aborted) return
+      setIndexResult({ request, quotes, message })
+      onRefreshResult("indices", !quotes?.length || quotes.some(quote => quote.status === "unavailable" || quote.reason === "provider-error"))
     }
     void getMarketIndices(controller.signal).then(finish, error => finish(null, marketRequestMessage(error, '시장지수 API 조회 실패')))
     return () => controller.abort()
@@ -226,7 +248,9 @@ export function App({ member, signOut, accountBusy, accountError }: {
     if (!isApi || !showKrxOverview) return
     const controller = new AbortController()
     const finish = (data: KrxOverview | null, message?: string) => {
-      if (!controller.signal.aborted) setKrxResult({ request, data, message })
+      if (controller.signal.aborted) return
+      setKrxResult({ request, data, message })
+      onRefreshResult("krx", !data?.tradingDate || data.reason === "provider-error")
     }
     void getKrxOverview(controller.signal).then(finish, error => finish(null, marketRequestMessage(error, 'KRX 시장 데이터 조회 실패')))
     return () => controller.abort()
@@ -240,6 +264,12 @@ export function App({ member, signOut, accountBusy, accountError }: {
     if (refreshDisabled || Date.now() < refreshLock.current) return
     refreshLock.current = Date.now() + refreshInterval
     setRefreshUntil(refreshLock.current)
+    const keys = !isApi ? ['demo'] : [
+      ...(isMarket ? ['indices'] : []), ...(showKrxOverview ? ['krx'] : []),
+      ...(stock ? ['stock'] : []), ...(companyPage ? ['dart'] : []),
+      ...(showFx ? ['fx'] : []), ...(economyPage ? ['ecos', 'fred'] : []),
+    ]
+    refreshWork.current = { page: tab, keys: new Set(keys), failed: false }
     setError(false)
     if (!isApi) {
       setPending(true)
@@ -270,6 +300,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const RailIcon = collapsed ? PanelLeftOpen : PanelLeftClose
 
   return <div className={collapsed ? 'app rail-collapsed' : 'app'}>
+    {notice && <ActivityNotice key={notice.message} {...notice} onClose={clearNotice} />}
     <a className="skip-link" href="#main-content" onClick={event => {
       event.preventDefault()
       document.getElementById('main-content')?.focus()
@@ -290,7 +321,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
           ...marketListings.map(({ listing, name }) => ({ label: name, href: stockHref(listing), detail: listing.symbol + ' · ' + marketNames[listing.market], keywords: listing.symbol })),
         ]} />
         {!stock && <button className="icon-button" onClick={refresh} disabled={refreshDisabled}
-          aria-label={refreshLabel} title={refreshLabel}><RefreshCw size={17} /></button>}
+          aria-label={refreshLabel} title={refreshLabel}><RefreshCw className={refreshing || refreshUntil ? "refresh-spin" : undefined} size={17} /></button>}
         <button className="icon-button" aria-label={themeLabel} title={themeLabel}
           onClick={() => setSettings(previous => ({ ...previous, theme: previous.theme === 'dark' ? 'light' : 'dark' }))}>
           {settings.theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
@@ -320,7 +351,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
             <DataStatus api={isApi} indices={indexResult?.quotes} krx={krxResult?.data} />
           </section>}
         </> : stock ?
-          <StockDetail revision={request} onRefresh={refresh} refreshDisabled={refreshDisabled} favoriteDisabled={blocked || !!member && !isWatchlistSymbol(stock)} listing={stock} saved={watchlist.some(item => favoriteKey(item) === favoriteKey(stock))}
+          <StockDetail revision={request} onRefreshResult={onRefreshResult} refreshing={refreshing || !!refreshUntil} onRefresh={refresh} refreshDisabled={refreshDisabled} favoriteDisabled={blocked || !!member && !isWatchlistSymbol(stock)} listing={stock} saved={watchlist.some(item => favoriteKey(item) === favoriteKey(stock))}
             onToggle={() => toggle(stock)} usQuote={isApi && stock.market === 'US'} liveQuote={isApi && stock.market === 'KR' && stock.exchange === 'XKRX'} />
           : index ? <section className="panel stock-detail" aria-label="지수 상세">
             <div className="section-heading"><h2>지수 추이</h2>
@@ -335,9 +366,9 @@ export function App({ member, signOut, accountBusy, accountError }: {
         {settingsFailure && tab !== 'settings' && <p className="notice data-message" data-state="error" role="status">
           화면 설정을 저장하지 못했습니다. 변경은 현재 화면에서만 유지됩니다.
         </p>}
-        {!overview && pending && (!isApi || !economyPage) && <p className={snapshot ? 'refresh-status' : 'panel state'} role="status">데이터를 불러오는 중입니다.</p>}
+        {!overview && pending && (!isApi || !economyPage) && <LoadingSkeleton message="데이터를 불러오는 중입니다." shape="rows" />}
         {!overview && error && (!isApi || !economyPage) && <div className="panel state"><p role="alert">{isApi ? 'API 데이터를 불러오지 못했습니다.' : '데이터 갱신에 실패했습니다.'}</p><button className="button" onClick={refresh} disabled={!!refreshUntil}>다시 시도</button></div>}
-        <Suspense fallback={<p className="panel state" role="status">차트를 준비하는 중입니다.</p>}>
+        <Suspense fallback={<LoadingSkeleton message="차트를 준비하는 중입니다." shape="chart" />}>
         {isMarket && <>
           <section aria-label="핵심 시장지수">
             <div className="section-heading"><h2>핵심 시장지수</h2></div>
@@ -396,16 +427,16 @@ export function App({ member, signOut, accountBusy, accountError }: {
         {snapshot && tab === 'trends' && <HistoryChart simulated items={snapshot.trendTopics.map(name => ({ id: name, name }))} revision={revision} />}
         </Suspense>
         </>}
-        {isApi && <div hidden={tab !== 'companies'}><Disclosures revision={dartRevision} visible={tab === 'companies'} onRefreshReady={setDartReady} /></div>}
+        {isApi && <div hidden={tab !== 'companies'}><Disclosures revision={dartRevision} visible={tab === 'companies'} onRefreshReady={setDartReady} onRefreshResult={onRefreshResult} /></div>}
         {(showFx || visitedFx) && isApi && <div hidden={!showFx}>
-          <Suspense fallback={<p className="panel state" role="status">환율을 준비하는 중입니다.</p>}>
-            <FxDashboard revision={economyRevision} detailed={economyPage} onRefreshReady={setFxReady} showSettings={tab === 'economy/fx-settings'} />
+          <Suspense fallback={<LoadingSkeleton message="환율을 준비하는 중입니다." shape="chart" />}>
+            <FxDashboard revision={economyRevision} detailed={economyPage} onRefreshReady={setFxReady} onRefreshResult={onRefreshResult} showSettings={tab === 'economy/fx-settings'} />
           </Suspense>
         </div>}
         {(economyPage || visitedEconomy || (overview && !isApi)) && (isApi || snapshot) &&
           <div className="economy-stack" hidden={!economyPage && !(overview && !isApi)}>
-          {isApi && <KoreaEconomy revision={economyRevision} visible={economyPage} onRefreshReady={setEcosReady} />}
-          <Economics api={isApi && economyPage} demo={snapshot?.indicators} detailed={economyPage} revision={economyRevision} onRefreshReady={setFredReady} />
+          {isApi && <KoreaEconomy revision={economyRevision} visible={economyPage} onRefreshReady={setEcosReady} onRefreshResult={onRefreshResult} />}
+          <Economics api={isApi && economyPage} demo={snapshot?.indicators} detailed={economyPage} revision={economyRevision} onRefreshReady={setFredReady} onRefreshResult={onRefreshResult} />
         </div>}
         {overview && <Watchlist {...watchlistProps} summary />}
         {tab === 'members' && (member?.admin ? <MemberAdmin userId={member.userId} />

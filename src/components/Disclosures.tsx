@@ -106,8 +106,8 @@ function compactWon(value: string | number) {
   ].filter(Boolean).join(' ') + ' 원'
 }
 
-export function Disclosures({ revision, visible = true, searchFocus = 0, onRefreshReady }: {
-  revision: number; visible?: boolean; searchFocus?: number; onRefreshReady?: (ready: boolean) => void
+export function Disclosures({ revision, visible = true, onRefreshReady, onRefreshResult }: {
+  revision: number; visible?: boolean; onRefreshReady?: (ready: boolean) => void; onRefreshResult?: (key: string, failed: boolean) => void
 }) {
   const [restored] = useState(restoredDart)
   const [term, setTerm] = useState(restored?.term ?? '')
@@ -122,7 +122,6 @@ export function Disclosures({ revision, visible = true, searchFocus = 0, onRefre
   const [recent, setRecent] = useState<Company[]>(restored?.recent ?? [])
   const [statement, setStatement] = useState('all')
   const input = useRef<HTMLInputElement>(null)
-  const handledFocus = useRef(0)
   const [fullAmounts, setFullAmounts] = useState(false)
   const filingsId = useId()
   const companyHeading = useRef<HTMLHeadingElement>(null)
@@ -131,13 +130,6 @@ export function Disclosures({ revision, visible = true, searchFocus = 0, onRefre
   const [period, setPeriod] = useState<string>(restored?.period ?? 'annual')
   const [searchAttempt, setSearchAttempt] = useState(0)
   const [detailAttempt, setDetailAttempt] = useState(0)
-  useEffect(() => {
-    if (!visible || searchFocus === handledFocus.current) return
-    handledFocus.current = searchFocus
-    setShowDetail(false)
-    const frame = requestAnimationFrame(() => input.current?.focus())
-    return () => cancelAnimationFrame(frame)
-  }, [searchFocus, visible])
   const timeoutMs = 30_000
   const searchQuery = search && searchEnabled ? new URLSearchParams({ q: search }) : undefined
   if (searchPage > 2) searchQuery?.set('page', String(searchPage))
@@ -151,6 +143,8 @@ export function Disclosures({ revision, visible = true, searchFocus = 0, onRefre
   const detail = detailResult?.data
   const refreshReady = !!selected && !!detailPath && detailResult !== undefined
   useEffect(() => { onRefreshReady?.(refreshReady) }, [onRefreshReady, refreshReady])
+  const refreshFailed = !detail
+  useEffect(() => { if (refreshReady) onRefreshResult?.('dart', refreshFailed) }, [refreshReady, refreshFailed, revision, onRefreshResult])
   const [lastTotal, setLastTotal] = useState<{ search: string; total: number }>()
   const searchTotal = searchResult?.data?.total ?? (lastTotal?.search === search ? lastTotal?.total : companies?.length ?? 0)
   useEffect(() => {

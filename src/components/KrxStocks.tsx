@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from "./LoadingSkeleton"
 import { useEffect, useState } from 'react'
 import { Search, SlidersHorizontal, Star, X } from 'lucide-react'
 import { getKrxStocks, marketRequestMessage } from '../services/apiFinanceService'
@@ -63,7 +64,7 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
         setMarket('KOSPI')
       }}><X size={16} aria-hidden="true" /> 초기화</button>}
     </form>}
-    {!symbol && !query ? <p className="state">KOSPI 또는 KOSDAQ을 선택하고 종목명이나 코드를 입력하세요.</p> : !current ? <p className="state" role="status">국내 종목을 불러오는 중입니다.</p> : current.data === null
+    {!symbol && !query ? <p className="state">KOSPI 또는 KOSDAQ을 선택하고 종목명이나 코드를 입력하세요.</p> : !current ? <LoadingSkeleton message="국내 종목을 불러오는 중입니다." shape="rows" /> : current.data === null
       ? <p className="state" role="status">{current.message}</p>
       : current.data.map(dataset => {
         const details = [...new Set([dataset.listings.reason, dataset.trades.reason].filter(reason => reason !== null))]
@@ -71,8 +72,9 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
           <p className="state">{dataset.market}
             {dataset.listingDate && ' · 종목 기준 ' + dataset.listingDate}
             {dataset.trades.tradingDate && ' · 종가 기준 ' + dataset.trades.tradingDate}
-            {dataset.trades.usingPreviousClose && ' · 이전 정상 종가 사용'}
-            {details.length > 0 && <span className="muted-badge">{details.map(reason => krxStateLabels[reason]).join(' · ')}</span>}
+            {(dataset.trades.usingPreviousClose || details.length > 0) && <> <span className="muted-badge">
+              {dataset.trades.usingPreviousClose ? '이전 정상 종가 사용' : krxStateLabels[details[0]]}
+            </span></>}
           </p>
           {dataset.items.length ? <ul className="stock-list">
             {dataset.items.map(item => {
@@ -88,8 +90,8 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
                   {quote ? <>
                     <strong>{number.format(quote.price)}원</strong>
                     {quote.change !== null && quote.changePercent !== null &&
-                      <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
-                    <small><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가</small>
+                      <Change quote={{ change: quote.change, percent: quote.changePercent }} />}
+                    <small className="watch-trading-date"><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가</small>
                     <small>거래량 {quote.volume === null ? '미확인' : number.format(quote.volume)}</small>
                   </> : <small>유효한 시세 없음</small>}
                 </div>

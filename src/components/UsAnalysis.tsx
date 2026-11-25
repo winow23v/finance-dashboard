@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from "./LoadingSkeleton"
 import { SegmentTabs } from "./SegmentTabs"
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { getUsAnalysis, marketRequestMessage } from '../services/apiFinanceService'
@@ -19,8 +20,8 @@ const messages = {
   unsupported: '지원되는 미국 상장 종목을 확인할 수 없습니다.',
 }
 
-export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
-  symbol: string; indexId?: string; stock?: { name: string; meta: string; actions: ReactNode }; refresh?: number
+export function UsAnalysis({ symbol, indexId, stock, refresh = 0, onRefreshResult }: {
+  symbol: string; indexId?: string; stock?: { name: string; meta: string; actions: ReactNode }; refresh?: number; onRefreshResult?: (key: string, failed: boolean) => void
 }) {
   const [state, setState] = useState<{ data: Awaited<ReturnType<typeof getUsAnalysis>> } | { error: string }>()
   const [requestedAt, setRequestedAt] = useState<number>()
@@ -29,9 +30,13 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
   useEffect(() => {
     const controller = new AbortController()
     void getUsAnalysis(symbol, controller.signal, requested, indexId).then(data => {
-      if (!controller.signal.aborted) setState({ data })
+      if (controller.signal.aborted) return
+      setState({ data })
+      onRefreshResult?.("stock", data.status === 'unavailable' || data.reason === 'provider-error')
     }, error => {
-      if (!controller.signal.aborted) setState({ error: marketRequestMessage(error, '미국시장 일봉 조회 실패') })
+      if (controller.signal.aborted) return
+      onRefreshResult?.("stock", true)
+      setState({ error: marketRequestMessage(error, '미국시장 일봉 조회 실패') })
     })
     return () => controller.abort()
   }, [symbol, requested, indexId, revision, refresh])
@@ -47,7 +52,7 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
     aria-label={stock ? "종목 상세" : "기술적 분석"}>
     {stock && !quote && <header className="stock-identity"><h1>{stock.name}</h1><small>{stock.meta}</small>{stock.actions}</header>}
     {!stock && <h2>기술적 분석</h2>}
-    {!state ? <p className={stock ? "detail-state" : undefined} role="status">미국시장 일봉을 불러오는 중입니다.</p>
+    {!state ? <LoadingSkeleton message="미국시장 일봉을 불러오는 중입니다." shape="detail" />
       : 'error' in state ? <div className={stock ? "detail-state" : undefined}><p role="alert">{state.error}</p><p>최신 위험 상태 확인 불가</p>
         <button className="button" onClick={() => { setState(undefined); setRequestedAt(undefined); retry(value => value + 1) }}>다시 조회</button></div>
       : !data || data.status === 'unavailable' || !quote ? <div className={stock ? "detail-state" : undefined}>
@@ -74,7 +79,7 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
           </>}
         </header>
         <SegmentTabs label="시세 데이터" items={[
-          ...(history ? [{ label: '차트', content: <Suspense fallback={<p className="detail-state" role="status">가격 차트를 준비하는 중입니다.</p>}>
+          ...(history ? [{ label: '차트', content: <Suspense fallback={<LoadingSkeleton message="가격 차트를 준비하는 중입니다." shape="chart" />}>
           <StockHistoryChart history={history} />
         </Suspense> }] : []),
           { label: '표', content:
@@ -96,15 +101,15 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
         {indicators && <section className="technical-detail-group technical-tabs" aria-label="기술적 지표 상세">
             <h3>기술적 지표 상세</h3>
             <SegmentTabs label="기술적 지표" items={[
-            { label: '추세 분석', content: <>
+              { label: '추세 분석', content: <>
 <p>{indexId ? '지수 종가 기준' : '배당·분할 조정 종가 기준'}</p>
               <dl className="stock-detail-fields">
                 {(['sma', 'ema'] as const).flatMap(kind => (kind === 'sma' ? smaWindows : emaWindows)
                   .filter(period => period !== 365 || indicators.sma[365] !== null).map(period =>
                   <div key={kind + period}><dt>{kind.toUpperCase()} {period}</dt><dd>{format(indicators[kind][period])}</dd></div>))}
               </dl>
-                        </> },
-            { label: '모멘텀 분석', content: <>
+              </> },
+              { label: '모멘텀 분석', content: <>
               <p className="heatmap-meta">RSI는 상승·하락의 상대적 강도입니다. 70 이상과 30 이하는 과매수·과매도의 참고 구간입니다. MACD선은 단기·장기 이동평균의 차이입니다. 시그널선과의 간격을 나타내는 히스토그램을 추세·거래량과 함께 보세요.</p>
               <dl className="stock-detail-fields">
                 <div><dt>RSI 14</dt><dd>{format(indicators.rsi14)}</dd></div>
@@ -113,13 +118,13 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
                 <div><dt>히스토그램</dt><dd>{format(indicators.macd.histogram)}</dd></div>
                 <div><dt>20일 평균 거래량</dt><dd>{indexId && indicators.volumeSma20 === 0 ? '미제공' : format(indicators.volumeSma20)}</dd></div>
               </dl>
-                        </> },
-            { label: '기간별 성과', content: <>
+              </> },
+              { label: '기간별 성과', content: <>
               <dl className="stock-detail-fields">
                 {[1, 3, 6].map(months => <div key={months}><dt>{months}개월</dt>
                   <dd>{returns[months] ? formatPercent(returns[months].percent) + ' · ' + returns[months].tradingDate : '자료 부족'}</dd></div>)}
               </dl>
-                        </> },
+              </> },
             ]} />
           </section>}
       </>}

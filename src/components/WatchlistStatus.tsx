@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import type { WatchlistSync } from '../storage/useWatchlist'
 
@@ -9,22 +9,26 @@ const messages = {
   error: '관심종목 동기화에 실패했습니다. 연결을 확인하고 다시 시도해 주세요.',
 }
 
+export function ActivityNotice({ message, failed = false, onClose }: { message: string; failed?: boolean; onClose: () => void }) {
+  useEffect(() => {
+    const timeout = window.setTimeout(onClose, 4000)
+    return () => window.clearTimeout(timeout)
+  }, [onClose])
+  return <div className="notice watchlist-saved data-message" data-state={failed ? 'error' : 'success'}>
+    <span role="status">{message}</span>
+    <button type="button" className="icon-button" aria-label="알림 닫기" onClick={onClose}><X size={16} aria-hidden="true" /></button>
+  </div>
+}
+
 export function WatchlistStatus({ sync, email, compact }: { sync: NonNullable<WatchlistSync>; email?: string; compact?: boolean }) {
   const [saved, setSaved] = useState(false)
+  const clearSaved = useCallback(() => setSaved(false), [])
   const prompt = !!sync.importable.length && !sync.failure && (sync.status === 'ready' || sync.status === 'saved')
-  useEffect(() => {
-    setSaved(sync.status === 'saved')
-    if (sync.status !== 'saved') return
-    const timeout = window.setTimeout(() => setSaved(false), 4000)
-    return () => window.clearTimeout(timeout)
-  }, [sync.status])
+  useEffect(() => { setSaved(sync.status === 'saved') }, [sync.status])
   const status = sync.status === 'ready' || sync.status === 'saved' ? null : messages[sync.status]
   const visible = !!status && !(compact && sync.status === 'loading') || prompt || !!sync.failure || !!sync.unsupported
   return <>
-    {sync.status === 'saved' && saved && <div className="notice watchlist-saved data-message" data-state="success">
-      <span role="status">{messages.saved}</span>
-      <button type="button" className="icon-button" aria-label="저장 알림 닫기" onClick={() => setSaved(false)}><X size={16} aria-hidden="true" /></button>
-    </div>}
+    {sync.status === 'saved' && saved && <ActivityNotice message={messages.saved} onClose={clearSaved} />}
     {!visible && status && <span className="sr-only" role="status">{status}</span>}
     {visible && <div className="notice watchlist-status data-message" data-state={sync.status}>
     {status && <p role="status">{status}</p>}

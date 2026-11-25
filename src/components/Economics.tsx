@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from "./LoadingSkeleton"
 import { useEffect, useState } from 'react'
 import { ChartNoAxesCombined } from 'lucide-react'
 import { FinanceApiError, getEconomyIndicators } from '../services/apiFinanceService'
@@ -13,8 +14,8 @@ type EconomyResult =
   | { status: 'loaded'; data: EconomyIndicators | null }
   | { status: 'error'; message: string; rateLimited: boolean }
 
-export function Economics({ api, demo, detailed, revision, onRefreshReady }: {
-  api: boolean; demo?: Indicator[]; detailed: boolean; revision: number; onRefreshReady: (ready: boolean) => void
+export function Economics({ api, demo, detailed, revision, onRefreshReady, onRefreshResult }: {
+  api: boolean; demo?: Indicator[]; detailed: boolean; revision: number; onRefreshReady: (ready: boolean) => void; onRefreshResult?: (key: string, failed: boolean) => void
 }) {
   const [attempt, setAttempt] = useState(0)
   const [result, setResult] = useState<{ revision: number; attempt: number; result: EconomyResult }>()
@@ -45,11 +46,13 @@ export function Economics({ api, demo, detailed, revision, onRefreshReady }: {
   }, [api, revision, attempt])
 
   const live = current?.status === 'loaded' ? current.data : undefined
+  const refreshFailed = current?.status === 'error' || !live
+  useEffect(() => { if (ready) onRefreshResult?.('fred', refreshFailed) }, [ready, refreshFailed, revision, onRefreshResult])
   const rows = api ? live?.indicators : demo
   return <section className="panel economy-panel">
     <div className="panel-heading">
       <div><h2><ChartNoAxesCombined size={17} aria-hidden="true" /> 주요 경제지표</h2><p>미국 거시경제 지표</p></div>
-      {(!api || live) && <span className="badge">{api ? 'FRED · 공표 관측값' : 'DEMO · 샘플 데이터'}</span>}
+      {(!api || live) && <span className="badge">{api ? '공표 관측값' : 'DEMO · 샘플 데이터'}</span>}
     </div>
     {api && !current && <p className="state data-message" data-state="loading" role="status">경제지표를 불러오는 중입니다.</p>}
     {api && current?.status === 'error' && <div className="state data-message" data-state={current.rateLimited ? 'rate-limited' : 'error'}>
@@ -82,10 +85,8 @@ export function Economics({ api, demo, detailed, revision, onRefreshReady }: {
         </dl>}
       </li>)}
     </ul>}
-    {live && <div className="indicator-notice">
-      {detailed && <p>공식 발표일 확인에는 원 제공기관의 별도 발표 자료가 필요합니다.</p>}
-      <p lang="en">This product uses the FRED® API but is not endorsed or certified by the Federal Reserve Bank of St. Louis.</p>
-      <p>FRED 연동 기능을 이용하면 <a href="https://fred.stlouisfed.org/docs/api/terms_of_use.html">FRED API 이용약관</a>의 적용에 동의하게 됩니다.</p>
+    {live && detailed && <div className="indicator-notice">
+      <p>공식 발표일 확인에는 원 제공기관의 별도 발표 자료가 필요합니다.</p>
     </div>}
   </section>
 }

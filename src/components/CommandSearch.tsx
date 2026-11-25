@@ -26,7 +26,8 @@ export function CommandSearch({ entries }: { entries: SearchEntry[] }) {
   const previousFocus = useRef<HTMLElement>(null)
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
-  const matches = entries.map(entry => ({ entry, rank: score(entry, normalize(query)) }))
+  const normalizedQuery = normalize(query)
+  const matches = entries.map(entry => ({ entry, rank: score(entry, normalizedQuery) }))
     .filter(({ rank }) => Number.isFinite(rank)).sort((a, b) => a.rank - b.rank)
   const active = Math.min(selected, matches.length - 1)
   const choose = (href: string) => {
@@ -66,7 +67,13 @@ export function CommandSearch({ entries }: { entries: SearchEntry[] }) {
             aria-controls="command-results" aria-autocomplete="list" aria-activedescendant={active >= 0 ? 'command-result-' + active : undefined}
             placeholder="메뉴, 지수 또는 종목 검색" value={query} onChange={event => { setQuery(event.target.value); setSelected(0) }}
             onKeyDown={event => {
-              if (event.nativeEvent.isComposing || active < 0) return
+              if (event.nativeEvent.isComposing) return
+              if (event.key === 'Escape') {
+                event.preventDefault()
+                dialog.current?.close()
+                return
+              }
+              if (active < 0) return
               if (event.key === 'Enter') {
                 event.preventDefault()
                 choose(matches[active].entry.href)

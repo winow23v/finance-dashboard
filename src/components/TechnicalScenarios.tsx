@@ -44,31 +44,31 @@ function RewardRiskForm({ prices, unit }: {
         <div className="section-heading"><h3 id={id + '-title'}>예상 손익비 직접 계산</h3>
           <button className="icon-button" type="button" aria-label="계산기 닫기" onClick={() => drawer.current?.close()}><X size={18} /></button>
         </div>
-    <form onSubmit={event => { event.preventDefault(); setChecked(true) }}>
-      <div className="scenario-inputs">
-        {priceFields.map(([name, label]) => <label key={name} htmlFor={id + name}>{label} ({unit})
-          <input id={id + name} type="number" inputMode="decimal" step="any" autoComplete="off" value={values[name]}
-            onChange={event => { setValues(previous => ({ ...previous, [name]: event.target.value })); setChecked(false); setSource('manual'); setConfirmImport(false) }} />
-        </label>)}
-      </div>
-      <div className="scenario-actions">
-        {prices && !confirmImport && <button type="button" className="button"
-          onClick={() => Object.values(values).some(value => value !== '') ? setConfirmImport(true) : loadPrices()}>
-          분석 후보 불러오기
-        </button>}
-        {confirmImport && <>
-          <button type="button" className="button" onClick={loadPrices}>입력값을 분석 후보로 교체</button>
-          <button type="button" className="button" onClick={() => setConfirmImport(false)}>기존 입력 유지</button>
-        </>}
-        <button className="button" type="submit">손익비 계산</button>
-      </div>
-      {confirmImport && <p role="status">기존 입력값을 현재 화면의 분석 후보로 바꿀까요?</p>}
-      <p className="heatmap-meta">{source === 'analysis' ? '입력 기준 · 화면에 표시한 분석 후보' : '입력 기준 · 직접 입력'}</p>
-      <p className="heatmap-meta">참고 손익비 {referenceRewardRisk}:1. 세 가격에 같은 통화와 가격 기준을 사용하세요. 수수료, 세금, 슬리피지는 반영하지 않습니다.</p>
-      <p aria-live="polite">{result
-        ? `${format(result.ratio)}:1 · 단위당 예상 수익 ${format(result.reward)} ${unit} / 예상 위험 ${format(result.risk)} ${unit}`
-        : checked ? '계산 가능한 양수 가격을 입력하세요. 손절 가격 < 진입 가격 < 목표 가격 순서여야 합니다.' : ''}</p>
-    </form>
+        <form onSubmit={event => { event.preventDefault(); setChecked(true) }}>
+          <div className="scenario-inputs">
+            {priceFields.map(([name, label]) => <label key={name} htmlFor={id + name}>{label} ({unit})
+              <input id={id + name} type="number" inputMode="decimal" step="any" autoComplete="off" value={values[name]}
+                onChange={event => { setValues(previous => ({ ...previous, [name]: event.target.value })); setChecked(false); setSource('manual'); setConfirmImport(false) }} />
+            </label>)}
+          </div>
+          <div className="scenario-actions">
+            {prices && !confirmImport && <button type="button" className="button"
+              onClick={() => Object.values(values).some(value => value !== '') ? setConfirmImport(true) : loadPrices()}>
+              분석 후보 불러오기
+            </button>}
+            {confirmImport && <>
+              <button type="button" className="button" onClick={loadPrices}>입력값을 분석 후보로 교체</button>
+              <button type="button" className="button" onClick={() => setConfirmImport(false)}>기존 입력 유지</button>
+            </>}
+            <button className="button" type="submit">손익비 계산</button>
+          </div>
+          {confirmImport && <p role="status">기존 입력값을 현재 화면의 분석 후보로 바꿀까요?</p>}
+          <p className="heatmap-meta">{source === 'analysis' ? '입력 기준 · 화면에 표시한 분석 후보' : '입력 기준 · 직접 입력'}</p>
+          <p className="heatmap-meta">참고 손익비 {referenceRewardRisk}:1. 세 가격에 같은 통화와 가격 기준을 사용하세요. 수수료, 세금, 슬리피지는 반영하지 않습니다.</p>
+          <p aria-live="polite">{result
+            ? `${format(result.ratio)}:1 · 단위당 예상 수익 ${format(result.reward)} ${unit} / 예상 위험 ${format(result.risk)} ${unit}`
+            : checked ? '계산 가능한 양수 가격을 입력하세요. 손절 가격 < 진입 가격 < 목표 가격 순서여야 합니다.' : ''}</p>
+        </form>
       </div>
     </dialog>
   </div>
