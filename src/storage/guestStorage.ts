@@ -3,6 +3,7 @@ import { mergeFavorites, type FavoriteRepository } from './favorites'
 
 export type SettingsState = {
   theme: 'dark' | 'light'
+  fontSize: 'normal' | 'large'
   market: 'overview' | 'domestic' | 'global'
   units: 'full' | 'compact'
   colors: 'green' | 'red'
@@ -101,6 +102,7 @@ export const guestStorage: GuestStorage = {
       : payload
     return {
       theme: stored?.theme === 'light' ? 'light' : 'dark',
+      fontSize: stored?.fontSize === 'large' ? 'large' : 'normal',
       market: stored?.market === 'domestic' || stored?.market === 'global' ? stored.market : 'overview',
       units: stored?.units === 'compact' ? 'compact' : 'full',
       colors: stored?.colors === 'red' ? 'red' : 'green',

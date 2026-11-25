@@ -58,22 +58,24 @@ export function KoreaEconomy({ revision, visible, onRefreshReady }: { revision: 
   const ready = result?.revision === revision
   useEffect(() => { onRefreshReady(ready) }, [onRefreshReady, ready])
   const data = result?.data
+  const rateLimited = result?.errorCode === 'PROVIDER_RATE_LIMITED'
   const [selected, setSelected] = useState<string>()
   const chartId = useId()
   const current = data?.find(item => item.id === selected)
   const name = indicators.find(item => item.id === selected)?.name
   return <section className="market-sections" aria-label="한국 경제지표">
     <div className="section-heading"><h2>한국 경제지표</h2><a className="badge" href="https://ecos.bok.or.kr/">한국은행 ECOS</a></div>
-    {result?.refreshFailed && result.revision === revision && <p role="status">갱신에 실패해 이전 조회값을 표시합니다.</p>}
+    {result?.refreshFailed && result.revision === revision && <p className="data-message" data-state="stale" role="status">갱신에 실패해 이전 조회값을 표시합니다.</p>}
     <div className="quote-grid ecos-indicators">
       {indicators.map(({ id, name, agency, url }) => {
         const row = data?.find(item => item.id === id)
         const hasHistory = (row?.history?.length ?? 0) >= 2
         return <article className={hasHistory ? 'panel quote-card indicator-has-chart' : 'panel quote-card'} key={id}>
           <div className="quote-label"><h3>{name}</h3></div>
-          <strong>{row?.value !== undefined
+          <strong className="economic-value" data-state={row?.value !== undefined ? undefined : data === undefined ? 'loading'
+            : (rateLimited || row?.code === 'PROVIDER_RATE_LIMITED') ? 'rate-limited' : data === null || row?.code ? 'error' : 'unpublished'}>{row?.value !== undefined
             ? `${(id === 'unemployment' ? oneDecimal : twoDecimals).format(row.value)}${id === 'cpi' ? '' : ' ' + row.unit}`
-            : data === undefined ? '조회 중' : data === null || row?.code ? '조회 불가' : '공표 관측값 없음'}</strong>
+            : data === undefined ? '조회 중' : (rateLimited || row?.code === 'PROVIDER_RATE_LIMITED') ? '요청 한도 초과' : data === null || row?.code ? '조회 불가' : '공표 관측값 없음'}</strong>
           {id === 'cpi' && row?.value !== undefined && <small>기준연도 {row.unit}</small>}
           {row?.yearOverYear && <small>전년 동월 대비 {twoDecimals.format(row.yearOverYear.value)}% · 비교월 <time dateTime={row.yearOverYear.period}>{row.yearOverYear.period}</time></small>}
           <small><a href={url}>{agency}</a></small>

@@ -30,7 +30,9 @@ function MemberGate() {
   const activeMember = member?.userId === identity ? member : undefined
 
   useEffect(() => {
-    document.documentElement.dataset.theme = guestStorage.loadSettings().theme
+    const { theme, fontSize } = guestStorage.loadSettings()
+    document.documentElement.dataset.theme = theme
+    document.documentElement.dataset.fontSize = fontSize
     const onHash = () => setPage(location.hash.slice(1))
     window.addEventListener('hashchange', onHash)
     return () => window.removeEventListener('hashchange', onHash)

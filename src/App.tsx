@@ -15,7 +15,7 @@ import { UsAnalysis } from './components/UsAnalysis'
 import { parseStockPage } from './services/marketListings'
 import { StockDetail } from './components/StockDetail'
 import { KrxStocks, krxStateLabels } from './components/KrxStocks'
-import { KrxHeatmap, KrxMovers } from './components/KrxMarketOverview'
+import { KrxHeatmap, KrxMovers, KrxOverviewStatus } from './components/KrxMarketOverview'
 import { MarketHeatmap } from './components/MarketHeatmap'
 import { Watchlist } from './components/Watchlist'
 import { useWatchlist } from './storage/useWatchlist'
@@ -70,18 +70,18 @@ const indexUnavailable = {
   'before-collection': '당일 수집 대기',
 }
 
-function MarketIndexValue({ quote, message }: { quote?: MarketIndex; message?: string }) {
+function MarketIndexValue({ quote, message, overview }: { quote?: MarketIndex; message?: string; overview?: boolean }) {
   if (message) return <small role="status">{message}</small>
   if (!quote) return <small role="status">지수 시세를 불러오는 중입니다.</small>
   if (quote.status === 'unavailable') return <small>{indexUnavailable[quote.reason]}</small>
   return <>
     <strong>{indexPrice.format(quote.price)}</strong>
     {quote.change !== null && quote.changePercent !== null && <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
-    <small className="index-source"><Clock size={14} aria-hidden="true" /> <time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가
+    <small className="index-source" data-stale={quote.status === 'stale' ? true : undefined}><Clock size={14} aria-hidden="true" /> <time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가
       {quote.reason ? ' · ' + (quote.market === 'KR' && quote.reason !== 'rate-limited' ? krxStateLabels[quote.reason] : indexUnavailable[quote.reason]) : quote.status === 'stale' ? ' · 갱신 지연' : ''}
       {quote.reason === 'provider-error' && ' (마지막 유효값)'}</small>
     <details className="index-metadata">
-      <summary>{quote.source} · 수집 정보</summary>
+      <summary>{quote.source}{!overview && ' · 수집 정보'}</summary>
       {quote.observedAt.includes('T') && <small>관측 <time dateTime={quote.observedAt}>{timestamp.format(new Date(quote.observedAt))}</time> (KST)</small>}
       <small>수집 <time dateTime={quote.collectedAt}>{timestamp.format(new Date(quote.collectedAt))}</time> (KST)</small>
     </details>
@@ -121,6 +121,8 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const [refreshUntil, setRefreshUntil] = useState(0)
   const refreshLock = useRef(0)
   const menuDialog = useRef<HTMLDialogElement>(null)
+  const mainContent = useRef<HTMLElement>(null)
+  const previousTab = useRef(tab)
   useEffect(() => {
     const compact = matchMedia(compactRailQuery)
     const mobile = matchMedia(mobileQuery)
@@ -158,6 +160,12 @@ export function App({ member, signOut, accountBusy, accountError }: {
     const timer = window.setTimeout(() => setRefreshUntil(0), Math.max(0, refreshUntil - Date.now()))
     return () => window.clearTimeout(timer)
   }, [refreshUntil])
+  useEffect(() => {
+    if (previousTab.current === tab) return
+    previousTab.current = tab
+    const main = mainContent.current
+    if (main && !main.contains(document.activeElement)) main.focus({ preventScroll: true })
+  }, [tab])
   const [visitedFx, setVisitedFx] = useState(showFx)
   const [visitedEconomy, setVisitedEconomy] = useState(economyPage)
   useEffect(() => {
@@ -174,6 +182,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
   }, [])
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme
+    document.documentElement.dataset.fontSize = settings.fontSize
     document.documentElement.dataset.colors = settings.colors
     const saved = guestStorage.saveSettings(settings)
     setSettingsFailure(!saved)
@@ -242,7 +251,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
     items.map(({ id, label, icon: Icon }) => <a key={id} href={'#' + id} title={label} aria-label={label}
       aria-current={id === navSection ? (id === section ? 'page' : 'location') : undefined}
       onClick={() => { if (id === tab) window.scrollTo(0, 0) }}>
-      <Icon size={19} strokeWidth={1.75} aria-hidden="true" /><span>{label}</span>
+      <Icon className="navigation-icon" size={19} strokeWidth={1.75} aria-hidden="true" /><span>{label}</span>
     </a>)
   const themeLabel = settings.theme === 'dark' ? '라이트 테마로 전환' : '다크 테마로 전환'
   const refreshLabel = refreshing || refreshUntil ? '데이터 새로고침 대기 중'
@@ -262,7 +271,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
       <span className="breadcrumb">{stock ? (stock.market === 'KR' ? '국내시장' : '해외시장')
         : <>워크스페이스 <span aria-hidden="true">/</span> <strong>{pageLabel}</strong></>}</span>
       <div className="top-actions">
-        <a className="connection-status" href="#settings" title="공급자별 데이터 상태"><i aria-hidden="true" />{dataLabel}</a>
+        <a className="connection-status" href="#sources" title="공급자별 데이터 상태"><i aria-hidden="true" />{dataLabel}</a>
         <a className="icon-button" href="#companies" aria-label="통합 종목·기업 검색" title="통합 종목·기업 검색"
           onClick={() => setSearchFocus(value => value + 1)}><Search size={18} /></a>
         {!stock && <button className="icon-button" onClick={refresh} disabled={refreshDisabled}
@@ -286,10 +295,16 @@ export function App({ member, signOut, accountBusy, accountError }: {
       {(!isApi || tab === 'trends') && <nav className="side-navigation" aria-label="추가 메뉴">{navigationLinks([trends])}</nav>}
     </aside>
     <div className="workspace">
-      <main id="main-content" tabIndex={-1}>
+      <main id="main-content" ref={mainContent} className={overview ? 'market-overview' : market ? 'market-explorer'
+        : economyPage ? 'economy-workspace' : tab === 'settings' ? 'settings-workspace' : undefined} tabIndex={-1}>
         {!stock && <div className="page-heading"><h1>{pageLabel}</h1></div>}
         {sync && !information && <WatchlistStatus sync={sync} email={member?.email} compact={!!stock} />}
-        {information ? <SiteInformation page={information} /> : stock ?
+        {information ? <>
+          <SiteInformation page={information} />
+          {information === 'sources' && <section className="panel provider-status-panel" aria-label="공급자별 데이터 상태">
+            <DataStatus api={isApi} indices={indexResult?.quotes} krx={krxResult?.data} />
+          </section>}
+        </> : stock ?
           <StockDetail revision={request} onRefresh={refresh} refreshDisabled={refreshDisabled} favoriteDisabled={blocked || !!member && !isWatchlistSymbol(stock)} listing={stock} saved={watchlist.some(item => favoriteKey(item) === favoriteKey(stock))}
             onToggle={() => toggle(stock)} usQuote={isApi && stock.market === 'US'} liveQuote={isApi && stock.market === 'KR' && stock.exchange === 'XKRX'} />
           : index ? <section className="panel stock-detail" aria-label="지수 상세">
@@ -299,39 +314,65 @@ export function App({ member, signOut, accountBusy, accountError }: {
             {isApi && index.market === 'US' ? <UsAnalysis key={index.id} symbol={index.name} indexId={index.id} />
               : <p className="state" role="status">지수 시계열 공급자 미연결</p>}
           </section> : <>
-        {(localError || settingsFailure) && <p className="notice" role="status">브라우저에 변경사항을 저장하지 못했습니다. 현재 화면에서만 유지됩니다.</p>}
-        {pending && (!isApi || !economyPage) && <p className={snapshot ? 'refresh-status' : 'panel state'} role="status">데이터를 불러오는 중입니다.</p>}
-        {error && (!isApi || !economyPage) && <div className="panel state"><p role="alert">{isApi ? 'API 데이터를 불러오지 못했습니다.' : '데이터 갱신에 실패했습니다.'}</p><button className="button" onClick={refresh} disabled={!!refreshUntil}>다시 시도</button></div>}
+        {localError && <p className="notice data-message" data-state="error" role="status">
+          관심종목을 이 브라우저에 저장하지 못했습니다. 변경은 현재 화면에서만 유지됩니다.
+        </p>}
+        {settingsFailure && tab !== 'settings' && <p className="notice data-message" data-state="error" role="status">
+          화면 설정을 저장하지 못했습니다. 변경은 현재 화면에서만 유지됩니다.
+        </p>}
+        {!overview && pending && (!isApi || !economyPage) && <p className={snapshot ? 'refresh-status' : 'panel state'} role="status">데이터를 불러오는 중입니다.</p>}
+        {!overview && error && (!isApi || !economyPage) && <div className="panel state"><p role="alert">{isApi ? 'API 데이터를 불러오지 못했습니다.' : '데이터 갱신에 실패했습니다.'}</p><button className="button" onClick={refresh} disabled={!!refreshUntil}>다시 시도</button></div>}
         <Suspense fallback={<p className="panel state" role="status">차트를 준비하는 중입니다.</p>}>
         {isMarket && <>
           <section aria-label="핵심 시장지수">
             <div className="section-heading"><h2>핵심 시장지수</h2></div>
-            <div className={market ? 'quote-grid market-index-quotes' : 'quote-grid market-index-quotes overview-quotes'}>
+            <div className={'quote-grid market-index-quotes terminal-quotes ' + (market === 'US' ? 'overseas-quotes' : market ? 'domestic-quotes' : 'overview-quotes')}>
               {marketIndices.filter(index => !market || index.market === market).map(index =>
                 <article className="panel quote-card" key={index.name}>
                   <div className="quote-label"><h3><a className="stock-detail-link" href={'#index/' + index.id}>{index.name}</a></h3><span>{marketNames[index.market]}</span></div>
                   {isApi && marketResult?.quotes && !marketResult.quotes.some(quote => quote.id === index.id)
                     ? <small>지수 응답 없음</small>
                     : isApi ? <MarketIndexValue quote={marketResult?.quotes?.find(quote => quote.id === index.id)}
-                      message={marketResult?.message} /> : <small>지수 시세 공급자 미연결</small>}
+                      message={marketResult?.message} overview={overview} /> : <small>지수 시세 공급자 미연결</small>}
                 </article>)}
             </div>
           </section>
-          {overview ? <Watchlist {...watchlistProps} summary /> : <>
-            {market === 'KR' && <KrxMovers data={isApi ? krxOverview?.data : null}
-              message={isApi ? krxOverview?.message : 'KRX 공급자 미연결'} />}
-            <div className={market === 'US' ? 'market-sections overseas-panels' : 'market-sections'}>
-              {market === 'KR' && (isApi ? <KrxHeatmap data={krxOverview?.data} message={krxOverview?.message} />
-                : <MarketHeatmap market="KR" favorites={watchlist} />)}
-              {market === 'US' && <MarketHeatmap market="US" favorites={watchlist} />}
-              {market === 'US' && <Watchlist key={'watchlist:' + tab} {...watchlistProps} market="US" />}
-            </div>
-            {isApi && market === 'KR' && <KrxStocks {...watchlistProps} />}
-            {market === 'KR' && <Watchlist key={'watchlist:' + tab} {...watchlistProps} market="KR" />}
+          {overview ? <>
+            <section className="panel overview-data" aria-labelledby="overview-data-heading">
+              <h2 id="overview-data-heading"><Clock size={16} aria-hidden="true" /> 기준일 및 갱신 상태</h2>
+              {isApi ? <p role="status">{marketResult?.message ? <>시장지수 · {marketResult.message}</> : !marketResult ? '시장지수 갱신 중'
+                : !marketResult.quotes?.length ? '시장지수 응답 없음'
+                  : marketResult.quotes.every(quote => quote.status === 'unavailable') ? '표시 가능한 지수 관측값 없음'
+                    : '지수별 종가 기준일과 출처는 위 카드에서 확인할 수 있습니다.'}</p>
+                : <p role={error ? 'alert' : 'status'}>{pending ? '데모 데이터를 불러오는 중입니다.'
+                  : error ? '데이터 갱신에 실패했습니다.' : '데모 데이터가 표시됩니다.'}</p>}
+              {error && !isApi && <button className="button" onClick={refresh} disabled={!!refreshUntil}>다시 시도</button>}
+              {isApi && <KrxOverviewStatus data={krxOverview?.data} message={krxOverview?.message} />}
+            </section>
+            <KrxMovers data={isApi ? krxOverview?.data : null}
+              message={isApi ? krxOverview?.message : 'KRX 공급자 미연결'} summary />
+            {isApi ? <KrxHeatmap data={krxOverview?.data} message={krxOverview?.message} summary />
+              : <MarketHeatmap market="KR" favorites={watchlist} summary />}
+            <section className="panel overview-market-note" aria-label="해외시장 데이터 상태">
+              <h2>해외시장</h2><p>해외 히트맵 공급자 미연결</p><a className="text-link" href="#global">해외시장 보기</a>
+            </section>
+          </> : <>
+            {market === 'KR' && <>
+              {isApi && <KrxStocks {...watchlistProps} />}
+              <KrxMovers data={isApi ? krxOverview?.data : null}
+                message={isApi ? krxOverview?.message : 'KRX 공급자 미연결'} />
+              {isApi ? <KrxHeatmap data={krxOverview?.data} message={krxOverview?.message} />
+                : <MarketHeatmap market="KR" favorites={watchlist} />}
+              <Watchlist key={'watchlist:' + tab} {...watchlistProps} market="KR" />
+            </>}
+            {market === 'US' && <>
+              <Watchlist key={'watchlist:' + tab} {...watchlistProps} market="US" />
+              <MarketHeatmap market="US" favorites={watchlist} />
+            </>}
           </>}
           {market === 'KR' && <a className="text-link" href="#companies">기업 검색·공시 보기</a>}
         </>}
-        {tab === 'watchlist' && <Watchlist {...watchlistProps} />}
+        {tab === 'watchlist' && <Watchlist {...watchlistProps} standalone storage={member ? 'account' : 'browser'} />}
         {companyPage && !isApi && <p className="panel state">기업 공시 공급자 미연결</p>}
         {companyPage && <a className="text-link" href="#watchlist">관심종목에서 국내외 종목 검색</a>}
         {tab === 'overview' && !isApi && <section className="panel fx-summary" aria-label="환율">
@@ -351,18 +392,12 @@ export function App({ member, signOut, accountBusy, accountError }: {
             <FxDashboard revision={economyRevision} detailed={economyPage} onRefreshReady={setFxReady} showSettings={tab === 'economy/fx-settings'} />
           </Suspense>
         </div>}
-        {overview && <div className="overview-market-summary">
-          {isApi ? <KrxHeatmap data={krxOverview?.data} message={krxOverview?.message} summary />
-            : <MarketHeatmap market="KR" favorites={watchlist} summary />}
-          {isApi && <KrxMovers data={krxOverview?.data} message={krxOverview?.message} summary />}
-          <section className="panel overview-market-note" aria-label="해외시장 데이터 상태">
-            <h2>해외시장</h2><p>해외 히트맵 공급자 미연결</p><a className="text-link" href="#global">해외시장 보기</a>
-          </section>
-        </div>}
-        {(economyPage || visitedEconomy) && (isApi || snapshot) && <div className="economy-stack" hidden={!economyPage}>
+        {(economyPage || visitedEconomy || (overview && !isApi)) && (isApi || snapshot) &&
+          <div className="economy-stack" hidden={!economyPage && !(overview && !isApi)}>
           {isApi && <KoreaEconomy revision={economyRevision} visible={economyPage} onRefreshReady={setEcosReady} />}
           <Economics api={isApi && economyPage} demo={snapshot?.indicators} detailed={economyPage} revision={economyRevision} onRefreshReady={setFredReady} />
         </div>}
+        {overview && <Watchlist {...watchlistProps} summary />}
         {tab === 'members' && (member?.admin ? <MemberAdmin userId={member.userId} />
           : <p className="panel state">관리자 전용 화면입니다.</p>)}
         {tab === 'settings' && <>
@@ -376,27 +411,25 @@ export function App({ member, signOut, accountBusy, accountError }: {
             {accountError && <p className="notice" role="alert">{accountError}</p>}
           </section>}
           <section className="panel settings-panel">
-            <div className="panel-heading"><h2>화면 설정</h2></div>
+            <div className="panel-heading">
+              <h2>화면 설정</h2>
+              <p className="settings-save" data-state={settingsFailure ? 'error' : 'success'} role="status">
+                {settingsFailure ? '저장 실패 · 현재 화면에만 적용됨' : '이 브라우저에 저장됨'}
+              </p>
+            </div>
             <div className="setting"><div><strong>테마</strong><small>화면 색상 모드</small></div>
               <div className="periods" role="group" aria-label="테마">
                 <button aria-pressed={settings.theme === 'dark'} onClick={() => setSettings({ ...settings, theme: 'dark' })}><Moon size={15} /> 다크</button>
                 <button aria-pressed={settings.theme === 'light'} onClick={() => setSettings({ ...settings, theme: 'light' })}><Sun size={15} /> 라이트</button>
               </div>
             </div>
+            <SettingSelect label="글자 크기" description="메뉴와 본문의 텍스트 크기" value={settings.fontSize}
+              options={{ normal: '기본', large: '크게' }} onChange={fontSize => setSettings(previous => ({ ...previous, fontSize }))} />
             <SettingSelect label="기본 표시 시장" description="대시보드를 처음 열 때 표시" value={settings.market} options={{ overview: '개요', domestic: '국내시장', global: '해외시장' }} onChange={market => setSettings({ ...settings, market })} />
             <SettingSelect label="데이터 표시 단위" description="큰 종목 가격의 표시 방식" value={settings.units} options={{ full: '전체 숫자', compact: '간략 단위' }} onChange={units => setSettings({ ...settings, units })} />
             <SettingSelect label="상승·하락 색상" description="등락 방향별 색상" value={settings.colors} options={{ green: '상승 초록 · 하락 빨강', red: '상승 빨강 · 하락 파랑' }} onChange={colors => setSettings({ ...settings, colors })} />
             {isApi && <div className="setting"><strong>환율 설정</strong><a href="#economy/fx-settings" className="button">환율 설정 열기</a></div>}
           </section>
-          <section className="panel settings-panel">
-            <DataStatus api={isApi} indices={indexResult?.quotes} krx={krxResult?.data} />
-          </section>
-          <section className="panel settings-panel">
-            <div className="panel-heading"><h2>관심종목 및 설정 저장</h2></div>
-            <div className="setting"><strong>관심종목</strong><span>{member ? '회원 계정에 저장' : '이 브라우저에 저장'}</span></div>
-            <div className="setting"><strong>화면 설정</strong><span>이 브라우저에 저장</span></div>
-          </section>
-          <Watchlist {...watchlistProps} />
         </>}
       </main>
       <footer className="app-footer">
@@ -418,10 +451,11 @@ export function App({ member, signOut, accountBusy, accountError }: {
         onClick={() => {
           menuDialog.current?.showModal()
           setMenuOpen(true)
-        }}><Menu size={19} aria-hidden="true" /><span>전체</span></button>
+        }}><Menu className="navigation-icon" size={19} aria-hidden="true" /><span>전체</span></button>
     </nav>
     <dialog id="mobile-menu" ref={menuDialog} aria-labelledby="mobile-menu-title" onClose={() => setMenuOpen(false)} onClick={event => {
-      if ((event.target as HTMLElement).closest('a')) menuDialog.current?.close()
+      if (event.target === event.currentTarget || (event.target instanceof Element && event.target.closest('a')))
+        menuDialog.current?.close()
     }}>
       <div className="panel-heading"><h2 id="mobile-menu-title">전체 메뉴</h2>
         <button type="button" className="icon-button" aria-label="닫기" title="닫기"

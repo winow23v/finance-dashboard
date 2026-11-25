@@ -1,10 +1,12 @@
 import { ChevronDown } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { getUsAnalysis, marketRequestMessage } from '../services/apiFinanceService'
 import { calculatePriceReturns, calculateTechnicalIndicators, emaWindows, smaWindows } from '../services/technicalIndicators'
 import { Change } from './QuoteDisplay'
 import { TechnicalSummary } from './TechnicalSummary'
 import { formatAnalysisPrice, formatPercent, formatVolume } from '../services/analysisPrices'
+
+const StockHistoryChart = lazy(() => import('./StockHistoryChart'))
 
 const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
 const dateTime = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
@@ -42,39 +44,46 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
   const aligned = !!quote && history?.bars.at(-1)?.tradingDate === quote.tradingDate
   const indicators = useMemo(() => history && aligned ? calculateTechnicalIndicators(history) : null, [history, aligned])
   const returns = useMemo(() => history && indicators ? calculatePriceReturns(history) : {}, [history, indicators])
-  return <section className="panel stock-detail krx-analysis" aria-label="기술적 분석">
+  return <section className={stock ? "panel stock-detail krx-analysis terminal-detail" : "panel stock-detail krx-analysis"}
+    aria-label={stock ? "종목 상세" : "기술적 분석"}>
     {stock && !quote && <header className="stock-identity"><h1>{stock.name}</h1><small>{stock.meta}</small>{stock.actions}</header>}
     {!stock && <h2>기술적 분석</h2>}
-    {!state ? <p role="status">미국시장 일봉을 불러오는 중입니다.</p>
-      : 'error' in state ? <div><p role="status">{state.error}</p><p>최신 위험 상태 확인 불가</p>
+    {!state ? <p className={stock ? "detail-state" : undefined} role="status">미국시장 일봉을 불러오는 중입니다.</p>
+      : 'error' in state ? <div className={stock ? "detail-state" : undefined}><p role="alert">{state.error}</p><p>최신 위험 상태 확인 불가</p>
         <button className="button" onClick={() => { setState(undefined); setRequestedAt(undefined); retry(value => value + 1) }}>다시 조회</button></div>
-      : !data || data.status === 'unavailable' || !quote ? <>
+      : !data || data.status === 'unavailable' || !quote ? <div className={stock ? "detail-state" : undefined}>
         <p role="status">{data?.reason ? messages[data.reason] : '자료 없음'}</p>
         <p>{data?.reason === 'provider-error' || data?.reason === 'provider-not-configured'
           ? '최신 위험 상태 확인 불가' : '위험 분석 자료 부족'}</p>
         {!indexId && !requested && data?.reason === 'not-published' &&
           <button className="button" type="button" onClick={() => { setState(undefined); setRequestedAt(refresh) }}>수집 요청</button>}
-      </> : <>
+      </div> : <>
         <header className="analysis-quote us-analysis-quote">
           {stock ? <div className="stock-identity"><h1>{stock.name}</h1><small>{stock.meta}</small></div>
             : <h3>{symbol} 일별 종가</h3>}
-          <div className="analysis-price"><small>최신 확인 종가</small>
+          <div className="analysis-price"><small>최근 확인 종가</small>
           <strong className="us-quote-price" title={String(quote.close)}>{formatAnalysisPrice(quote.close, unit)}</strong>
           {quote.change !== null && quote.changePercent !== null && <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
           </div>{stock?.actions}
-          <p className="heatmap-meta analysis-meta">{quote.tradingDate} · {data.source} · Yahoo 제공 종가 (Adj Close 미적용)
-            {' · 수집 '}{dateTime.format(new Date(data.collectedAt))} (KST)</p>
+          <p className="heatmap-meta analysis-meta">
+            <span>거래일 <time dateTime={quote.tradingDate}>{quote.tradingDate}</time></span>
+            <span>수집 시각 <time dateTime={data.collectedAt}>{dateTime.format(new Date(data.collectedAt))}</time> (KST)</span>
+            <span>{data.source} · Yahoo 제공 종가 (Adj Close 미적용)</span>
+          </p>
           {data.status === 'stale' && <>
-            <p role="status">마지막 정상 데이터 · {data.reason ? messages[data.reason] : '갱신 지연'}</p>
+            <p className="detail-attention" role="status">마지막 정상 데이터 · {data.reason ? messages[data.reason] : '갱신 지연'}</p>
             {!indexId && !requested && data.reason === 'not-published' &&
               <button className="button" type="button" onClick={() => setRequestedAt(refresh)}>갱신 요청</button>}
           </>}
         </header>
-        {history && <TechnicalSummary indicators={indicators} history={history} index={!!indexId} stale={data.status === 'stale'} />}
-        <details>
+        {stock && history && <Suspense fallback={<p className="detail-state" role="status">가격 차트를 준비하는 중입니다.</p>}>
+          <StockHistoryChart history={history} source={data.source} />
+        </Suspense>}
+        <details className={stock ? "chart-data" : undefined}>
           <summary>최근 20거래일 OHLCV {indexId ? '' : '(기업행위 조정)'}</summary>
-          <div className="us-history-scroll">
+          <div className="us-history-scroll chart-data-scroll" tabIndex={0} role="region" aria-label="최근 20거래일 시세 표">
             <table className="us-history-table">
+              <caption className="sr-only">최근 20거래일 OHLCV · {indexId ? 'Yahoo 제공 지수 종가' : '배당·분할 조정 가격'}</caption>
               <thead><tr>{['거래일', '시가', '고가', '저가', '종가', '거래량'].map(label =>
                 <th key={label} scope="col">{label}</th>)}</tr></thead>
               <tbody>{data.history.bars.slice(-20).reverse().map(bar => <tr key={bar.tradingDate}>
@@ -85,6 +94,7 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
             </table>
           </div>
         </details>
+        {history && <TechnicalSummary indicators={indicators} history={history} index={!!indexId} stale={data.status === 'stale'} />}
         {indicators && <details className="technical-detail-group"><summary>이동평균·모멘텀·수익률 상세</summary><div className="analysis-details">
             <details>
               <summary>추세 분석 <ChevronDown size={16} aria-hidden="true" /></summary><p>{indexId ? 'Yahoo 제공 지수 종가 기준' : 'Yahoo 배당·분할 조정 종가 기준'}</p>
