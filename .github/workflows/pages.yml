@@ -74,6 +74,8 @@ jobs:
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
           VITE_API_BASE_URL: https://winow.duckdns.org
           PAGES_BASE_PATH: ${{ github.event_name == 'workflow_dispatch' && format('{0}/', steps.pages.outputs.base_path) || '/finance-dashboard/' }}
+      - name: Audit static build
+        run: python3 .github/scripts/pages-audit.py --dist dist
       - uses: actions/upload-pages-artifact@v4
         if: github.event_name == 'workflow_dispatch'
         with:
@@ -81,6 +83,8 @@ jobs:
   deploy:
     if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     needs: build
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -91,3 +95,30 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+  audit-deployment:
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v5
+        with:
+          name: github-pages
+          path: pages-artifact
+      - name: Verify the deployed build
+        env:
+          PAGES_URL: ${{ needs.deploy.outputs.page_url }}
+        run: |
+          mkdir audited-pages
+          tar -xf pages-artifact/artifact.tar -C audited-pages
+          for attempt in 1 2 3 4 5; do
+            if python3 .github/scripts/pages-audit.py --dist audited-pages --url "${PAGES_URL%/}/"; then
+              exit 0
+            fi
+            if [[ $attempt -lt 5 ]]; then sleep 15; fi
+          done
+          exit 1
