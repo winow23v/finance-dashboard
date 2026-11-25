@@ -46,7 +46,7 @@ export function Economics({ api, demo, detailed, revision, onRefreshReady, onRef
   }, [api, revision, attempt])
 
   const live = current?.status === 'loaded' ? current.data : undefined
-  const refreshFailed = current?.status === 'error' || !live
+  const refreshFailed = current?.status === 'error'
   useEffect(() => { if (ready) onRefreshResult?.('fred', refreshFailed) }, [ready, refreshFailed, revision, onRefreshResult])
   const rows = api ? live?.indicators : demo
   return <section className="panel economy-panel">
