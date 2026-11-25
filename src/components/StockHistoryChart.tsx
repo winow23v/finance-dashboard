@@ -16,7 +16,7 @@ const tooltip = { background: 'var(--panel)', color: 'var(--text)', borderColor:
 const grid = { stroke: 'var(--line)', strokeDasharray: '4 5', vertical: false }
 const margin = { top: 6, right: 10, left: 4, bottom: 0 }
 
-export default function StockHistoryChart({ history, source }: { history: MarketDailyHistory; source: string }) {
+export default function StockHistoryChart({ history }: { history: MarketDailyHistory }) {
   const [period, setPeriod] = useState<(typeof periods)[number]>(60)
   const id = useId()
   const tooltipTrigger = matchMedia('(hover: none)').matches ? 'click' : 'hover'
@@ -42,7 +42,7 @@ export default function StockHistoryChart({ history, source }: { history: Market
   return <section className="stock-history" aria-labelledby={id}>
     <div className="analysis-heading">
       <div><h2 id={id}><ChartNoAxesCombined size={17} aria-hidden="true" /> 가격 추이</h2>
-        <small>{source} · {basis} · {currency}</small></div>
+        <small>{basis} · {currency}</small></div>
       {bars.length > 0 && <div className="periods" role="group" aria-label="차트 기간">
         {periods.map(days => <button type="button" key={days} aria-pressed={period === days}
           onClick={() => setPeriod(days)}>{days}일</button>)}

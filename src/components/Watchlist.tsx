@@ -3,7 +3,7 @@ import { Plus, Search, Star, X } from 'lucide-react'
 import { marketSymbolKey, type EquityMarket, type MarketSymbol } from '../types/marketSymbol'
 import { marketListings, stockHref } from '../services/marketListings'
 import { favoriteKey, isWatchlistSymbol } from '../services/watchlist'
-import { KrxAfterHoursStatus, regularQuoteStatus, formatKrxCollectionTime } from './KrxAfterHoursStatus'
+import { regularQuoteStatus } from './KrxAfterHoursStatus'
 import { getKrxStocks } from '../services/apiFinanceService'
 import { krxObservation, registeredObservation, watchlistObservations, type Observation } from '../services/watchlistMetadata'
 
@@ -26,15 +26,8 @@ function StockList({ rows, saved, onToggle, label, blocked, terminal, standalone
       const { name, segment, currency, quote, regular, afterHours } = { ...registeredObservation(listing), ...observation }
       const active = saved.has(favoriteKey(listing))
       const venue = segment ?? (listing.exchange === 'US' ? '거래소 미확인' : listing.exchange)
-      const provenance = <>
-        {regular && <small className="watchlist-quote">{regular.source}
-          {regular.usingPreviousClose && ' · 이전 정상 종가 사용'}
-          {regular.collectedAt && ' · 마지막 정상 수집 ' + formatKrxCollectionTime(regular.collectedAt)}
-          {regular.lastAttemptAt && ' · 마지막 시도 ' + formatKrxCollectionTime(regular.lastAttemptAt)}
-          {regular.reason && ' · ' + regularQuoteStatus(regular.reason)}
-        </small>}
-        {afterHours && <KrxAfterHoursStatus details={afterHours} compact />}
-      </>
+      const status = regular?.usingPreviousClose ? '이전 정상 종가 사용' : regular?.reason ? regularQuoteStatus(regular.reason)
+        : afterHours?.every(entry => entry.status === 'market-closed') && afterHours.length ? '시간외 휴장' : undefined
       return <li className={terminal ? "terminal-stock-row" : undefined} key={marketSymbolKey(listing)}>
         <div className={terminal ? "terminal-symbol" : undefined}>
           <a className="stock-detail-link" href={stockHref(listing)} title={standalone ? name : undefined}>
@@ -46,7 +39,6 @@ function StockList({ rows, saved, onToggle, label, blocked, terminal, standalone
             {quote.changePercent !== null && ' · ' + percent.format(quote.changePercent) + '%'}
             {' · ' + quote.tradingDate + ' 기준'}
           </small>}
-          {!standalone && provenance}
         </div>
         {terminal && <div className="terminal-metrics">
           {quote ? <>
@@ -54,13 +46,13 @@ function StockList({ rows, saved, onToggle, label, blocked, terminal, standalone
             {quote.changePercent !== null && <span className={quote.changePercent > 0 ? 'up' : quote.changePercent < 0 ? 'down' : undefined}>
               {percent.format(quote.changePercent)}%
             </span>}
-            <small><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> {listing.market === 'KR' ? '정규장 종가' : '거래일 기준'}</small>
+            <small className="watch-trading-date"><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> {listing.market === 'KR' ? '정규장 종가' : '거래일 기준'}</small>
           </> : showQuoteStatus && <small>확인된 종가 없음</small>}
         </div>}
+        {status && <small className="muted-badge watch-state">{status}</small>}
         <button type="button" className="favorite-button" disabled={blocked} aria-pressed={active}
           aria-label={(name ?? listing.symbol) + (active ? ' 관심종목에서 삭제' : ' 관심종목에 추가')}
           onClick={() => onToggle(listing)}><Star size={19} fill={active ? 'currentColor' : 'none'} aria-hidden="true" /></button>
-        {standalone && (regular || afterHours) && <div className="watch-provenance">{provenance}</div>}
       </li>
     })}
   </ul>

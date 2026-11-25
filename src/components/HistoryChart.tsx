@@ -1,3 +1,4 @@
+import { LoadingSkeleton } from "./LoadingSkeleton"
 import { useEffect, useState } from 'react'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { defaultHistoryPeriod, historyPeriods, marketHistory } from '../services/marketHistory'
@@ -69,7 +70,7 @@ export default function HistoryChart({ items, simulated, revision }: {
     </div>
     <div className="chart-body">
       {!id || points?.length === 0 ? <p className="state" role="status">표시할 데이터가 없습니다.</p>
-        : points === undefined ? <p className="state" role="status">차트 데이터를 불러오는 중입니다.</p>
+        : points === undefined ? <LoadingSkeleton message="차트 데이터를 불러오는 중입니다." shape="chart" contained />
         : points === null ? <div className="state"><p role="alert">차트를 불러오지 못했습니다.</p><button className="button" onClick={() => setRetry(value => value + 1)}>다시 시도</button></div>
         : <ResponsiveContainer width="100%" height="100%" minWidth={0}>
           <AreaChart data={points} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>

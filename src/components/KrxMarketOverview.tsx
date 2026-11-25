@@ -1,3 +1,4 @@
+import { SegmentTabs } from "./SegmentTabs"
 import { useId, useMemo, useRef, useState } from 'react'
 import { heatmapColor, heatmapTextColor, layoutHeatmap } from '../services/marketHeatmap'
 import { stockHref } from '../services/marketListings'
@@ -21,6 +22,11 @@ const description = (data: KrxOverview) => [
   data.reason && data.reason !== 'same-date-data-unavailable' ? krxStateLabels[data.reason] : null,
 ].filter(Boolean).join(' · ')
 
+function MarketBasis({ data }: { data: KrxOverview }) {
+  const status = data.usingPreviousClose ? '이전 정상 종가 사용' : data.reason && data.reason !== 'same-date-data-unavailable' ? krxStateLabels[data.reason] : null
+  return <p className="heatmap-meta">{data.tradingDate && <time dateTime={data.tradingDate}>{data.tradingDate}</time>}{status && <> <span className="muted-badge">{status}</span></>}</p>
+}
+
 export function KrxOverviewStatus({ data, message }: { data?: KrxOverview | null; message?: string }) {
   return <p role="status">{message ? <>KRX 시장 · {message}</> : data?.tradingDate ? description(data) : state(data)}</p>
 }
@@ -38,14 +44,11 @@ export function KrxMovers({ data, message, summary }: { data?: KrxOverview | nul
   return <section className="panel movers-panel" aria-label="주요 등락 현황">
     <div className="section-heading"><h2>주요 등락 현황</h2>{summary && <a href="#domestic" className="text-link">국내시장 보기</a>}</div>
     {!data || !leaders ? <p className="state" role="status">{message ?? state(data)}</p> : <>
-      {!summary && <p className="heatmap-meta">{description(data)}</p>}
-      <div className="krx-rankings">
-        {(summary ? rankings.slice(0, 2) : rankings).map(({ key, label, format }) => {
+      {!summary && <MarketBasis data={data} />}
+      <SegmentTabs label="시장 랭킹" items={(summary ? rankings.slice(0, 2) : rankings).flatMap(({ key, label, format }) => {
           const rows = leaders[key]
-          if (!rows) return null
-          return <div key={key}>
-            <h3>{label}</h3>
-            {rows.length ? <ol className="stock-list">
+          if (!rows) return []
+          return [{ label, content: rows.length ? <ol className="stock-list ranking-list">
               {(summary ? rows.slice(0, 3) : rows).map(row => <li key={row.market + ':' + row.symbol}>
                 <a className="stock-detail-link" href={link(row)}>
                   <span className="mover-name" title={row.shortName + (row.mapped ? '' : ' (명칭 미매핑)')}>
@@ -55,10 +58,8 @@ export function KrxMovers({ data, message, summary }: { data?: KrxOverview | nul
                 </a>
                 <span className={(key === 'advances' || key === 'declines') && row.changePercent ? (row.changePercent > 0 ? 'up' : 'down') : undefined}>{format(row)}</span>
               </li>)}
-            </ol> : <p className="state">해당 종목 없음</p>}
-          </div>
-        })}
-      </div>
+            </ol> : <p className="state">해당 종목 없음</p> }]
+        })} />
     </>}
   </section>
 }
@@ -96,7 +97,8 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
           </span>)}
         </div>
       </div>
-      <p className="heatmap-meta">{!summary && description(data) + ' · '}시가총액 상위 {selected?.length}종목</p>
+      {!summary && <MarketBasis data={data} />}
+      <p className="heatmap-meta">시가총액 상위 {selected?.length}종목</p>
       {groups.length ? <div className="krx-heatmap-layout">
         <div className="heatmap-map">
           {groups.map(({ row, tiles }) => <div key={row.market} role="group" aria-label={row.market}>

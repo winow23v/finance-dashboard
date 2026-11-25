@@ -101,13 +101,6 @@ export function MarketHeatmap({ market, favorites, data, summary = false }: {
           </div>}
         </div>
       </> : <p className="state" role="status">조건에 맞는 종목이 없습니다.</p>}
-      <dl className="heatmap-sources">
-        {([['시세', snapshot.sources.quote], ['시가총액', snapshot.sources.marketCap], ['업종', snapshot.sources.sector]] as const)
-          .map(([label, source]) => <div key={label}><dt>{label}</dt><dd>
-            <a href={source.url}>{source.label}</a> · 수집 <time dateTime={source.collectedAt}>{atKst(source.collectedAt)}</time> (KST)
-            {source.attributionNotice && <small>{source.attributionNotice}</small>}
-          </dd></div>)}
-      </dl>
     </>}
   </section>
 }

@@ -1,4 +1,5 @@
-import { ChevronDown } from 'lucide-react'
+import { LoadingSkeleton } from "./LoadingSkeleton"
+import { SegmentTabs } from "./SegmentTabs"
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { getUsAnalysis, marketRequestMessage } from '../services/apiFinanceService'
 import { calculatePriceReturns, calculateTechnicalIndicators, emaWindows, smaWindows } from '../services/technicalIndicators'
@@ -9,7 +10,6 @@ import { formatAnalysisPrice, formatPercent, formatVolume } from '../services/an
 const StockHistoryChart = lazy(() => import('./StockHistoryChart'))
 
 const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
-const dateTime = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
 const format = (value?: number | null) => value == null ? '자료 부족' : number.format(value)
 const messages = {
   'provider-not-configured': '미국시장 데이터 공급자 미연결',
@@ -20,8 +20,8 @@ const messages = {
   unsupported: '지원되는 미국 상장 종목을 확인할 수 없습니다.',
 }
 
-export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
-  symbol: string; indexId?: string; stock?: { name: string; meta: string; actions: ReactNode }; refresh?: number
+export function UsAnalysis({ symbol, indexId, stock, refresh = 0, onRefreshResult }: {
+  symbol: string; indexId?: string; stock?: { name: string; meta: string; actions: ReactNode }; refresh?: number; onRefreshResult?: (key: string, failed: boolean) => void
 }) {
   const [state, setState] = useState<{ data: Awaited<ReturnType<typeof getUsAnalysis>> } | { error: string }>()
   const [requestedAt, setRequestedAt] = useState<number>()
@@ -30,9 +30,13 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
   useEffect(() => {
     const controller = new AbortController()
     void getUsAnalysis(symbol, controller.signal, requested, indexId).then(data => {
-      if (!controller.signal.aborted) setState({ data })
+      if (controller.signal.aborted) return
+      setState({ data })
+      onRefreshResult?.("stock", data.status === 'unavailable' || data.reason === 'provider-error' || data.reason === 'rate-limited')
     }, error => {
-      if (!controller.signal.aborted) setState({ error: marketRequestMessage(error, '미국시장 일봉 조회 실패') })
+      if (controller.signal.aborted) return
+      onRefreshResult?.("stock", true)
+      setState({ error: marketRequestMessage(error, '미국시장 일봉 조회 실패') })
     })
     return () => controller.abort()
   }, [symbol, requested, indexId, revision, refresh])
@@ -48,7 +52,7 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
     aria-label={stock ? "종목 상세" : "기술적 분석"}>
     {stock && !quote && <header className="stock-identity"><h1>{stock.name}</h1><small>{stock.meta}</small>{stock.actions}</header>}
     {!stock && <h2>기술적 분석</h2>}
-    {!state ? <p className={stock ? "detail-state" : undefined} role="status">미국시장 일봉을 불러오는 중입니다.</p>
+    {!state ? <LoadingSkeleton message="미국시장 일봉을 불러오는 중입니다." shape="detail" />
       : 'error' in state ? <div className={stock ? "detail-state" : undefined}><p role="alert">{state.error}</p><p>최신 위험 상태 확인 불가</p>
         <button className="button" onClick={() => { setState(undefined); setRequestedAt(undefined); retry(value => value + 1) }}>다시 조회</button></div>
       : !data || data.status === 'unavailable' || !quote ? <div className={stock ? "detail-state" : undefined}>
@@ -67,23 +71,21 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
           </div>{stock?.actions}
           <p className="heatmap-meta analysis-meta">
             <span>거래일 <time dateTime={quote.tradingDate}>{quote.tradingDate}</time></span>
-            <span>수집 시각 <time dateTime={data.collectedAt}>{dateTime.format(new Date(data.collectedAt))}</time> (KST)</span>
-            <span>{data.source} · Yahoo 제공 종가 (Adj Close 미적용)</span>
           </p>
           {data.status === 'stale' && <>
-            <p className="detail-attention" role="status">마지막 정상 데이터 · {data.reason ? messages[data.reason] : '갱신 지연'}</p>
+            <p className="detail-attention" role="status">{data.reason ? ({ 'not-published': '공표 대기', collecting: '수집 대기', 'provider-error': '마지막 유효값', 'rate-limited': '요청 제한', 'provider-not-configured': '공급 미연결', unsupported: '지원되지 않음' })[data.reason] : '갱신 지연'}</p>
             {!indexId && !requested && data.reason === 'not-published' &&
               <button className="button" type="button" onClick={() => setRequestedAt(refresh)}>갱신 요청</button>}
           </>}
         </header>
-        {stock && history && <Suspense fallback={<p className="detail-state" role="status">가격 차트를 준비하는 중입니다.</p>}>
-          <StockHistoryChart history={history} source={data.source} />
-        </Suspense>}
-        <details className={stock ? "chart-data" : undefined}>
-          <summary>최근 20거래일 OHLCV {indexId ? '' : '(기업행위 조정)'}</summary>
+        <SegmentTabs label="시세 데이터" items={[
+          ...(history ? [{ label: '차트', content: <Suspense fallback={<LoadingSkeleton message="가격 차트를 준비하는 중입니다." shape="chart" />}>
+          <StockHistoryChart history={history} />
+        </Suspense> }] : []),
+          { label: '표', content:
           <div className="us-history-scroll chart-data-scroll" tabIndex={0} role="region" aria-label="최근 20거래일 시세 표">
             <table className="us-history-table">
-              <caption className="sr-only">최근 20거래일 OHLCV · {indexId ? 'Yahoo 제공 지수 종가' : '배당·분할 조정 가격'}</caption>
+              <caption className="sr-only">최근 20거래일 OHLCV · {indexId ? '지수 종가' : '배당·분할 조정 가격'}</caption>
               <thead><tr>{['거래일', '시가', '고가', '저가', '종가', '거래량'].map(label =>
                 <th key={label} scope="col">{label}</th>)}</tr></thead>
               <tbody>{data.history.bars.slice(-20).reverse().map(bar => <tr key={bar.tradingDate}>
@@ -93,19 +95,21 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
               </tr>)}</tbody>
             </table>
           </div>
-        </details>
+          },
+        ]} />
         {history && <TechnicalSummary indicators={indicators} history={history} index={!!indexId} stale={data.status === 'stale'} />}
-        {indicators && <details className="technical-detail-group"><summary>이동평균·모멘텀·수익률 상세</summary><div className="analysis-details">
-            <details>
-              <summary>추세 분석 <ChevronDown size={16} aria-hidden="true" /></summary><p>{indexId ? 'Yahoo 제공 지수 종가 기준' : 'Yahoo 배당·분할 조정 종가 기준'}</p>
+        {indicators && <section className="technical-detail-group technical-tabs" aria-label="기술적 지표 상세">
+            <h3>기술적 지표 상세</h3>
+            <SegmentTabs label="기술적 지표" items={[
+              { label: '추세 분석', content: <>
+<p>{indexId ? '지수 종가 기준' : '배당·분할 조정 종가 기준'}</p>
               <dl className="stock-detail-fields">
                 {(['sma', 'ema'] as const).flatMap(kind => (kind === 'sma' ? smaWindows : emaWindows)
                   .filter(period => period !== 365 || indicators.sma[365] !== null).map(period =>
                   <div key={kind + period}><dt>{kind.toUpperCase()} {period}</dt><dd>{format(indicators[kind][period])}</dd></div>))}
               </dl>
-            </details>
-            <details>
-              <summary>모멘텀 분석 <ChevronDown size={16} aria-hidden="true" /></summary>
+              </> },
+              { label: '모멘텀 분석', content: <>
               <p className="heatmap-meta">RSI는 상승·하락의 상대적 강도입니다. 70 이상과 30 이하는 과매수·과매도의 참고 구간입니다. MACD선은 단기·장기 이동평균의 차이입니다. 시그널선과의 간격을 나타내는 히스토그램을 추세·거래량과 함께 보세요.</p>
               <dl className="stock-detail-fields">
                 <div><dt>RSI 14</dt><dd>{format(indicators.rsi14)}</dd></div>
@@ -114,15 +118,15 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
                 <div><dt>히스토그램</dt><dd>{format(indicators.macd.histogram)}</dd></div>
                 <div><dt>20일 평균 거래량</dt><dd>{indexId && indicators.volumeSma20 === 0 ? '미제공' : format(indicators.volumeSma20)}</dd></div>
               </dl>
-            </details>
-            <details>
-              <summary>기간별 성과 <ChevronDown size={16} aria-hidden="true" /></summary>
+              </> },
+              { label: '기간별 성과', content: <>
               <dl className="stock-detail-fields">
                 {[1, 3, 6].map(months => <div key={months}><dt>{months}개월</dt>
                   <dd>{returns[months] ? formatPercent(returns[months].percent) + ' · ' + returns[months].tradingDate : '자료 부족'}</dd></div>)}
               </dl>
-            </details>
-          </div></details>}
+              </> },
+            ]} />
+          </section>}
       </>}
   </section>
 }
