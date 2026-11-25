@@ -117,3 +117,35 @@ Rollback
   requires a separate approved service-interruption window. The operator can
   disable the US feature via the existing configuration process at that
   cutover. A Pages rollback is a manual publish of the reviewed prior source.
+
+Selective recovery and service status
+- The existing timer runs the regular collection, followed by a scan of the
+  latest ten completed XNYS sessions. The session close must be at least 20
+  minutes old, including early closes. A populated cache supplies the observed
+  coverage boundary. Gaps before it and unsupported listings are excluded.
+- From the selected release, run as finance-us-collector using the service's
+  cache path. Both read-only modes bypass the provider and leave files alone.
+
+    /opt/finance-us-market/current/venv/bin/python /opt/finance-us-market/current/collect_us.py --cache /var/lib/finance-us-market/data --plan --symbols=V --dates=2026-11-23
+    /opt/finance-us-market/current/venv/bin/python /opt/finance-us-market/current/collect_us.py --cache /var/lib/finance-us-market/data --check V
+
+  After separate approval, substitute --apply for --plan. The repair requires
+  a validated cache and does not replace existing bars. For work outside the
+  rolling window or a listing with undocumented trading interruptions, review
+  the source history separately. An incompatible adjustment basis or a series
+  that still fails validation is left in place. A raw price basis change
+  (such as a split) records raw-adjusted-basis-mismatch and retains the last
+  good snapshot. Review corporate actions and verify a coherent full-history
+  candidate in a disposable directory before an approved cache replacement.
+- The run limit counts history operations, with defaults of 40 per invocation
+  and a minimum two-second interval. These settings do not describe an upstream
+  Yahoo quota or the HTTP calls inside yfinance. Regular attempts and recovery
+  attempts are recorded independently and use one cache lock and cooldown.
+- Monitor US_COLLECTION_SUMMARY. Exit 0 may report success, partial-success or
+  market-closed. Exit 1 reports failure and exit 75 reports provider throttling.
+  Check the JSON summary in addition to the systemd exit code.
+- Before a release change, copy the data directory to separate operator-owned
+  backup storage with ownership and mode retained. Verify checksums and perform
+  a read-only --check against the backup copy. Rehearse restores in a disposable
+  directory. Production restoration requires separate approval and coordination
+  with the collector lock. Selecting the previous release does not restore data.
