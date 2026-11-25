@@ -32,7 +32,7 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0, onRefreshResul
     void getUsAnalysis(symbol, controller.signal, requested, indexId).then(data => {
       if (controller.signal.aborted) return
       setState({ data })
-      onRefreshResult?.("stock", data.status === 'unavailable' || data.reason === 'provider-error')
+      onRefreshResult?.("stock", data.status === 'unavailable' || data.reason === 'provider-error' || data.reason === 'rate-limited')
     }, error => {
       if (controller.signal.aborted) return
       onRefreshResult?.("stock", true)

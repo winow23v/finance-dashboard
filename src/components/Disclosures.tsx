@@ -143,7 +143,7 @@ export function Disclosures({ revision, visible = true, onRefreshReady, onRefres
   const detail = detailResult?.data
   const refreshReady = !!selected && !!detailPath && detailResult !== undefined
   useEffect(() => { onRefreshReady?.(refreshReady) }, [onRefreshReady, refreshReady])
-  const refreshFailed = !detail
+  const refreshFailed = !detail || detail.filingsError || detail.financialsError
   useEffect(() => { if (detailResult) onRefreshResult?.('dart', refreshFailed) }, [detailResult, refreshFailed, revision, onRefreshResult])
   const [lastTotal, setLastTotal] = useState<{ search: string; total: number }>()
   const searchTotal = searchResult?.data?.total ?? (lastTotal?.search === search ? lastTotal?.total : companies?.length ?? 0)
