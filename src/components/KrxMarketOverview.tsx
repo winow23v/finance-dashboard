@@ -1,3 +1,4 @@
+import { SegmentTabs } from "./SegmentTabs"
 import { useId, useMemo, useRef, useState } from 'react'
 import { heatmapColor, heatmapTextColor, layoutHeatmap } from '../services/marketHeatmap'
 import { stockHref } from '../services/marketListings'
@@ -44,13 +45,10 @@ export function KrxMovers({ data, message, summary }: { data?: KrxOverview | nul
     <div className="section-heading"><h2>주요 등락 현황</h2>{summary && <a href="#domestic" className="text-link">국내시장 보기</a>}</div>
     {!data || !leaders ? <p className="state" role="status">{message ?? state(data)}</p> : <>
       {!summary && <MarketBasis data={data} />}
-      <div className="krx-rankings">
-        {(summary ? rankings.slice(0, 2) : rankings).map(({ key, label, format }) => {
+      <SegmentTabs label="시장 랭킹" items={(summary ? rankings.slice(0, 2) : rankings).flatMap(({ key, label, format }) => {
           const rows = leaders[key]
-          if (!rows) return null
-          return <div key={key}>
-            <h3>{label}</h3>
-            {rows.length ? <ol className="stock-list">
+          if (!rows) return []
+          return [{ label, content: rows.length ? <ol className="stock-list ranking-list">
               {(summary ? rows.slice(0, 3) : rows).map(row => <li key={row.market + ':' + row.symbol}>
                 <a className="stock-detail-link" href={link(row)}>
                   <span className="mover-name" title={row.shortName + (row.mapped ? '' : ' (명칭 미매핑)')}>
@@ -60,10 +58,8 @@ export function KrxMovers({ data, message, summary }: { data?: KrxOverview | nul
                 </a>
                 <span className={(key === 'advances' || key === 'declines') && row.changePercent ? (row.changePercent > 0 ? 'up' : 'down') : undefined}>{format(row)}</span>
               </li>)}
-            </ol> : <p className="state">해당 종목 없음</p>}
-          </div>
-        })}
-      </div>
+            </ol> : <p className="state">해당 종목 없음</p> }]
+        })} />
     </>}
   </section>
 }

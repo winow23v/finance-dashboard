@@ -1,4 +1,4 @@
-import { ChevronDown } from 'lucide-react'
+import { SegmentTabs } from "./SegmentTabs"
 import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { getUsAnalysis, marketRequestMessage } from '../services/apiFinanceService'
 import { calculatePriceReturns, calculateTechnicalIndicators, emaWindows, smaWindows } from '../services/technicalIndicators'
@@ -73,11 +73,11 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
               <button className="button" type="button" onClick={() => setRequestedAt(refresh)}>갱신 요청</button>}
           </>}
         </header>
-        {stock && history && <Suspense fallback={<p className="detail-state" role="status">가격 차트를 준비하는 중입니다.</p>}>
+        <SegmentTabs label="시세 데이터" items={[
+          ...(history ? [{ label: '차트', content: <Suspense fallback={<p className="detail-state" role="status">가격 차트를 준비하는 중입니다.</p>}>
           <StockHistoryChart history={history} />
-        </Suspense>}
-        <details className={stock ? "chart-data" : undefined}>
-          <summary>최근 20거래일 OHLCV {indexId ? '' : '(기업행위 조정)'}</summary>
+        </Suspense> }] : []),
+          { label: '표', content:
           <div className="us-history-scroll chart-data-scroll" tabIndex={0} role="region" aria-label="최근 20거래일 시세 표">
             <table className="us-history-table">
               <caption className="sr-only">최근 20거래일 OHLCV · {indexId ? '지수 종가' : '배당·분할 조정 가격'}</caption>
@@ -90,19 +90,21 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
               </tr>)}</tbody>
             </table>
           </div>
-        </details>
+          },
+        ]} />
         {history && <TechnicalSummary indicators={indicators} history={history} index={!!indexId} stale={data.status === 'stale'} />}
-        {indicators && <details className="technical-detail-group"><summary>이동평균·모멘텀·수익률 상세</summary><div className="analysis-details">
-            <details>
-              <summary>추세 분석 <ChevronDown size={16} aria-hidden="true" /></summary><p>{indexId ? '지수 종가 기준' : '배당·분할 조정 종가 기준'}</p>
+        {indicators && <section className="technical-detail-group technical-tabs" aria-label="기술적 지표 상세">
+            <h3>기술적 지표 상세</h3>
+            <SegmentTabs label="기술적 지표" items={[
+            { label: '추세 분석', content: <>
+<p>{indexId ? '지수 종가 기준' : '배당·분할 조정 종가 기준'}</p>
               <dl className="stock-detail-fields">
                 {(['sma', 'ema'] as const).flatMap(kind => (kind === 'sma' ? smaWindows : emaWindows)
                   .filter(period => period !== 365 || indicators.sma[365] !== null).map(period =>
                   <div key={kind + period}><dt>{kind.toUpperCase()} {period}</dt><dd>{format(indicators[kind][period])}</dd></div>))}
               </dl>
-            </details>
-            <details>
-              <summary>모멘텀 분석 <ChevronDown size={16} aria-hidden="true" /></summary>
+                        </> },
+            { label: '모멘텀 분석', content: <>
               <p className="heatmap-meta">RSI는 상승·하락의 상대적 강도입니다. 70 이상과 30 이하는 과매수·과매도의 참고 구간입니다. MACD선은 단기·장기 이동평균의 차이입니다. 시그널선과의 간격을 나타내는 히스토그램을 추세·거래량과 함께 보세요.</p>
               <dl className="stock-detail-fields">
                 <div><dt>RSI 14</dt><dd>{format(indicators.rsi14)}</dd></div>
@@ -111,15 +113,15 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0 }: {
                 <div><dt>히스토그램</dt><dd>{format(indicators.macd.histogram)}</dd></div>
                 <div><dt>20일 평균 거래량</dt><dd>{indexId && indicators.volumeSma20 === 0 ? '미제공' : format(indicators.volumeSma20)}</dd></div>
               </dl>
-            </details>
-            <details>
-              <summary>기간별 성과 <ChevronDown size={16} aria-hidden="true" /></summary>
+                        </> },
+            { label: '기간별 성과', content: <>
               <dl className="stock-detail-fields">
                 {[1, 3, 6].map(months => <div key={months}><dt>{months}개월</dt>
                   <dd>{returns[months] ? formatPercent(returns[months].percent) + ' · ' + returns[months].tradingDate : '자료 부족'}</dd></div>)}
               </dl>
-            </details>
-          </div></details>}
+                        </> },
+            ]} />
+          </section>}
       </>}
   </section>
 }

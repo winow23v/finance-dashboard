@@ -1,5 +1,5 @@
-import { ChevronDown } from 'lucide-react'
-import { useId, useState } from 'react'
+import { X } from 'lucide-react'
+import { useId, useRef, useState } from 'react'
 import { calculateRewardRisk, referenceRewardRisk, stopAtrBuffer, type buildTechnicalScenarios, type ScenarioPrices } from '../services/technicalScenarios'
 import { displayScenarioPrices, formatAnalysisPrice, formatMetric as format, formatThreshold, formatZone, pricePolicy, type PriceDisplay } from '../services/analysisPrices'
 
@@ -18,6 +18,8 @@ function RewardRiskForm({ prices, unit }: {
   prices: ScenarioPrices | null; unit: PriceDisplay['unit']
 }) {
   const id = useId()
+  const drawer = useRef<HTMLDialogElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
   const [values, setValues] = useState({ entry: '', stop: '', target: '' })
   const [checked, setChecked] = useState(false)
   const [source, setSource] = useState<'manual' | 'analysis'>('manual')
@@ -32,8 +34,16 @@ function RewardRiskForm({ prices, unit }: {
   const result = checked && calculateRewardRisk({
     entry: Number(values.entry), stop: Number(values.stop), target: Number(values.target),
   })
-  return <details className="scenario-calculator">
-    <summary>예상 손익비 직접 계산 <ChevronDown size={16} aria-hidden="true" /></summary>
+  return <div className="scenario-calculator">
+    <button ref={trigger} className="button" type="button" aria-haspopup="dialog" aria-controls={id + '-drawer'}
+      onClick={() => drawer.current?.showModal()}>예상 손익비 직접 계산</button>
+    <dialog ref={drawer} id={id + '-drawer'} className="panel scenario-drawer" aria-labelledby={id + '-title'}
+      onClose={() => trigger.current?.focus({ preventScroll: true })}
+      onClick={event => { if (event.target === event.currentTarget) event.currentTarget.close() }}>
+      <div className="scenario-drawer-content">
+        <div className="section-heading"><h3 id={id + '-title'}>예상 손익비 직접 계산</h3>
+          <button className="icon-button" type="button" aria-label="계산기 닫기" onClick={() => drawer.current?.close()}><X size={18} /></button>
+        </div>
     <form onSubmit={event => { event.preventDefault(); setChecked(true) }}>
       <div className="scenario-inputs">
         {priceFields.map(([name, label]) => <label key={name} htmlFor={id + name}>{label} ({unit})
@@ -59,7 +69,9 @@ function RewardRiskForm({ prices, unit }: {
         ? `${format(result.ratio)}:1 · 단위당 예상 수익 ${format(result.reward)} ${unit} / 예상 위험 ${format(result.risk)} ${unit}`
         : checked ? '계산 가능한 양수 가격을 입력하세요. 손절 가격 < 진입 가격 < 목표 가격 순서여야 합니다.' : ''}</p>
     </form>
-  </details>
+      </div>
+    </dialog>
+  </div>
 }
 
 export function TechnicalScenarios({ plan, tradingDate, display, stale }: {

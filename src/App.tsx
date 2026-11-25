@@ -1,5 +1,7 @@
+import { CommandSearch } from "./components/CommandSearch"
+import { IndexCarousel } from "./components/IndexCarousel"
 import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { ArrowLeftRight, BarChart3, ChevronDown, Clock, FileSearch, Globe2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Search, Settings, ShieldCheck, Star, Sun, TrendingUp, UserRound, X } from 'lucide-react'
+import { ArrowLeftRight, BarChart3, ChevronDown, Clock, FileSearch, Globe2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, ShieldCheck, Star, Sun, TrendingUp, UserRound, X } from 'lucide-react'
 import { dataMode } from './services/financeService'
 import { getKrxOverview, getMarketIndices, marketRequestMessage } from './services/apiFinanceService'
 import { mockFinanceService } from './mocks/mockFinance'
@@ -12,7 +14,7 @@ import { DataStatus } from './components/DataStatus'
 import { Economics } from './components/Economics'
 import { informationPages, SiteInformation, type InformationPage } from './components/SiteInformation'
 import { UsAnalysis } from './components/UsAnalysis'
-import { parseStockPage } from './services/marketListings'
+import { marketListings, parseStockPage, stockHref } from './services/marketListings'
 import { StockDetail } from './components/StockDetail'
 import { KrxStocks, krxStateLabels } from './components/KrxStocks'
 import { KrxHeatmap, KrxMovers, KrxOverviewStatus } from './components/KrxMarketOverview'
@@ -83,6 +85,16 @@ function MarketIndexValue({ quote, message }: { quote?: MarketIndex; message?: s
     </small>}
   </>
 }
+function MarketQuote({ index, quote, message, missing }: {
+  index: typeof marketIndices[number]; quote?: MarketIndex; message?: string; missing: boolean
+}) {
+  return <article className="panel quote-card">
+    <div className="quote-label"><h3><a className="stock-detail-link" href={'#index/' + index.id}>{index.name}</a></h3><span>{marketNames[index.market]}</span></div>
+    {missing ? <small>지수 응답 없음</small> : isApi ? <MarketIndexValue quote={quote} message={message} />
+      : <small>지수 시세 공급자 미연결</small>}
+  </article>
+}
+
 function hashPage(): Page | undefined {
   const hash = location.hash.slice(1)
   if (hash === 'companies/us') return 'global'
@@ -105,7 +117,6 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const [revision, setRevision] = useState(0)
   const [request, setRequest] = useState(0)
   const [dartRevision, setDartRevision] = useState(0)
-  const [searchFocus, setSearchFocus] = useState(0)
   const [dartReady, setDartReady] = useState(false)
   const [fxReady, setFxReady] = useState(false)
   const [ecosReady, setEcosReady] = useState(false)
@@ -142,6 +153,10 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const market = tab === 'domestic' ? 'KR' : tab === 'global' ? 'US' : undefined
   const isMarket = tab === 'overview' || market !== undefined
   const marketResult = indexResult?.request === request ? indexResult : undefined
+  const quoteProps = (index: typeof marketIndices[number]) => ({
+    index, quote: marketResult?.quotes?.find(quote => quote.id === index.id), message: marketResult?.message,
+    missing: !!marketResult?.quotes && !marketResult.quotes.some(quote => quote.id === index.id),
+  })
   const showKrxOverview = isMarket && market !== 'US'
   const krxOverview = krxResult?.request === request ? krxResult : undefined
   const section = economyPage ? 'economy' : tab
@@ -268,8 +283,12 @@ export function App({ member, signOut, accountBusy, accountError }: {
         : <>워크스페이스 <span aria-hidden="true">/</span> <strong>{pageLabel}</strong></>}</span>
       <div className="top-actions">
         <a className="connection-status" href="#sources" title="공급자별 데이터 상태"><i aria-hidden="true" />{dataLabel}</a>
-        <a className="icon-button" href="#companies" aria-label="통합 종목·기업 검색" title="통합 종목·기업 검색"
-          onClick={() => setSearchFocus(value => value + 1)}><Search size={18} /></a>
+        <CommandSearch entries={[
+          ...[...tabs, ...(!isApi || tab === 'trends' ? [trends] : []), ...(member?.admin ? [memberAdminTab] : [])]
+            .map(item => ({ label: item.label, href: '#' + item.id, detail: '메뉴' })),
+          ...marketIndices.map(item => ({ label: item.name, href: '#index/' + item.id, detail: marketNames[item.market] + ' 지수', keywords: item.id })),
+          ...marketListings.map(({ listing, name }) => ({ label: name, href: stockHref(listing), detail: listing.symbol + ' · ' + marketNames[listing.market], keywords: listing.symbol })),
+        ]} />
         {!stock && <button className="icon-button" onClick={refresh} disabled={refreshDisabled}
           aria-label={refreshLabel} title={refreshLabel}><RefreshCw size={17} /></button>}
         <button className="icon-button" aria-label={themeLabel} title={themeLabel}
@@ -322,16 +341,11 @@ export function App({ member, signOut, accountBusy, accountError }: {
         {isMarket && <>
           <section aria-label="핵심 시장지수">
             <div className="section-heading"><h2>핵심 시장지수</h2></div>
-            <div className={'quote-grid market-index-quotes terminal-quotes ' + (market === 'US' ? 'overseas-quotes' : market ? 'domestic-quotes' : 'overview-quotes')}>
-              {marketIndices.filter(index => !market || index.market === market).map(index =>
-                <article className="panel quote-card" key={index.name}>
-                  <div className="quote-label"><h3><a className="stock-detail-link" href={'#index/' + index.id}>{index.name}</a></h3><span>{marketNames[index.market]}</span></div>
-                  {isApi && marketResult?.quotes && !marketResult.quotes.some(quote => quote.id === index.id)
-                    ? <small>지수 응답 없음</small>
-                    : isApi ? <MarketIndexValue quote={marketResult?.quotes?.find(quote => quote.id === index.id)}
-                      message={marketResult?.message} /> : <small>지수 시세 공급자 미연결</small>}
-                </article>)}
-            </div>
+            {overview ? <IndexCarousel slides={marketIndices.map(index => ({
+              label: index.name, content: <MarketQuote {...quoteProps(index)} />,
+            }))} /> : <div className={'quote-grid market-index-quotes terminal-quotes ' + (market === 'US' ? 'overseas-quotes' : 'domestic-quotes')}>
+              {marketIndices.filter(index => index.market === market).map(index => <MarketQuote key={index.id} {...quoteProps(index)} />)}
+            </div>}
           </section>
           {overview ? <>
             <section className="panel overview-data" aria-labelledby="overview-data-heading">
@@ -382,7 +396,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
         {snapshot && tab === 'trends' && <HistoryChart simulated items={snapshot.trendTopics.map(name => ({ id: name, name }))} revision={revision} />}
         </Suspense>
         </>}
-        {isApi && <div hidden={tab !== 'companies'}><Disclosures revision={dartRevision} visible={tab === 'companies'} searchFocus={searchFocus} onRefreshReady={setDartReady} /></div>}
+        {isApi && <div hidden={tab !== 'companies'}><Disclosures revision={dartRevision} visible={tab === 'companies'} onRefreshReady={setDartReady} /></div>}
         {(showFx || visitedFx) && isApi && <div hidden={!showFx}>
           <Suspense fallback={<p className="panel state" role="status">환율을 준비하는 중입니다.</p>}>
             <FxDashboard revision={economyRevision} detailed={economyPage} onRefreshReady={setFxReady} showSettings={tab === 'economy/fx-settings'} />
