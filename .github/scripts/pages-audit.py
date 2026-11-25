@@ -7,6 +7,7 @@ import subprocess
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.parse import quote, urlsplit
 from urllib.request import urlopen
 
@@ -97,15 +98,30 @@ def audit_deployment(root, files, url):
     base = urlsplit(url)
     if base.scheme != 'https' or not base.hostname or not url.endswith('/'):
         raise ValueError('Expected an HTTPS Pages URL ending in /')
-    with urlopen('http://' + url.removeprefix('https://'), timeout=20) as response:
-        if response.url != url:
-            raise ValueError('HTTP did not redirect to the expected HTTPS page')
     findings = 0
+    try:
+        with urlopen('http://' + url.removeprefix('https://'), timeout=20) as response:
+            if response.url != url:
+                print('index.html: HTTP did not redirect to the expected HTTPS page')
+                findings += 1
+    except HTTPError as error:
+        print(f'index.html: HTTP redirect check returned status {error.code}')
+        findings += 1
+    expected_mime = {'.html': {'text/html'}, '.css': {'text/css'},
+                     '.js': {'text/javascript', 'application/javascript'}}
     for path in files:
         uri = url if path == Path('index.html') else url + quote(path.as_posix())
-        with urlopen(uri, timeout=20) as response:
+        try:
+            response = urlopen(uri, timeout=20)
+        except HTTPError as error:
+            print(f'{path}: deployed artifact returned HTTP {error.code}')
+            findings += 1
+            continue
+        with response:
             if response.url != uri:
-                raise ValueError('Unexpected deployed artifact redirect')
+                print(f'{path}: unexpected deployed artifact redirect')
+                findings += 1
+                continue
             if path == Path('index.html'):
                 headers = response.headers
                 if not re.search(r'\bmax-age\s*=\s*[1-9]\d*', headers.get('Strict-Transport-Security', ''), re.I):
@@ -115,8 +131,6 @@ def audit_deployment(root, files, url):
                     state = 'present' if headers.get(name) else 'absent'
                     print(f'{name} response header: {state}')
             mime = response.headers.get_content_type()
-            expected_mime = {'.html': {'text/html'}, '.css': {'text/css'},
-                             '.js': {'text/javascript', 'application/javascript'}}
             if path.suffix in expected_mime and mime not in expected_mime[path.suffix]:
                 print(f'{path}: unexpected response MIME type')
                 findings += 1
