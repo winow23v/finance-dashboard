@@ -43,7 +43,7 @@ export function KrxMovers({ data, message, summary }: { data?: KrxOverview | nul
             <h3>{label}</h3>
             {rows.length ? <ol className="stock-list">
               {(summary ? rows.slice(0, 3) : rows).map(row => <li key={row.market + ':' + row.symbol}>
-                <a className="stock-detail-link" href={link(row)}>{row.name}{!row.mapped && ' (명칭 미매핑)'}<small>{row.market} · {row.symbol}</small></a>
+                <a className="stock-detail-link" href={link(row)}>{row.shortName}{!row.mapped && ' (명칭 미매핑)'}<small>{row.market} · {row.symbol}</small></a>
                 <span>{format(row)}</span>
               </li>)}
             </ol> : <p className="state">해당 종목 없음</p>}
@@ -95,7 +95,7 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
               if (item.changePercent === null) return null
               const background = heatmapColor('KR', item.changePercent)
               const itemKey = key(item)
-              const label = item.name + ' · ' + item.symbol + ' · ' + rate(item) + (item.mapped ? '' : ' · 명칭 미매핑')
+              const label = item.shortName + ' · ' + item.symbol + ' · ' + rate(item) + (item.mapped ? '' : ' · 명칭 미매핑')
               return <a key={itemKey} href={link(item)} className="heatmap-tile" aria-label={label}
                 aria-describedby={active?.key === itemKey ? tooltip : undefined}
                 onPointerEnter={event => { if (event.pointerType === 'mouse') setActive({ key: itemKey, pinned: false }) }}
@@ -143,7 +143,7 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
 
 function KrxTileInfo({ row }: { row: KrxMarketRow }) {
   return <>
-    <strong>{row.name} · {row.symbol}{!row.mapped && ' · 명칭 미매핑'}</strong>
+    <strong>{row.shortName} · {row.symbol}{!row.mapped && ' · 명칭 미매핑'}</strong>
     <small>{row.market} · 종가 {number.format(row.price)}원 · {rate(row)}</small>
     <small>시가총액 {row.marketCap === null ? '미확인' : number.format(row.marketCap) + '원'}</small>
   </>

@@ -260,7 +260,8 @@ test('history excludes closed dates, stops at an invalid session, and ranks only
   const overview = await krx.overview()
   assert.equal(overview.tradingDate, '2026-11-20')
   assert.equal(overview.leaders.advances[0].symbol, '005930')
-  assert.equal(overview.leaders.advances[0].name, '삼성전자보통주')
+  assert.equal(overview.leaders.advances[0].name, '삼성전자')
+  assert.equal(overview.leaders.advances[0].fullName, '삼성전자보통주')
   assert.equal(overview.marketTiles.KOSPI[0].shortName, '삼성전자')
   assert.equal(overview.marketTiles.KOSPI[0].mapped, true)
   assert.ok(overview.marketTiles.KOSDAQ.every(row => row.market === 'KOSDAQ'))
@@ -277,6 +278,67 @@ test('history excludes closed dates, stops at an invalid session, and ranks only
     assert.equal((await app.inject({ url, headers: { host: '127.0.0.1', authorization: 'Bearer test.good.token' } })).statusCode, 200)
   }
   assert.equal(requested.length, before)
+})
+
+test('overview, search, detail and watchlist use the same KRX master name for each code', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-display-names-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const securities = [
+    { symbol: '004545', name: '깨끗한나라우', fullName: '깨끗한나라1우선주', shareClass: '우선주', market: 'KOSPI' },
+    { symbol: '009140', name: '케이아이아이', fullName: '케이아이아이보통주', shareClass: '보통주', market: 'KOSPI' },
+    { symbol: '004540', name: '깨끗한나라', fullName: '깨끗한나라보통주', shareClass: '보통주', market: 'KOSPI' },
+    { symbol: '263860', name: '지니언스', fullName: '지니언스보통주', shareClass: '보통주', market: 'KOSDAQ' },
+  ]
+  const krx = createKrxProvider({
+    root, key: 'fixture', log: () => {}, clock: () => Date.parse('2026-11-21T08:00:00Z'),
+    fetchImpl(url) {
+      const market = url.pathname.includes('stk_') ? 'KOSPI' : 'KOSDAQ'
+      const rows = securities.filter(stock => stock.market === market)
+      if (url.pathname.endsWith('base_info')) return response(rows.map(stock => ({
+        ISU_SRT_CD: stock.symbol, ISU_ABBRV: stock.name, ISU_NM: stock.fullName,
+        KIND_STKCERT_TP_NM: stock.shareClass, LIST_DD: '20261120', MKT_TP_NM: market,
+      })))
+      return response(rows.map((stock, index) => ({
+        BAS_DD: url.searchParams.get('basDd'), ISU_CD: stock.symbol, ISU_NM: stock.fullName, MKT_NM: market,
+        TDD_CLSPRC: String(105 + index), TDD_OPNPRC: '100', TDD_HGPRC: '110', TDD_LWPRC: '99',
+        CMPPREVDD_PRC: '5', ACC_TRDVOL: '1234', MKTCAP: '5000', FLUC_RT: '5',
+      })))
+    },
+  })
+  const app = await buildApp({ logger: false, localKrx: krx, membership: {
+    verify: () => ({ id: 'display-name-test' }), read: () => ({ status: 'approved' }),
+  } })
+  t.after(() => app.close())
+  const headers = { host: '127.0.0.1', authorization: 'Bearer test.good.token' }
+  const request = async (url, payload) => {
+    const result = await app.inject({ method: payload ? 'POST' : 'GET', url, headers, payload })
+    assert.equal(result.statusCode, 200, url)
+    return result.json()
+  }
+  const overview = await request('/api/v1/market/kr/overview')
+  const watchlist = await request('/api/v1/market/watchlist/observations', {
+    items: securities.map(({ symbol }) => ({ market: 'KR', exchange: 'XKRX', symbol })),
+  })
+  for (const { symbol, name, fullName, shareClass, market } of securities) {
+    const history = await request('/api/v1/market/kr/stocks/' + symbol + '/history')
+    const byCode = await request('/api/v1/market/kr/stocks?market=' + market + '&symbol=' + symbol)
+    const byName = await request('/api/v1/market/kr/stocks?market=' + market + '&q=' + encodeURIComponent(fullName))
+    const mover = overview.leaders.advances.find(row => row.symbol === symbol)
+    const saved = watchlist.items.find(row => row.listing.symbol === symbol)
+    assert.deepEqual([history.name, byCode.items[0].name, byName.items[0].name, mover.name, mover.shortName, saved.name],
+      Array(6).fill(name), symbol)
+    assert.deepEqual([history.symbol, byCode.items[0].symbol, byName.items[0].symbol, mover.symbol, saved.listing.symbol],
+      Array(5).fill(symbol))
+    assert.deepEqual([history.market, byCode.items[0].market, mover.market, saved.segment], Array(4).fill(market))
+    assert.deepEqual([history.fullName, history.quote.name, byCode.items[0].fullName, mover.fullName, mover.rawName],
+      Array(5).fill(fullName))
+    assert.deepEqual([history.shareClass, byCode.items[0].shareClass, mover.shareClass], Array(3).fill(shareClass))
+    assert.deepEqual(overview.marketTiles[market].find(row => row.symbol === symbol), mover)
+    for (const quote of [byCode.items[0].quote, saved.quote, mover]) {
+      for (const key of ['price', 'changePercent', 'volume']) assert.equal(quote[key], history.quote[key])
+    }
+    assert.equal(history.history.bars.at(-1).close, history.quote.price)
+  }
 })
 
 test('backfill stops on HTTP 429 and a rerun skips the saved latest session', async t => {
@@ -824,7 +886,12 @@ test('a partial publish keeps both markets on the last common date and reports t
   let now = Date.parse('2026-11-20T12:15Z')
   const provider = createKrxProvider({ root, key: 'fixture', scheduledOnly: true, log: () => {}, clock: () => now,
     fetchImpl(url) {
-      if (url.searchParams.get('basDd') === '20261123' && url.pathname.endsWith('/ksq_bydd_trd')) return response([])
+      if (url.searchParams.get('basDd') === '20261123') {
+        if (url.pathname.endsWith('/ksq_bydd_trd')) return response([])
+        if (url.pathname.endsWith('/ksq_isu_base_info')) return response([
+          { LIST_DD: '20261120', MKT_TP_NM: 'KOSDAQ', ISU_ABBRV: '변경된 종목명', ISU_SRT_CD: '263860' },
+        ])
+      }
       return recoveryFixture(url)
     } })
   await provider.collect()
@@ -840,6 +907,12 @@ test('a partial publish keeps both markets on the last common date and reports t
   assert.equal(overview.tradingDate, '2026-11-20')
   assert.equal(overview.usingPreviousClose, true)
   assert.equal(overview.leaders.volume.length, 2)
+  assert.equal(stocks.listingDate, '2026-11-23')
+  const renamed = overview.leaders.volume.find(row => row.symbol === '263860')
+  assert.equal(renamed.name, '변경된 종목명')
+  assert.equal(renamed.rawName, '263860')
+  assert.equal(renamed.name, stocks.items[0].name)
+  assert.equal(renamed.name, (await provider.stockHistory('263860')).name)
 })
 
 test('HTTP failures and a malformed observation never publish index data', async t => {

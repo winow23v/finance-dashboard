@@ -84,6 +84,11 @@ function unique(rows) {
   return [...byCode.values()].filter(Boolean)
 }
 
+// Callers resolve the master row by exact market and symbol before naming it.
+function listingDisplayName(symbol, listing) {
+  return listing?.name?.trim() || symbol
+}
+
 function normalize(path, rows, date) {
   const [market, config] = Object.entries(endpoint).find(([, entry]) => Object.values(entry).includes(path))
   if (path === config.index) {
@@ -468,7 +473,8 @@ export function createKrxProvider({
       }
       return null
     }
-    const [{ market, name, listedOn }] = matches
+    const [listing] = matches
+    const { market, listedOn, fullName, shareClass } = listing
     const trades = await load(endpoint[market].trades, target)
     const latest = trades.data ?? null
     const latestDate = latest?.date ?? null
@@ -493,7 +499,8 @@ export function createKrxProvider({
       bars.push({ tradingDate: date, open, high, low, close, volume })
     }
     const { reason, errorCode, lastAttemptAt, usingPreviousClose } = metadata(trades, target)
-    return { symbol, name, market, source, quote: latestQuote, reason, errorCode,
+    return { symbol, name: listingDisplayName(symbol, listing), fullName, shareClass, market, source,
+      quote: latestQuote, reason, errorCode,
       latestDate, collectedAt: latest?.collectedAt ?? null, lastAttemptAt, usingPreviousClose, stoppedAt, stoppedReason,
       afterHours: afterHours(target),
       history: { currency: 'KRW', timeZone: 'Asia/Seoul', adjustment: 'unadjusted',
@@ -714,12 +721,13 @@ export function createKrxProvider({
         leaders: null, tiles: [], marketTiles: { KOSPI: [], KOSDAQ: [] } }
     }
     const catalogs = await Promise.all(markets.map(market => load(endpoint[market].listings, target)))
-    const names = new Map(catalogs.flatMap(state => state.data?.date === date ? state.data.rows : [])
+    const names = new Map(catalogs.flatMap(state => state.data?.rows.filter(row => row.listedOn <= date) ?? [])
       .map(row => [row.market + ':' + row.symbol, row]))
     const rows = datasets.flatMap(state => state.data.rows.filter(row => row.volume > 0))
-      .map(({ symbol, market, price, changePercent, volume, turnover, marketCap }) => {
+      .map(({ symbol, name: rawName, market, price, changePercent, volume, turnover, marketCap }) => {
         const listing = names.get(market + ':' + symbol)
-        return { symbol, name: listing?.fullName || listing?.name || symbol, shortName: listing?.name ?? symbol,
+        const name = listingDisplayName(symbol, listing)
+        return { symbol, name, shortName: name, rawName, fullName: listing?.fullName, shareClass: listing?.shareClass,
           mapped: Boolean(listing), market, price, changePercent, volume, turnover: turnover ?? null, marketCap }
       })
     const top = (field, direction, filter = () => true) => rows.filter(filter)
@@ -831,7 +839,8 @@ export function createKrxProvider({
         trades: { ...metadata(trades, target), tradingDate: trades.data?.date ?? null },
         afterHours: afterHours(target),
         listingDate: listings.data?.date ?? null, items: matches.slice(0, 20).map(row => ({
-          ...row, quote: trades.data && row.listedOn <= trades.data.date
+          ...row, name: listingDisplayName(row.symbol, row),
+          quote: trades.data && row.listedOn <= trades.data.date
             ? byCode.get(row.symbol) ?? null : null,
         })) }
     },
