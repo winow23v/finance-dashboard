@@ -15,6 +15,7 @@ function resultStatus(data, error, configured) {
   }
   if (data?.filingsError || data?.financialsError || data?.indicators?.some(item => item.status === 'unavailable' && safeCode(item.code))) return 'Degraded'
   // A scheduled collection window or closed market can legitimately have no fresh observation.
+  if (data?.status === 'stale') return 'Stale'
   if (data?.status === 'unavailable' && !['collecting', 'not-published', 'weekend', 'before-collection'].includes(data.reason)) return 'Unavailable'
   if (data?.usingPreviousClose && !['weekend', 'before-collection', 'not-published'].includes(data.reason)) return 'Stale'
   return 'Healthy'

@@ -9,6 +9,8 @@ test('provider monitoring suppresses scheduled waiting, redacts errors and dedup
   const health = createProviderHealth({ clock: () => now, alertDelayMs: 1_000 })
   await health.observe('yfinance', () => ({ status: 'unavailable', reason: 'collecting' }))
   assert.equal(health.snapshot().providers.find(row => row.provider === 'yfinance').status, 'Healthy')
+  await health.observe('yfinance', () => ({ status: 'stale', reason: 'not-published' }))
+  assert.equal(health.snapshot().providers.find(row => row.provider === 'yfinance').status, 'Stale')
   const fail = () => health.observe('fx', () => { throw new ProviderError(504, 'PROVIDER_TIMEOUT') })
   await assert.rejects(fail())
   now += 2_000
