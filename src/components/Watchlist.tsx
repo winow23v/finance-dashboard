@@ -22,6 +22,9 @@ const trendLabels: Record<WatchlistTrend, string> = {
 
 async function loadAnalysis(listing: MarketSymbol) {
   const result = await (listing.market === 'KR' ? readKrxStockHistory(listing.symbol) : readUsStockHistory(listing.symbol))
+  if (result.reason === 'provider-error' || result.reason === 'rate-limited') {
+    throw new Error('Stock history provider request failed')
+  }
   if (!('history' in result) || !result.quote || result.history.bars.at(-1)?.tradingDate !== result.quote.tradingDate) return null
   const indicators = calculateTechnicalIndicators(result.history)
   if (!indicators) return null
