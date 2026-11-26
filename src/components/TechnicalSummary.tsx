@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
 import { useMemo } from 'react'
 import { assessTechnicalTrend, type PriceZone } from '../services/technicalAssessment'
@@ -32,18 +33,20 @@ function ZoneList({ zones, label, display, condition }: {
   </div>
 }
 
-export function TechnicalSummary({ indicators, history, index, tick, stale = false }: {
-  indicators: TechnicalIndicators | null; history: MarketDailyHistory; index?: boolean; tick?: PriceDisplay['tick']; stale?: boolean
+const direction = (value: number) => value > 0 ? '상승' : value < 0 ? '하락' : '보합'
+
+export function TechnicalSummary({ indicators, history, index, tick, stale = false, chart }: {
+  indicators: TechnicalIndicators | null; history: MarketDailyHistory; index?: boolean; tick?: PriceDisplay['tick']; stale?: boolean; chart?: ReactNode
 }) {
   const assessment = useMemo(() => indicators && assessTechnicalTrend(history.bars, indicators), [history, indicators])
   const plan = useMemo(() => assessment && indicators && buildTechnicalScenarios(assessment, indicators), [assessment, indicators])
   const risk = technicalRisk(assessment, indicators, stale, !index)
-  if (!assessment || !indicators || !plan) return <section className="technical-summary" aria-label="기술적 분석">
+  if (!assessment || !indicators || !plan) return <><section className="technical-summary" aria-label="기술적 분석">
     <h2>기술적 분석</h2>
     <p className="heatmap-meta" role="status">분석 불가 · {risk.status} · 기준일에 맞는 유효한 연속 확정 일봉이 필요합니다.</p>
-  </section>
+  </section>{chart}</>
   const { trend, reasons, zones, invalidation, breakVolumeConfirmed, tradingDate, priceStructure } = assessment
-  const { dmi, bands, volume, atr14, cross, sma, sma20Slope, rsi14, macd } = indicators
+  const { dmi, bands, volume, atr14, cross, sma, sma20Slope, rsi14, rsiDirection, priceDirection, macd, macdCross } = indicators
   const display: PriceDisplay = { unit: index ? 'pt' : history.currency, tick }
   const basis = history.adjustment === 'total-return-adjusted' ? '배당·분할 조정 가격'
     : history.adjustment === 'split-adjusted' ? '분할 조정 가격' : '미수정 가격'
@@ -62,10 +65,12 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
       </dl>
       <dl className="technical-key-metrics">
         {!index && <div><dt>SMA 20</dt><dd>{format(sma[20])}</dd></div>}
-        <div><dt>RSI 14</dt><dd>{format(rsi14)}{rsi14 !== null && <small>{rsi14 >= 70 ? '과매수 구간' : rsi14 <= 30 ? '과매도 구간' : '중립 구간'}</small>}</dd></div>
+        <div><dt>RSI 14</dt><dd>{format(rsi14)}{rsi14 !== null && <small>{rsi14 >= 70 ? '과매수 구간' : rsi14 <= 30 ? '과매도 구간' : '중립 구간'}</small>}
+          {rsiDirection !== null && priceDirection !== null && <small>직전 봉 대비 RSI {direction(rsiDirection)} · 종가 {direction(priceDirection)}</small>}</dd></div>
         <div><dt>MACD 12·26</dt><dd>{format(macd.line)}
           {macd.line !== null && <small>{macd.histogram === null ? '시그널 자료 부족'
-            : macd.histogram > 0 ? '시그널 위' : macd.histogram < 0 ? '시그널 아래' : '시그널과 같음'}</small>}</dd></div>
+            : macd.histogram > 0 ? '시그널 위' : macd.histogram < 0 ? '시그널 아래' : '시그널과 같음'}</small>}
+          {macdCross && <small>당일 시그널 {macdCross === 'up' ? '상향' : '하향'} 교차</small>}</dd></div>
         <div><dt>ADX 14</dt><dd>{format(dmi.adx)}</dd></div>
         <div><dt>직전 20봉 대비 거래량</dt><dd>{volume.ratio === null ? '비교 불가' : format(volume.ratio) + '배'}</dd></div>
         <div><dt>변동성</dt><dd>{stale ? '최신 상태 미확인' : atr14 === null ? '자료 부족' : risk.signals.includes('변동성 확대') ? '확대' : 'ATR ' + format(atr14)}</dd></div>
@@ -88,6 +93,7 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
       {!index && <p className="heatmap-meta">기술 지표는 과거 확정 일봉을 해석하는 참고 자료입니다.</p>}
       {trend === 'unavailable' && <p className="heatmap-meta">장기 추세 분류에는 유효한 일봉 200개가 필요합니다.</p>}
     </section>
+    {chart}
     <section className="technical-price-zones" aria-label="지지 · 저항 구간">
       <div className="analysis-heading"><h3>지지 · 저항 구간</h3><small>{pricePolicy(display)}</small></div>
       <div className="technical-zone-grid">
@@ -137,6 +143,7 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
           <div><dt>볼린저 하단</dt><dd>{format(bands?.lower)}</dd></div>
           <div><dt>%B</dt><dd>{bands?.percentB == null ? '산출 불가' : formatPercent(bands.percentB)}</dd></div>
           <div><dt>밴드 폭</dt><dd>{bands?.bandwidth == null ? '자료 부족' : formatPercent(bands.bandwidth)}</dd></div>
+          {volume.direction !== null && priceDirection !== null && <div><dt>직전 봉 대비</dt><dd>종가 {direction(priceDirection)} · 거래량 {volume.direction > 0 ? '증가' : volume.direction < 0 ? '감소' : '동일'}</dd></div>}
           <div><dt>거래량 평균 5 / 20 / 50</dt><dd>{index && volume.latest === 0 ? '미제공' : [formatVolume(volume.sma5), formatVolume(indicators.volumeSma20), formatVolume(indicators.volumeSma50)].join(' / ')}</dd></div>
           <div><dt>직전 20거래일 대비</dt><dd>{volume.ratio === null ? '비교 불가' : format(volume.ratio) + '배'}<small>급증 기준 {format(volume.spikeThreshold)}배</small></dd></div>
         </dl>

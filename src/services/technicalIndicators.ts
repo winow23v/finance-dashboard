@@ -111,7 +111,11 @@ export function calculateTechnicalIndicators(history: MarketDailyHistory, option
   if (history.completeness !== 'complete' || !bars.length || !validBars(bars)) return null
   const closes = bars.map(bar => bar.close)
   const changes = closes.slice(1).map((close, index) => close - closes[index])
-  const rsi14 = rsiSeries(changes).at(-1) ?? null
+  const rsi = rsiSeries(changes)
+  const rsi14 = rsi.at(-1) ?? null
+  const previousRsi = rsi.at(-2)
+  const rsiDirection = rsi14 !== null && previousRsi !== undefined ? Math.sign(rsi14 - previousRsi) : null
+  const priceDirection = changes.length ? Math.sign(changes.at(-1)!) : null
   const ranges = bars.slice(1).map(({ high, low }, index) =>
     Math.max(high - low, Math.abs(high - closes[index]), Math.abs(low - closes[index])))
   const { line: macdSeries, signal: macdSignal } = macdSeriesFor(closes)
@@ -151,12 +155,12 @@ export function calculateTechnicalIndicators(history: MarketDailyHistory, option
     sma,
     ema: Object.fromEntries(emaWindows.map(period => [period, latest(ema(closes, period))])),
     sma20Slope: middle === null || previousSma20 === null ? null : middle - previousSma20,
-    rsi14,
+    rsi14, rsiDirection, priceDirection,
     macd: { line, signal, histogram },
     macdCross,
     volumeSma20,
     volumeSma50: average(volumes, 50),
-    volume: { latest: last.volume, sma5: average(volumes, 5), prior20, ratio: volumeRatio,
+    volume: { latest: last.volume, direction: volumes.length > 1 ? Math.sign(last.volume - volumes.at(-2)!) : null, sma5: average(volumes, 5), prior20, ratio: volumeRatio,
       spikeThreshold, spike: volumeRatio === null ? null : volumeRatio >= spikeThreshold },
     atr14: wilder(ranges) ?? null,
     prior: { sma: previousSma, atr14: wilder(ranges.slice(0, -1)) ?? null },

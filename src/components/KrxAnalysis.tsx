@@ -96,10 +96,11 @@ export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: {
             </div>
           </header>
           <KrxAfterHoursStatus details={data.afterHours} />
-          <Suspense fallback={<LoadingSkeleton message="가격 차트를 준비하는 중입니다." shape="chart" />}>
-            <StockHistoryChart history={data.history} />
-          </Suspense>
-          <TechnicalSummary indicators={indicator} history={data.history} tick={tick} stale={data.reason === 'provider-error' || data.reason === 'provider-not-configured' || data.reason === 'not-published'} />
+          <TechnicalSummary indicators={indicator} history={data.history} tick={tick}
+            stale={data.reason === 'provider-error' || data.reason === 'provider-not-configured' || data.reason === 'not-published'}
+            chart={<Suspense fallback={<LoadingSkeleton message="가격 차트를 준비하는 중입니다." shape="chart" />}>
+              <StockHistoryChart history={data.history} />
+            </Suspense>} />
           <section className="technical-detail-group technical-tabs" aria-label="기술적 지표 상세">
             <h3>기술적 지표 상세</h3>
             <SegmentTabs label="기술적 지표" items={[

@@ -137,7 +137,7 @@ test('relative volume compares the same confirmed bar with the prior twenty bars
   const result = calculateTechnicalIndicators(data, { volumeSpikeThreshold: 2.5 })
   assert.equal(result.tradingDate, data.bars[20].tradingDate)
   assert.equal(result.volumeSma20, 105)
-  assert.deepEqual(result.volume, { latest: 200, sma5: 120, prior20: 100, ratio: 2, spikeThreshold: 2.5, spike: false })
+  assert.deepEqual(result.volume, { latest: 200, direction: 1, sma5: 120, prior20: 100, ratio: 2, spikeThreshold: 2.5, spike: false })
   assert.equal(calculateTechnicalIndicators(data).volume.spike, true)
   assert.equal(calculateTechnicalIndicators({ ...data, bars: data.bars.slice(1) }).volume.ratio, null)
   for (const bar of data.bars.slice(0, -1)) bar.volume = 0
