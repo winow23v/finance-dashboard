@@ -1,13 +1,15 @@
+import { invalidateStockHistory, readKrxStockHistory } from '../services/stockHistoryCache'
 import { LoadingSkeleton } from "./LoadingSkeleton"
 import { SegmentTabs } from "./SegmentTabs"
 import { Clock } from 'lucide-react'
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useRef, useMemo, useState, type ReactNode } from 'react'
 import { FinanceApiError, getKrxAnalysis, getKrxStocks, marketRequestMessage } from '../services/apiFinanceService'
 import { calculatePriceReturns, calculateTechnicalIndicators, emaWindows, smaWindows } from '../services/technicalIndicators'
 import type { KrxAnalysis as Analysis } from '../types/finance'
 import { Change } from './QuoteDisplay'
 import { krxStateLabels } from './KrxStocks'
 import { KrxAfterHoursStatus } from './KrxAfterHoursStatus'
+import { StockDisclosures } from './Disclosures'
 import { TechnicalSummary } from './TechnicalSummary'
 import { confirmedKrxTick, formatAnalysisPrice, formatPercent } from '../services/analysisPrices'
 import type { KrxStocks } from '../types/finance'
@@ -26,9 +28,15 @@ export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: {
   const [result, setResult] = useState<{ data: Analysis } | { message: string }>()
   const [listing, setListing] = useState<{ symbol: string; data: KrxStocks }>()
   const [revision, retry] = useState(0)
+  const previousLoad = useRef<{ refresh: number; revision: number } | undefined>(undefined)
   useEffect(() => {
     const controller = new AbortController()
-    void getKrxAnalysis(symbol, controller.signal).then(data => {
+    const force = previousLoad.current !== undefined
+      && (refresh !== previousLoad.current.refresh || revision !== previousLoad.current.revision)
+    previousLoad.current = { refresh, revision }
+    if (force) invalidateStockHistory('KR', symbol)
+    const load = force ? getKrxAnalysis(symbol, controller.signal) : readKrxStockHistory(symbol)
+    void load.then(data => {
       if (controller.signal.aborted) return
       setResult({ data })
       onRefreshResult?.("stock", !data.latestDate || data.reason === 'provider-error')
@@ -86,19 +94,20 @@ export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: {
               <small>KRX 정규장 종가</small>
               <strong>{formatAnalysisPrice(quote.price, 'KRW')}</strong>
               {quote.change !== null && quote.changePercent !== null &&
-                <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
+                <Change market="KR" quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
             </div> : <p className="state">최신 공식 종가 없음</p>}
             {actions}
             <div className="analysis-meta">
               {quote && <span><Clock size={14} aria-hidden="true" /> 거래일 <time dateTime={quote.tradingDate}>{quote.tradingDate}</time></span>}
-              {(data.reason || data.usingPreviousClose) && <span className="detail-attention">{data.usingPreviousClose ? "이전 정상 종가 사용" : data.reason && krxStateLabels[data.reason]}</span>}
+              {(data.usingPreviousClose || (data.reason && data.reason !== 'before-collection' && data.reason !== 'weekend')) && <span className="detail-attention">{data.usingPreviousClose ? "이전 정상 종가 사용" : data.reason && krxStateLabels[data.reason]}</span>}
             </div>
           </header>
           <KrxAfterHoursStatus details={data.afterHours} />
-          <Suspense fallback={<LoadingSkeleton message="가격 차트를 준비하는 중입니다." shape="chart" />}>
-            <StockHistoryChart history={data.history} />
-          </Suspense>
-          <TechnicalSummary indicators={indicator} history={data.history} tick={tick} stale={data.reason === 'provider-error' || data.reason === 'provider-not-configured' || data.reason === 'not-published'} />
+          <TechnicalSummary indicators={indicator} history={data.history} tick={tick}
+            stale={data.reason === 'provider-error' || data.reason === 'provider-not-configured' || data.reason === 'not-published'}
+            chart={<Suspense fallback={<LoadingSkeleton message="가격 차트를 준비하는 중입니다." shape="chart" />}>
+              <StockHistoryChart history={data.history} />
+            </Suspense>} />
           <section className="technical-detail-group technical-tabs" aria-label="기술적 지표 상세">
             <h3>기술적 지표 상세</h3>
             <SegmentTabs label="기술적 지표" items={[
@@ -132,6 +141,7 @@ export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: {
               </> },
             ]} />
           </section>
+          <StockDisclosures key={symbol} symbol={symbol} />
           {data.stoppedAt && data.stoppedReason && <small>{data.stoppedAt} 및 이전 제외 · {historyStop[data.stoppedReason]}</small>}
         </>}
   </section>

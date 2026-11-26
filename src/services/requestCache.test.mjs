@@ -23,3 +23,30 @@ test('a failed request can be retried without retaining the failure', async () =
   await assert.rejects(cache.load('a', async () => { throw new Error('unavailable') }), /unavailable/)
   assert.equal(await cache.load('a', async () => 1), 1)
 })
+
+test('watchlist ordering preserves storage order and sorts missing numeric values last', async () => {
+  const { rankWatchlist } = await import('./watchlistView.ts')
+  const rows = [{ name: '종목 10', change: null }, { name: '종목 2', change: -4 }, { name: '종목 1', change: 3 }]
+  const sort = order => rankWatchlist(rows, order, row => row.name, row => row.change).map(row => row.name)
+  assert.deepEqual(sort('saved'), ['종목 10', '종목 2', '종목 1'])
+  assert.deepEqual(sort('name'), ['종목 1', '종목 2', '종목 10'])
+  assert.deepEqual(sort('change'), ['종목 1', '종목 2', '종목 10'])
+  assert.deepEqual(rankWatchlist(rows, 'price', row => row.name, row => row.name === '종목 2' ? 200 : row.name === '종목 1' ? 100 : null).map(row => row.name),
+    ['종목 2', '종목 1', '종목 10'])
+  assert.equal(rows[0].name, '종목 10')
+})
+
+
+test('a non-cacheable result is retried and an invalidated request cannot replace newer data', async () => {
+  const cache = createRequestCache(2, 1000)
+  assert.equal(await cache.load('a', async () => 0, value => value > 0), 0)
+  assert.equal(cache.read('a'), undefined)
+  let resolve
+  const old = cache.load('a', () => new Promise(finish => { resolve = finish }))
+  await Promise.resolve()
+  cache.invalidate('a')
+  assert.equal(await cache.load('a', async () => 2), 2)
+  resolve(1)
+  assert.equal(await old, 1)
+  assert.equal(cache.read('a'), 2)
+})
