@@ -525,7 +525,10 @@ export function App({ member, signOut, accountBusy, accountError }: {
         <button type="button" className="icon-button" aria-label="닫기" title="닫기"
           onClick={() => menuDialog.current?.close()}><X size={18} /></button>
       </div>
-      <nav className="side-navigation" aria-label="전체 메뉴">{navigationLinks(member?.admin ? [...tabs, memberAdminTab] : isApi ? tabs : [...tabs, trends])}</nav>
+      <nav className="side-navigation" aria-label="전체 메뉴">{navigationLinks(
+        [...tabs, ...(!isApi ? [trends] : []), ...(member?.admin ? [memberAdminTab] : [])]
+          .filter(item => !mobileTabs.some(mobileTab => mobileTab.id === item.id))
+      )}</nav>
     </dialog>
   </div>
 }

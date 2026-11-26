@@ -1055,3 +1055,9 @@ span.chart-body { display: block; }
 @container dashboard (width < 570px) {
   .overseas-quotes > :last-child:nth-child(odd) { grid-column: 1 / -1; }
 }
+
+.krx-collection-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem 1rem; }
+.krx-collection-status > span { max-width: 100%; }
+.krx-up, .krx-stock-search .up { color: var(--red); }
+.krx-down, .krx-stock-search .down { color: var(--blue); }
+.krx-flat, .krx-stock-search .change:not(.up, .down) { color: var(--muted); }

@@ -1,5 +1,5 @@
 import { SegmentTabs } from "./SegmentTabs"
-import { useId, useMemo, useRef, useState } from 'react'
+import { useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { heatmapColor, heatmapTextColor, layoutHeatmap } from '../services/marketHeatmap'
 import { stockHref } from '../services/marketListings'
 import type { KrxMarket, KrxMarketRow, KrxOverview } from '../types/finance'
@@ -14,13 +14,16 @@ const state = (data?: KrxOverview | null) => data === undefined ? 'KRX 시장 �
   : data === null ? 'KRX 시장 데이터를 조회하지 못했습니다.'
     : data.reason && data.reason !== 'same-date-data-unavailable' ? krxStateLabels[data.reason]
       : '두 시장의 동일 거래일 자료를 확인할 수 없습니다.'
-const description = (data: KrxOverview) => [
-  data.tradingDate && '확정 종가 기준 ' + data.tradingDate, data.source,
-  data.usingPreviousClose && '이전 정상 종가 사용',
-  data.collectedAt && '마지막 정상 수집 ' + time.format(new Date(data.collectedAt)) + ' (KST)',
-  data.lastAttemptAt && '마지막 시도 ' + time.format(new Date(data.lastAttemptAt)) + ' (KST)',
-  data.reason && data.reason !== 'same-date-data-unavailable' ? krxStateLabels[data.reason] : null,
-].filter(Boolean).join(' · ')
+const mobileHeatmap = '(max-width: 780px)'
+function subscribeMobileHeatmap(onChange: () => void) {
+  const query = matchMedia(mobileHeatmap)
+  query.addEventListener('change', onChange)
+  return () => query.removeEventListener('change', onChange)
+}
+
+const isMobileHeatmap = () => matchMedia(mobileHeatmap).matches
+const desktopHeatmap = () => false
+const movementClass = (value: number | null) => value === null || value === 0 ? 'krx-flat' : value > 0 ? 'krx-up' : 'krx-down'
 
 function MarketBasis({ data }: { data: KrxOverview }) {
   const status = data.usingPreviousClose ? '이전 정상 종가 사용' : data.reason && data.reason !== 'same-date-data-unavailable' ? krxStateLabels[data.reason] : null
@@ -28,7 +31,14 @@ function MarketBasis({ data }: { data: KrxOverview }) {
 }
 
 export function KrxOverviewStatus({ data, message }: { data?: KrxOverview | null; message?: string }) {
-  return <p role="status">{message ? <>KRX 시장 · {message}</> : data?.tradingDate ? description(data) : state(data)}</p>
+  if (message || !data?.tradingDate) return <p role="status">{message ?? state(data)}</p>
+  return <div role="status" className="krx-collection-status">
+    <span>종가 <time dateTime={data.tradingDate}>{data.tradingDate}</time></span>
+    {data.collectedAt && <span>정상 수집 <time dateTime={data.collectedAt}>{time.format(new Date(data.collectedAt))} KST</time></span>}
+    {data.lastAttemptAt && <span>마지막 시도 <time dateTime={data.lastAttemptAt}>{time.format(new Date(data.lastAttemptAt))} KST</time></span>}
+    {data.usingPreviousClose && <span className="muted-badge">이전 정상 종가 사용</span>}
+    {data.reason && data.reason !== 'same-date-data-unavailable' && <span>{krxStateLabels[data.reason]}</span>}
+  </div>
 }
 
 const rankings = [
@@ -51,12 +61,12 @@ export function KrxMovers({ data, message, summary }: { data?: KrxOverview | nul
           return [{ label, content: rows.length ? <ol className="stock-list ranking-list">
               {(summary ? rows.slice(0, 3) : rows).map(row => <li key={row.market + ':' + row.symbol}>
                 <a className="stock-detail-link" href={link(row)}>
-                  <span className="mover-name" title={row.shortName + (row.mapped ? '' : ' (명칭 미매핑)')}>
-                    {row.shortName}{!row.mapped && ' (명칭 미매핑)'}
+                  <span className="mover-name" title={row.shortName}>
+                    {row.shortName}
                   </span>
                   <small>{row.market} · {row.symbol}</small>
                 </a>
-                <span className={(key === 'advances' || key === 'declines') && row.changePercent ? (row.changePercent > 0 ? 'up' : 'down') : undefined}>{format(row)}</span>
+                <span className={key === 'advances' || key === 'declines' ? movementClass(row.changePercent) : undefined}>{format(row)}</span>
               </li>)}
             </ol> : <p className="state">해당 종목 없음</p> }]
         })} />
@@ -69,10 +79,11 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
   const [active, setActive] = useState<{ key: string; pinned: boolean }>()
   const touch = useRef(false)
   const tooltip = useId()
+  const mobile = useSyncExternalStore(subscribeMobileHeatmap, isMobileHeatmap, desktopHeatmap)
   const selected = useMemo(() => {
     const rows = filter ? data?.marketTiles[filter] : data?.tiles
-    return summary ? rows?.filter(row => (row.marketCap ?? 0) > 0 && row.changePercent !== null).slice(0, 12) : rows
-  }, [data, filter, summary])
+    return rows?.slice(0, summary ? 12 : mobile ? 20 : 60)
+  }, [data, filter, mobile, summary])
   const key = (row: KrxMarketRow) => row.market + ':' + row.symbol
   const focused = selected?.find(row => key(row) === active?.key)
   const groups = useMemo(() => layoutHeatmap(['KOSPI', 'KOSDAQ'].flatMap(market => {
@@ -106,7 +117,7 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
               if (item.changePercent === null) return null
               const background = heatmapColor('KR', item.changePercent)
               const itemKey = key(item)
-              const label = item.shortName + ' · ' + item.symbol + ' · ' + rate(item) + (item.mapped ? '' : ' · 명칭 미매핑')
+              const label = item.shortName + ' · ' + item.symbol + ' · ' + rate(item)
               return <a key={itemKey} href={link(item)} className="heatmap-tile" aria-label={label}
                 aria-describedby={active?.key === itemKey ? tooltip : undefined}
                 onPointerEnter={event => { if (event.pointerType === 'mouse') setActive({ key: itemKey, pinned: false }) }}
@@ -134,7 +145,7 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
           <ul className="stock-list">
             {(summary ? selected?.slice(0, 5) ?? [] : groups.flatMap(group => group.tiles.map(tile => tile.row))).map(row => <li key={key(row)}>
               <a className="stock-detail-link" href={link(row)}>{row.shortName}<small>{row.market} · {row.symbol}</small></a>
-              <span>{!summary && <strong className="heatmap-list-price">{number.format(row.price)}원</strong>}{rate(row)}</span>
+              <span>{!summary && <strong className="heatmap-list-price">{number.format(row.price)}원</strong>}<span className={movementClass(row.changePercent)}>{rate(row)}</span></span>
             </li>)}
           </ul>
         </details>
