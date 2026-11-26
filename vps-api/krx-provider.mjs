@@ -519,7 +519,9 @@ export function createKrxProvider({
     if (persisted && attempt.result === 'available') await unlink(recoverySnapshot(path, target.date)).catch(() => {})
     log({ event: 'krx-collection', endpoint: path, date: attempt.date, at: attempt.at,
       result: published.attempt.result, code: published.attempt.code, latestDate: published.data?.date ?? null,
-      collectedAt: published.data?.collectedAt ?? null, persisted })
+      collectedAt: published.data?.collectedAt ?? null, persisted,
+      elapsedMs: attempt.requests.reduce((total, request) => total + request.elapsedMs, 0),
+      httpStatus: attempt.requests.at(-1)?.httpStatus ?? null, retries: Math.max(0, attempt.requests.length - 1) })
     return published
   }
 

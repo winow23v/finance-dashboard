@@ -1,3 +1,4 @@
+import { ProviderHealth } from './ProviderHealth'
 import { useEffect, useState } from 'react'
 import { membershipApi, MemberApiError, type Member, type MemberPage, type MemberStatus } from '../services/membership'
 
@@ -55,6 +56,7 @@ export function MemberAdmin({ userId }: { userId: string }) {
     <div className="section-heading"><h2>회원 목록</h2>
       <button className="button" disabled={busy} onClick={() => { setError(''); reload(value => value + 1) }}>목록 새로고침</button>
     </div>
+    <ProviderHealth revision={revision} />
     <form className="disclosure-controls" onSubmit={event => {
       event.preventDefault()
       setError('')
