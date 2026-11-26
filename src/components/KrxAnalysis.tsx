@@ -1,7 +1,8 @@
+import { invalidateStockHistory, readKrxStockHistory } from '../services/stockHistoryCache'
 import { LoadingSkeleton } from "./LoadingSkeleton"
 import { SegmentTabs } from "./SegmentTabs"
 import { Clock } from 'lucide-react'
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useRef, useMemo, useState, type ReactNode } from 'react'
 import { FinanceApiError, getKrxAnalysis, getKrxStocks, marketRequestMessage } from '../services/apiFinanceService'
 import { calculatePriceReturns, calculateTechnicalIndicators, emaWindows, smaWindows } from '../services/technicalIndicators'
 import type { KrxAnalysis as Analysis } from '../types/finance'
@@ -27,9 +28,15 @@ export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: {
   const [result, setResult] = useState<{ data: Analysis } | { message: string }>()
   const [listing, setListing] = useState<{ symbol: string; data: KrxStocks }>()
   const [revision, retry] = useState(0)
+  const previousLoad = useRef<{ refresh: number; revision: number } | undefined>(undefined)
   useEffect(() => {
     const controller = new AbortController()
-    void getKrxAnalysis(symbol, controller.signal).then(data => {
+    const force = previousLoad.current !== undefined
+      && (refresh !== previousLoad.current.refresh || revision !== previousLoad.current.revision)
+    previousLoad.current = { refresh, revision }
+    if (force) invalidateStockHistory('KR', symbol)
+    const load = force ? getKrxAnalysis(symbol, controller.signal) : readKrxStockHistory(symbol)
+    void load.then(data => {
       if (controller.signal.aborted) return
       setResult({ data })
       onRefreshResult?.("stock", !data.latestDate || data.reason === 'provider-error')

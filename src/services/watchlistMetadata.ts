@@ -1,5 +1,6 @@
 import { isKrxAfterHours, isNumber, isRecord } from './apiFinanceService'
-import { fetchMemberApi } from './memberTransport'
+import { createRequestCache } from './requestCache'
+import { fetchMemberApi, memberDataEpoch } from './memberTransport'
 import { findMarketListing, marketListings } from './marketListings'
 import { isWatchlistSymbol } from './watchlist'
 import { marketSymbolKey, type MarketSymbol } from '../types/marketSymbol'
@@ -28,10 +29,18 @@ export function krxObservation(stock: KrxStock): Observation {
   return { name: stock.name, segment: stock.market, currency: 'KRW', quote: stock.quote ?? undefined }
 }
 
-export async function watchlistObservations(items: MarketSymbol[], signal: AbortSignal) {
+const quoteBatches = createRequestCache<Map<string, Observation>>(24, 30_000)
+
+export function watchlistObservations(items: MarketSymbol[], signal: AbortSignal) {
+  signal.throwIfAborted()
+  const key = JSON.stringify([memberDataEpoch(), items.map(marketSymbolKey).sort()])
+  return quoteBatches.load(key, () => fetchWatchlistObservations(items))
+}
+
+async function fetchWatchlistObservations(items: MarketSymbol[]) {
   const response = await fetchMemberApi('/api/v1/market/watchlist/observations', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ items }),
-    signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+    signal: AbortSignal.timeout(15_000),
   })
   if (!response.ok) throw new Error('Watchlist metadata request failed')
   const data: unknown = await response.json()

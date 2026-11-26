@@ -1,6 +1,7 @@
+import { invalidateStockHistory, readUsStockHistory } from '../services/stockHistoryCache'
 import { LoadingSkeleton } from "./LoadingSkeleton"
 import { SegmentTabs } from "./SegmentTabs"
-import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useRef, useMemo, useState, type ReactNode } from 'react'
 import { getUsAnalysis, marketRequestMessage } from '../services/apiFinanceService'
 import { calculatePriceReturns, calculateTechnicalIndicators, emaWindows, smaWindows } from '../services/technicalIndicators'
 import { Change } from './QuoteDisplay'
@@ -27,9 +28,15 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0, onRefreshResul
   const [requestedAt, setRequestedAt] = useState<number>()
   const requested = requestedAt === refresh
   const [revision, retry] = useState(0)
+  const previousLoad = useRef<{ refresh: number; revision: number } | undefined>(undefined)
   useEffect(() => {
     const controller = new AbortController()
-    void getUsAnalysis(symbol, controller.signal, requested, indexId).then(data => {
+    const force = previousLoad.current !== undefined
+      && (refresh !== previousLoad.current.refresh || revision !== previousLoad.current.revision)
+    previousLoad.current = { refresh, revision }
+    if (!indexId && (force || requested)) invalidateStockHistory('US', symbol)
+    const load = force || requested || indexId ? getUsAnalysis(symbol, controller.signal, requested, indexId) : readUsStockHistory(symbol)
+    void load.then(data => {
       if (controller.signal.aborted) return
       setState({ data })
       onRefreshResult?.("stock", data.status === 'unavailable' || data.reason === 'provider-error' || data.reason === 'rate-limited')
