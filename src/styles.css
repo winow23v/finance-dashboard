@@ -839,6 +839,10 @@ html { scroll-padding-top: 70px; }
 .data-message[data-state="success"] { border-inline-start-color: var(--accent); }
 .data-message[data-state="error"] { border-inline-start-color: var(--red); }
 .data-message:is([data-state="stale"], [data-state="rate-limited"]) { border-inline-start-color: var(--favorite); }
+.watch-view-controls { display: flex; flex-wrap: wrap; gap: .75rem; padding-inline: var(--terminal-inset); }
+.watch-view-controls label { display: flex; align-items: center; gap: .35rem; }
+.watch-analysis { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.watch-analysis small { overflow-wrap: anywhere; }
 .watch-workspace .panel-heading { flex-wrap: wrap; }
 .watch-market-group { padding-inline: var(--terminal-inset); }
 .watch-market-group h3 { display: flex; align-items: baseline; gap: 8px; margin-block: 8px 4px; font-size: .875rem; }
@@ -1076,8 +1080,3 @@ span.chart-body { display: block; }
   white-space: nowrap;
 }
 .krx-analysis .stock-identity h1 { overflow-wrap: anywhere; }
-
-.watch-view-controls { display: flex; flex-wrap: wrap; gap: .75rem; padding-inline: var(--terminal-inset); }
-.watch-view-controls label { display: flex; align-items: center; gap: .35rem; }
-.watch-analysis { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
-.watch-analysis small { overflow-wrap: anywhere; }
