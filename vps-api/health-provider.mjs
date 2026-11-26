@@ -13,7 +13,7 @@ function resultStatus(data, error, configured) {
   if (error || data?.reason === 'provider-error') {
     return data?.tradingDate || data?.reference?.observationDate || data?.collectedAt ? 'Stale' : 'Unavailable'
   }
-  if (data?.filingsError || data?.financialsError || data?.indicators?.some(item => item.status === 'error')) return 'Degraded'
+  if (data?.filingsError || data?.financialsError || data?.indicators?.some(item => item.status === 'unavailable' && safeCode(item.code))) return 'Degraded'
   // A scheduled collection window or closed market can legitimately have no fresh observation.
   if (data?.status === 'unavailable' && !['collecting', 'not-published', 'weekend', 'before-collection'].includes(data.reason)) return 'Unavailable'
   if (data?.usingPreviousClose && !['weekend', 'before-collection', 'not-published'].includes(data.reason)) return 'Stale'
@@ -59,10 +59,18 @@ export function createProviderHealth({ configured = {}, clock = Date.now, alertD
     const detail = data?.reference ?? data
     const errorCode = safeCode(data?.refreshError) ?? (error instanceof ProviderError ? safeCode(error.code) : null)
     const status = error && !errorCode ? 'Unavailable' : resultStatus(data, errorCode, configured[provider] !== false)
+    const published = provider === 'ecos' ? (data?.indicators ?? []).filter(item => item.status === 'published') : []
+    const newest = values => values.filter(Boolean).sort().at(-1)
     const date = detail?.observationDate ?? data?.tradingDate ?? data?.quote?.tradingDate ?? data?.latestDate
+      ?? newest(published.map(item => isDay(item.observationDate) ? item.observationDate : null))
+      ?? (provider === 'dart' && newest((data?.filings ?? []).map(item => isDay(item.filedAt) ? item.filedAt : null)))
+    const succeededAt = timestamp(detail?.collectedAt) ?? newest(published.map(item => timestamp(item.collectedAt)))
+      ?? (provider === 'dart' && status === 'Healthy' ? new Date(clock()).toISOString() : null)
     record(provider, status, {
-      succeededAt: timestamp(detail?.collectedAt), observationDate: isDay(date) ? date : null,
-      responseMs, httpStatus: error ? error.statusCode ?? 500 : 200, errorCode,
+      succeededAt, observationDate: isDay(date) ? date : null,
+      responseMs, httpStatus: error ? error.statusCode ?? 500 : 200,
+      errorCode: errorCode ?? safeCode(data?.filingsError) ?? safeCode(data?.financialsError)
+        ?? (provider === 'ecos' ? (data?.indicators ?? []).map(item => safeCode(item.code)).find(Boolean) : null),
       usedCache: data?.usingPreviousClose === true || Boolean(data?.refreshError) || data?.status === 'stale' ? true : null,
     })
   }

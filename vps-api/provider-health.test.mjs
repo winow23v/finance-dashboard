@@ -36,3 +36,21 @@ test('operational health endpoint requires approved administrator', async t => {
   assert.equal(result.statusCode, 200)
   assert.equal(result.json().alerts.mode, 'test')
 })
+
+test('ECOS partial failure is distinct from a missing release and DART records a successful query', async () => {
+  const date = '2026-11-25'
+  const now = '2026-11-26T00:00:00.000Z'
+  const health = createProviderHealth({ clock: () => Date.parse(now) })
+  const rows = () => Object.fromEntries(health.snapshot().providers.map(row => [row.provider, row]))
+  const observation = { status: 'published', observationDate: date, collectedAt: now }
+  await health.observe('ecos', () => ({ indicators: [observation, { status: 'unavailable' }] }))
+  assert.equal(rows().ecos.status, 'Healthy')
+  assert.equal(rows().ecos.observationDate, date)
+  assert.equal(rows().ecos.succeededAt, now)
+  await health.observe('ecos', () => ({ indicators: [observation, { status: 'unavailable', code: 'ECOS_TIMEOUT' }] }))
+  assert.equal(rows().ecos.status, 'Degraded')
+  assert.equal(rows().ecos.errorCode, 'ECOS_TIMEOUT')
+  await health.observe('dart', () => ({ filings: [{ filedAt: date }] }))
+  assert.equal(rows().dart.succeededAt, now)
+  assert.equal(rows().dart.observationDate, date)
+})
