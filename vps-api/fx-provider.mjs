@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises'
 import { invalidResponse, isDay, providerClient } from './public-provider.mjs'
 
 export const pairs = ['USD/KRW', 'EUR/KRW', 'USD/JPY']
@@ -38,7 +39,13 @@ export function createFxProvider({ fetchImpl = fetch, clock = Date.now, timeoutM
     const from = startDate(today, '1Y')
     const earliestAnchor = new Date(Date.parse(from) - 7 * 86_400_000).toISOString().slice(0, 10)
     const query = new URLSearchParams({ base: 'EUR', quotes: ecbQuotes.join(','), providers: 'ecb', from, to: today })
-    const rows = await get(`https://api.frankfurter.dev/v2/rates?${query}`)
+    const url = `https://api.frankfurter.dev/v2/rates?${query}`
+    const rows = await get(url).catch(async error => {
+      if (error.code !== 'PROVIDER_TIMEOUT' && !error.transientNetwork) throw error
+      // Keep the two six-second attempts inside the browser's 15-second deadline.
+      await delay(500)
+      return get(url)
+    })
     if (!Array.isArray(rows) || !rows.length || rows.length > 367 * ecbQuotes.length) throw invalidResponse()
     const byDate = new Map()
     let anchor
