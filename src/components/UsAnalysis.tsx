@@ -48,6 +48,25 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0, onRefreshResul
   const aligned = !!quote && history?.bars.at(-1)?.tradingDate === quote.tradingDate
   const indicators = useMemo(() => history && aligned ? calculateTechnicalIndicators(history) : null, [history, aligned])
   const returns = useMemo(() => history && indicators ? calculatePriceReturns(history) : {}, [history, indicators])
+  const priceHistory = data && data.status !== 'unavailable' ? <SegmentTabs label="시세 데이터" items={[
+          ...(history ? [{ label: '차트', content: <Suspense fallback={<LoadingSkeleton message="가격 차트를 준비하는 중입니다." shape="chart" />}>
+          <StockHistoryChart history={history} />
+        </Suspense> }] : []),
+          { label: '표', content:
+          <div className="us-history-scroll chart-data-scroll" tabIndex={0} role="region" aria-label="최근 20거래일 시세 표">
+            <table className="us-history-table">
+              <caption className="sr-only">최근 20거래일 OHLCV · {indexId ? '지수 종가' : '배당·분할 조정 가격'}</caption>
+              <thead><tr>{['거래일', '시가', '고가', '저가', '종가', '거래량'].map(label =>
+                <th key={label} scope="col">{label}</th>)}</tr></thead>
+              <tbody>{data.history.bars.slice(-20).reverse().map(bar => <tr key={bar.tradingDate}>
+                <th scope="row">{bar.tradingDate}</th>
+                {[bar.open, bar.high, bar.low, bar.close, bar.volume].map((value, index) =>
+                  <td key={index} title={index === 4 ? undefined : String(value)}>{index === 4 ? (indexId && value === 0 ? '미제공' : formatVolume(value)) : formatAnalysisPrice(value, unit)}</td>)}
+              </tr>)}</tbody>
+            </table>
+          </div>
+          },
+        ]} /> : null
   return <section className={stock ? "panel stock-detail krx-analysis terminal-detail" : "panel stock-detail krx-analysis"}
     aria-label={stock ? "종목 상세" : "기술적 분석"}>
     {stock && !quote && <header className="stock-identity"><h1>{stock.name}</h1><small>{stock.meta}</small>{stock.actions}</header>}
@@ -78,26 +97,8 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0, onRefreshResul
               <button className="button" type="button" onClick={() => setRequestedAt(refresh)}>갱신 요청</button>}
           </>}
         </header>
-        <SegmentTabs label="시세 데이터" items={[
-          ...(history ? [{ label: '차트', content: <Suspense fallback={<LoadingSkeleton message="가격 차트를 준비하는 중입니다." shape="chart" />}>
-          <StockHistoryChart history={history} />
-        </Suspense> }] : []),
-          { label: '표', content:
-          <div className="us-history-scroll chart-data-scroll" tabIndex={0} role="region" aria-label="최근 20거래일 시세 표">
-            <table className="us-history-table">
-              <caption className="sr-only">최근 20거래일 OHLCV · {indexId ? '지수 종가' : '배당·분할 조정 가격'}</caption>
-              <thead><tr>{['거래일', '시가', '고가', '저가', '종가', '거래량'].map(label =>
-                <th key={label} scope="col">{label}</th>)}</tr></thead>
-              <tbody>{data.history.bars.slice(-20).reverse().map(bar => <tr key={bar.tradingDate}>
-                <th scope="row">{bar.tradingDate}</th>
-                {[bar.open, bar.high, bar.low, bar.close, bar.volume].map((value, index) =>
-                  <td key={index} title={index === 4 ? undefined : String(value)}>{index === 4 ? (indexId && value === 0 ? '미제공' : formatVolume(value)) : formatAnalysisPrice(value, unit)}</td>)}
-              </tr>)}</tbody>
-            </table>
-          </div>
-          },
-        ]} />
-        {history && <TechnicalSummary indicators={indicators} history={history} index={!!indexId} stale={data.status === 'stale'} />}
+        {history ? <TechnicalSummary indicators={indicators} history={history} index={!!indexId}
+          stale={data.status === 'stale'} chart={priceHistory} /> : priceHistory}
         {indicators && <section className="technical-detail-group technical-tabs" aria-label="기술적 지표 상세">
             <h3>기술적 지표 상세</h3>
             <SegmentTabs label="기술적 지표" items={[
