@@ -111,16 +111,22 @@ export function calculateTechnicalIndicators(history: MarketDailyHistory, option
   if (history.completeness !== 'complete' || !bars.length || !validBars(bars)) return null
   const closes = bars.map(bar => bar.close)
   const changes = closes.slice(1).map((close, index) => close - closes[index])
-  const gains = wilder(changes.map(delta => Math.max(delta, 0)))
-  const losses = wilder(changes.map(delta => Math.max(-delta, 0)))
-  const rsi14 = gains === undefined || losses === undefined ? null
-    : losses === 0 ? (gains === 0 ? 50 : 100) : 100 - 100 / (1 + gains / losses)
+  const rsi = rsiSeries(changes)
+  const rsi14 = rsi.at(-1) ?? null
+  const previousRsi = rsi.at(-2)
+  const rsiDirection = rsi14 !== null && previousRsi !== undefined ? Math.sign(rsi14 - previousRsi) : null
+  const priceDirection = changes.length ? Math.sign(changes.at(-1)!) : null
   const ranges = bars.slice(1).map(({ high, low }, index) =>
     Math.max(high - low, Math.abs(high - closes[index]), Math.abs(low - closes[index])))
-  const fast = ema(closes, 12)
-  const macdSeries = ema(closes, 26).map((slow, index) => fast[index + 14] - slow)
+  const { line: macdSeries, signal: macdSignal } = macdSeriesFor(closes)
   const line = latest(macdSeries)
-  const signal = latest(ema(macdSeries, 9))
+  const signal = latest(macdSignal)
+  const previousHistogram = macdSeries.length > 1 && macdSignal.length > 1
+    ? macdSeries.at(-2)! - macdSignal.at(-2)! : null
+  const histogram = line === null || signal === null ? null : line - signal
+  const macdCross = histogram === null || previousHistogram === null ? null
+    : histogram > 0 && previousHistogram <= 0 ? 'up'
+      : histogram < 0 && previousHistogram >= 0 ? 'down' : null
   const last = bars[bars.length - 1]
   const sma = Object.fromEntries(smaWindows.map(period => [period, average(closes, period)]))
   const priorCloses = closes.slice(0, -1)
@@ -149,10 +155,12 @@ export function calculateTechnicalIndicators(history: MarketDailyHistory, option
     sma,
     ema: Object.fromEntries(emaWindows.map(period => [period, latest(ema(closes, period))])),
     sma20Slope: middle === null || previousSma20 === null ? null : middle - previousSma20,
-    rsi14,
-    macd: { line, signal, histogram: line === null || signal === null ? null : line - signal },
+    rsi14, rsiDirection, priceDirection,
+    macd: { line, signal, histogram },
+    macdCross,
     volumeSma20,
-    volume: { latest: last.volume, sma5: average(volumes, 5), prior20, ratio: volumeRatio,
+    volumeSma50: average(volumes, 50),
+    volume: { latest: last.volume, direction: volumes.length > 1 ? Math.sign(last.volume - volumes.at(-2)!) : null, sma5: average(volumes, 5), prior20, ratio: volumeRatio,
       spikeThreshold, spike: volumeRatio === null ? null : volumeRatio >= spikeThreshold },
     atr14: wilder(ranges) ?? null,
     prior: { sma: previousSma, atr14: wilder(ranges.slice(0, -1)) ?? null },
@@ -160,6 +168,62 @@ export function calculateTechnicalIndicators(history: MarketDailyHistory, option
     bands,
     cross: movingAverageCross(bars),
   }
+}
+
+function rsiSeries(changes: readonly number[]) {
+  const gain = smoothed(changes.map(delta => Math.max(delta, 0)), wilderPeriod, 1 / wilderPeriod)
+  const loss = smoothed(changes.map(delta => Math.max(-delta, 0)), wilderPeriod, 1 / wilderPeriod)
+  return gain.map((up, index) => loss[index] === 0 ? (up === 0 ? 50 : 100) : 100 - 100 / (1 + up / loss[index]))
+}
+
+function macdSeriesFor(closes: readonly number[]) {
+  const fast = ema(closes, 12)
+  const line = ema(closes, 26).map((slow, index) => fast[index + 14] - slow)
+  return { line, signal: ema(line, 9) }
+}
+
+export function completedWeeklyBars(history: MarketDailyHistory): DailyOhlcvBar[] {
+  if (history.completeness !== 'complete' || !validBars(history.bars)) return []
+  const weeks = new Map<number, DailyOhlcvBar>()
+  for (const bar of history.bars) {
+    const day = new Date(bar.tradingDate)
+    const monday = day.getTime() - ((day.getUTCDay() + 6) % 7) * 86_400_000
+    const week = weeks.get(monday)
+    weeks.set(monday, week ? {
+      tradingDate: bar.tradingDate, open: week.open, high: Math.max(week.high, bar.high),
+      low: Math.min(week.low, bar.low), close: bar.close, volume: week.volume + bar.volume,
+    } : { ...bar })
+  }
+  // The range may begin midweek. The last observed week has no later session
+  // to establish that its collection window has ended.
+  return [...weeks.values()].slice(1, -1).filter(week => Number.isSafeInteger(week.volume))
+}
+
+export function technicalChartSeries(history: MarketDailyHistory, includeIndicators = true) {
+  const { bars } = history
+  if (!validBars(bars)) return []
+  const valid = includeIndicators && history.completeness === 'complete'
+  const closes = bars.map(bar => bar.close)
+  const volumes = bars.map(bar => bar.volume)
+  const averages = emaWindows.map(period => ema(closes, period))
+  const rsi = rsiSeries(closes.slice(1).map((close, index) => close - closes[index]))
+  const macd = macdSeriesFor(closes)
+  return bars.map((bar, index) => {
+    const sma = (values: number[], period: number) =>
+      valid ? average(values.slice(Math.max(0, index + 1 - period), index + 1), period) : null
+    const line = valid ? macd.line[index - 25] ?? null : null
+    const signal = valid ? macd.signal[index - 33] ?? null : null
+    return {
+      ...bar, candleRange: [bar.low, bar.high], sma20: sma(closes, 20), sma50: sma(closes, 50), sma365: sma(closes, 365),
+      ema20: valid ? averages[0][index - 19] ?? null : null,
+      ema50: valid ? averages[1][index - 49] ?? null : null,
+      ema100: valid ? averages[2][index - 99] ?? null : null,
+      ema200: valid ? averages[3][index - 199] ?? null : null,
+      volume20: sma(volumes, 20), volume50: sma(volumes, 50),
+      rsi: valid ? rsi[index - 14] ?? null : null,
+      macd: line, signal, histogram: line === null || signal === null ? null : line - signal,
+    }
+  })
 }
 
 export type TechnicalIndicators = NonNullable<ReturnType<typeof calculateTechnicalIndicators>>

@@ -137,7 +137,7 @@ test('relative volume compares the same confirmed bar with the prior twenty bars
   const result = calculateTechnicalIndicators(data, { volumeSpikeThreshold: 2.5 })
   assert.equal(result.tradingDate, data.bars[20].tradingDate)
   assert.equal(result.volumeSma20, 105)
-  assert.deepEqual(result.volume, { latest: 200, sma5: 120, prior20: 100, ratio: 2, spikeThreshold: 2.5, spike: false })
+  assert.deepEqual(result.volume, { latest: 200, direction: 1, sma5: 120, prior20: 100, ratio: 2, spikeThreshold: 2.5, spike: false })
   assert.equal(calculateTechnicalIndicators(data).volume.spike, true)
   assert.equal(calculateTechnicalIndicators({ ...data, bars: data.bars.slice(1) }).volume.ratio, null)
   for (const bar of data.bars.slice(0, -1)) bar.volume = 0
@@ -394,4 +394,41 @@ test('one rebound session in a downtrend still keeps the entry perspective on wa
   const assessment = assess(data)
   assert.equal(assessment.trend, 'down')
   assert.equal(buildTechnicalScenarios(assessment, indicators).entry.mode, 'watch')
+})
+
+test('chart indicators align with completed bars and never read future prices', async () => {
+  const { technicalChartSeries } = await import('./technicalIndicators.ts')
+  const input = history(ramp(366))
+  const points = technicalChartSeries(input)
+  assert.equal(points[13].rsi, null)
+  assert.equal(points[14].rsi, 100)
+  assert.equal(points[18].ema20, null)
+  assert.equal(points[19].ema20, 109.5)
+  assert.equal(points[24].macd, null)
+  assert.equal(points[25].macd, 7)
+  assert.equal(points[32].signal, null)
+  assert.equal(points[33].histogram, 0)
+  assert.equal(points[49].volume50, 124.5)
+  assert.equal(points[363].sma365, null)
+  assert.equal(points[364].sma365, 282)
+  assert.deepEqual(technicalChartSeries(history(ramp(200))), points.slice(0, 200))
+  assert.equal(technicalChartSeries({ ...input, completeness: 'missing-observations' }).at(-1).ema200, null)
+})
+
+test('trendline requires two pivots confirmed by two subsequent bars', async () => {
+  const { priceStructure } = await import('./technicalAssessment.ts')
+  const input = history([100, 102, 110, 104, 102, 105, 114, 106, 104]).bars
+  assert.equal(priceStructure(input.slice(0, -1)).upper, null)
+  assert.equal(priceStructure(input).upper.slope, 1)
+  assert.equal(priceStructure(input).upper.latest, 117)
+  assert.equal(priceStructure(input).channel, null)
+})
+
+test('weekly OHLCV uses observed sessions only and excludes range-edge weeks', async () => {
+  const { completedWeeklyBars } = await import('./technicalIndicators.ts')
+  const source = history(ramp(16))
+  const expected = { tradingDate: '2024-01-14', open: 107, high: 114, low: 106, close: 113, volume: 770 }
+  assert.deepEqual(completedWeeklyBars(source), [expected])
+  assert.deepEqual(completedWeeklyBars({ ...source, completeness: 'missing-observations' }), [])
+  assert.deepEqual(completedWeeklyBars({ ...source, bars: source.bars.slice(0, 14) }), [])
 })

@@ -84,6 +84,28 @@ function structure(bars: readonly DailyOhlcvBar[], indicators: TechnicalIndicato
   }
 }
 
+export function priceStructure(bars: readonly DailyOhlcvBar[]) {
+  const highs: { index: number; price: number; date: string }[] = []
+  const lows: typeof highs = []
+  for (let index = Math.max(pivotRadius, bars.length - 120); index < bars.length - pivotRadius; index++) {
+    const bar = bars[index]
+    const neighbors = [...bars.slice(index - pivotRadius, index), ...bars.slice(index + 1, index + 1 + pivotRadius)]
+    if (neighbors.every(row => row.high < bar.high)) highs.push({ index, price: bar.high, date: bar.tradingDate })
+    if (neighbors.every(row => row.low > bar.low)) lows.push({ index, price: bar.low, date: bar.tradingDate })
+  }
+  const line = (anchors: typeof highs) => {
+    const [from, to] = anchors.slice(-2)
+    if (!to) return null
+    const slope = (to.price - from.price) / (to.index - from.index)
+    return { from, to, slope, latest: to.price + slope * (bars.length - 1 - to.index) }
+  }
+  const upper = line(highs)
+  const lower = line(lows)
+  const channel = upper && lower && lower.latest > 0 && upper.latest > lower.latest &&
+    Math.sign(upper.slope) === Math.sign(lower.slope) ? { upper: upper.latest, lower: lower.latest } : null
+  return { upper, lower, channel }
+}
+
 type Trend = 'up' | 'down' | 'sideways' | 'turn-up' | 'turn-down' | 'unavailable'
 type Entry = 'pullback' | 'breakout' | 'chase' | 'watch' | 'unavailable'
 
@@ -141,6 +163,6 @@ export function assessTechnicalTrend(bars: readonly DailyOhlcvBar[], indicators:
   ]
   const invalidation = trend === 'up' || trend === 'turn-up' ? zones.support[0]?.low
     : trend === 'down' || trend === 'turn-down' ? zones.resistance[0]?.high : undefined
-  return { tradingDate, trend, entry, reasons, risks, zones, invalidation,
+  return { tradingDate, trend, entry, reasons, risks, zones, invalidation, priceStructure: priceStructure(bars),
     breakVolumeConfirmed: zones.breakUp || zones.breakDown ? volume.spike : null }
 }
