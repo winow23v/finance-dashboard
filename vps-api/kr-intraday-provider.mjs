@@ -16,6 +16,7 @@ function normalize(row, instrument, tradingDate, now, source) {
       (row.turnover !== null && !nonnegative(row.turnover)) ||
       (row.delayMinutes !== null && (!Number.isSafeInteger(row.delayMinutes) || row.delayMinutes < 0)) ||
       typeof row.observedAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d\d:\d\d:\d\d(?:\.\d+)?(?:Z|\+09:00)$/.test(row.observedAt)) return null
+  if (!isDay(row.observedAt.slice(0, 10)) || koreanDate(now) !== tradingDate) return null
   const observedAt = Date.parse(row.observedAt)
   if (!Number.isFinite(observedAt) || observedAt > now || koreanDate(observedAt) !== tradingDate) return null
   const change = row.price - row.previousClose
@@ -49,7 +50,7 @@ export function createKrxIntradayProvider({ read, approvalFor, tradingSession, c
         return unavailable('not-configured')
       const now = clock()
       const session = tradingSession?.(now, instrument)
-      if (!isDay(session?.tradingDate) || !session.open) return unavailable('market-closed')
+      if (!session?.open || session.tradingDate !== koreanDate(now)) return unavailable('market-closed')
       const { tradingDate } = session
       const key = JSON.stringify([approval.source, market, symbol, tradingDate])
       const previous = cache.get(key)

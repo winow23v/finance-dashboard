@@ -45,3 +45,14 @@ test('honors Retry-After and never retries inside the same quote', async () => {
   now += 2_000
   assert.equal((await provider.quote(instrument)).status, 'available')
 })
+
+test('rejects an old KST session before requesting and does not roll invalid dates forward', async () => {
+  const oldSession = createKrxIntradayProvider({ ...options, clock: () => options.clock() + 86_400_000,
+    read: () => assert.fail('a previous session cannot trigger a request') })
+  assert.equal((await oldSession.quote(instrument)).reason, 'market-closed')
+  const day = '2026-03-02'
+  const malformed = createKrxIntradayProvider({ ...options, clock: () => Date.parse(day + 'T03:00Z'),
+    tradingSession: () => ({ tradingDate: day, open: true }),
+    read: async () => ({ ...sample, tradingDate: day, observedAt: '2026-02-30T11:10:00+09:00' }) })
+  assert.equal((await malformed.quote(instrument)).reason, 'invalid-observation')
+})
