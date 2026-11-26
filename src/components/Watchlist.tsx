@@ -4,8 +4,30 @@ import { marketSymbolKey, type EquityMarket, type MarketSymbol } from '../types/
 import { marketListings, stockHref } from '../services/marketListings'
 import { favoriteKey, isWatchlistSymbol } from '../services/watchlist'
 import { regularQuoteStatus } from './KrxAfterHoursStatus'
-import { getKrxStocks } from '../services/apiFinanceService'
+import { getKrxAnalysis, getKrxStocks, getUsAnalysis } from '../services/apiFinanceService'
 import { krxObservation, registeredObservation, watchlistObservations, type Observation } from '../services/watchlistMetadata'
+
+import { memberDataEpoch } from '../services/memberTransport'
+import { createRequestCache } from '../services/requestCache'
+import { calculateTechnicalIndicators } from '../services/technicalIndicators'
+import { assessTechnicalTrend } from '../services/technicalAssessment'
+import { rankWatchlist, type WatchlistSort, type WatchlistTrend } from '../services/watchlistView'
+
+type AnalysisSummary = { date: string; trend: WatchlistTrend; rsi: number | null; aboveEma20: boolean | null }
+const analysisCache = createRequestCache<AnalysisSummary | null>(64, 5 * 60_000)
+const trendLabels: Record<WatchlistTrend, string> = {
+  up: '상승', down: '하락', sideways: '횡보', 'turn-up': '상승 전환 후보', 'turn-down': '하락 전환 후보', unavailable: '추세 자료 부족',
+}
+
+async function loadAnalysis(listing: MarketSymbol) {
+  const signal = AbortSignal.timeout(15_000)
+  const result = await (listing.market === 'KR' ? getKrxAnalysis(listing.symbol, signal) : getUsAnalysis(listing.symbol, signal))
+  if (!('history' in result) || !result.quote || result.history.bars.at(-1)?.tradingDate !== result.quote.tradingDate) return null
+  const indicators = calculateTechnicalIndicators(result.history)
+  if (!indicators) return null
+  return { date: indicators.tradingDate, trend: assessTechnicalTrend(result.history.bars, indicators).trend,
+    rsi: indicators.rsi14, aboveEma20: indicators.ema[20] === null ? null : indicators.close > indicators.ema[20] }
+}
 
 type Props = {
   selected: MarketSymbol[]; onToggle: (symbol: MarketSymbol) => void; market?: EquityMarket
@@ -18,8 +40,8 @@ const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
 const usd = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const percent = new Intl.NumberFormat('ko-KR', { signDisplay: 'exceptZero', maximumFractionDigits: 2 })
 
-function StockList({ rows, saved, onToggle, label, blocked, showQuoteStatus }: {
-  rows: Row[]; saved: Set<string>; onToggle: Props['onToggle']; label: string; blocked?: boolean; showQuoteStatus?: boolean
+function StockList({ rows, saved, onToggle, label, blocked, showQuoteStatus, analysisControls }: {
+  rows: Row[]; saved: Set<string>; onToggle: Props['onToggle']; label: string; blocked?: boolean; showQuoteStatus?: boolean; analysisControls?: (listing: MarketSymbol) => React.ReactNode
 }) {
   return <ul className="stock-list" aria-label={label}>
     {rows.map(({ listing, observation }) => {
@@ -46,6 +68,7 @@ function StockList({ rows, saved, onToggle, label, blocked, showQuoteStatus }: {
         <button type="button" className="favorite-button" disabled={blocked} aria-pressed={active}
           aria-label={(name ?? listing.symbol) + (active ? ' 관심종목에서 삭제' : ' 관심종목에 추가')}
           onClick={() => onToggle(listing)}><Star size={19} fill={active ? 'currentColor' : 'none'} aria-hidden="true" /></button>
+        {analysisControls?.(listing)}
         {(quote || status) && <div className="watch-basis">
           {quote && <small><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가</small>}
           {status && <small className="muted-badge">{status}</small>}
@@ -56,6 +79,24 @@ function StockList({ rows, saved, onToggle, label, blocked, showQuoteStatus }: {
 }
 
 export function Watchlist({ selected, onToggle, market, blocked, loading, live, summary, standalone, storage }: Props) {
+  const [order, setOrder] = useState<WatchlistSort>('saved')
+  const [region, setRegion] = useState<'all' | EquityMarket>('all')
+  const [trend, setTrend] = useState<'all' | WatchlistTrend>('all')
+  const [analysisKey, setAnalysisKey] = useState<string>()
+  const [analysisBusy, setAnalysisBusy] = useState(false)
+  const [analysisResults, setAnalysisResults] = useState(new Map<string, AnalysisSummary | null>())
+  const epoch = memberDataEpoch()
+  const analysisFor = (listing: MarketSymbol) => analysisResults.get(JSON.stringify([epoch, marketSymbolKey(listing)]))
+  const showAnalysis = (listing: MarketSymbol) => {
+    const key = JSON.stringify([epoch, marketSymbolKey(listing)])
+    if (analysisKey === key) { setAnalysisKey(undefined); return }
+    setAnalysisKey(key)
+    setAnalysisBusy(true)
+    void analysisCache.load(key, () => loadAnalysis(listing))
+      .then(data => setAnalysisResults(previous => new Map([...previous, [key, data]])),
+        () => setAnalysisResults(previous => new Map([...previous, [key, null]])))
+      .finally(() => setAnalysisBusy(false))
+  }
   const [query, setQuery] = useState('')
   const [observations, setObservations] = useState(new Map<string, Observation>())
   const [quoteStatus, setQuoteStatus] = useState<'loading' | 'ready' | 'error'>()
@@ -67,7 +108,12 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
   const saved = new Set(selected.map(favoriteKey))
   const inMarket = (listing: MarketSymbol) => !market || market === listing.market
   const marketRows = selected.filter(inMarket)
-  const rows = summary ? marketRows.slice(0, 3) : marketRows
+  const rows = summary ? marketRows.slice(0, 3) : standalone
+    ? rankWatchlist(marketRows.filter(item => (region === 'all' || item.market === region)
+      && (trend === 'all' || (analysisFor(item)?.trend ?? 'unavailable') === trend)), order,
+      item => observations.get(marketSymbolKey(item))?.name ?? registeredObservation(item).name ?? item.symbol,
+      item => observations.get(marketSymbolKey(item))?.quote?.changePercent)
+    : marketRows
   const term = query.trim().slice(0, 64)
   const domesticSearch = live && market !== 'US' && term.length > 0
   const searchResult = domesticSearch && search?.query === term ? search : undefined
@@ -135,7 +181,19 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
   const renderRows = (items: MarketSymbol[], label: string) => <StockList
     rows={items.map(listing => ({ listing, observation: observations.get(marketSymbolKey(listing)) }))}
     saved={saved} onToggle={onToggle} label={label} blocked={blocked}
-    showQuoteStatus={standalone && live && quoteStatus === 'ready'} />
+    showQuoteStatus={standalone && live && quoteStatus === 'ready'}
+    analysisControls={standalone && live ? listing => {
+      const expanded = analysisKey === JSON.stringify([epoch, marketSymbolKey(listing)])
+      const data = analysisFor(listing)
+      return <div className="watch-analysis">
+        <button type="button" className="button" aria-expanded={expanded} disabled={analysisBusy}
+          onClick={() => showAnalysis(listing)}>기술 요약</button>
+        {expanded && <small role="status">{analysisBusy ? '확정 일봉을 확인하는 중입니다.' : !data ? '분석 자료 부족'
+          : <><time dateTime={data.date}>{data.date}</time> · {trendLabels[data.trend]} · RSI {data.rsi === null ? '자료 부족'
+            : data.rsi >= 70 ? '과매수 구간' : data.rsi <= 30 ? '과매도 구간' : '중립 구간'}
+            {data.aboveEma20 !== null && ' · EMA 20 ' + (data.aboveEma20 ? '위' : '이하')}</>}</small>}
+      </div>
+    } : undefined} />
 
   return <section className={summary ? 'panel watch-panel overview-watch' : standalone ? 'panel watch-panel watch-workspace' : 'panel watch-panel'}>
     <div className="panel-heading">
@@ -147,6 +205,17 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
         input.current?.focus()
       }}><Plus size={16} aria-hidden="true" /> 종목 검색</button>
     </div>
+    {standalone && marketRows.length > 0 && <div className="watch-view-controls terminal-filters">
+      <label>시장 <select value={region} onChange={event => setRegion(event.target.value as typeof region)}>
+        <option value="all">전체</option><option value="KR">국내</option><option value="US">해외</option>
+      </select></label>
+      <label>정렬 <select value={order} onChange={event => setOrder(event.target.value as WatchlistSort)}>
+        <option value="saved">등록 순서</option><option value="name">종목명</option><option value="change">등락률</option>
+      </select></label>
+      {live && <label>확인한 추세 <select value={trend} onChange={event => setTrend(event.target.value as typeof trend)}>
+        <option value="all">전체</option>{Object.entries(trendLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+      </select></label>}
+    </div>}
     {standalone && rows.length > 0 && (quoteStatus === 'loading' || quoteStatus === 'error') &&
       <p className="data-message watch-quote-message" data-state={quoteStatus} role="status">
         {quoteStatus === 'loading' ? '종가 정보를 불러오는 중입니다.' : '일부 종가를 조회하지 못했습니다. 기존 조회값은 계속 표시합니다.'}
@@ -161,7 +230,7 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
       </section>
     }) : renderRows(rows, title)
       : !loading && <div className="state watch-empty" data-state="empty">
-        <strong>등록된 관심종목이 없습니다.</strong>
+        <strong>{marketRows.length ? '조건에 맞는 종목이 없습니다.' : '등록된 관심종목이 없습니다.'}</strong>
         {standalone && <p>종목 검색에서 이름이나 코드를 입력하고 별 버튼으로 추가하세요.</p>}
       </div>}
     {summary && <a className="text-link overview-watch-link" href="#watchlist">관심종목 전체 보기</a>}

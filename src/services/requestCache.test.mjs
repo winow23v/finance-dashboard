@@ -23,3 +23,13 @@ test('a failed request can be retried without retaining the failure', async () =
   await assert.rejects(cache.load('a', async () => { throw new Error('unavailable') }), /unavailable/)
   assert.equal(await cache.load('a', async () => 1), 1)
 })
+
+test('watchlist ordering preserves storage order and sorts missing change values last', async () => {
+  const { rankWatchlist } = await import('./watchlistView.ts')
+  const rows = [{ name: '종목 10', change: null }, { name: '종목 2', change: -4 }, { name: '종목 1', change: 3 }]
+  const sort = order => rankWatchlist(rows, order, row => row.name, row => row.change).map(row => row.name)
+  assert.deepEqual(sort('saved'), ['종목 10', '종목 2', '종목 1'])
+  assert.deepEqual(sort('name'), ['종목 1', '종목 2', '종목 10'])
+  assert.deepEqual(sort('change'), ['종목 1', '종목 2', '종목 10'])
+  assert.equal(rows[0].name, '종목 10')
+})
