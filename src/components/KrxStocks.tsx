@@ -14,7 +14,7 @@ export const krxStateLabels: Record<KrxReason, string> = {
   'provider-error': 'KRX 조회 실패',
   'not-published': '기준 거래일 확정 종가 미확인',
   weekend: '거래소 휴장',
-  'before-collection': '다음 확정 종가 수집 대기',
+  'before-collection': '종가 미확인',
 }
 
 export function KrxStocks({ selected, onToggle, symbol, blocked }: {
@@ -67,7 +67,7 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
     {!symbol && !query ? <p className="state">KOSPI 또는 KOSDAQ을 선택하고 종목명이나 코드를 입력하세요.</p> : !current ? <LoadingSkeleton message="국내 종목을 불러오는 중입니다." shape="rows" /> : current.data === null
       ? <p className="state" role="status">{current.message}</p>
       : current.data.map(dataset => {
-        const details = [...new Set([dataset.listings.reason, dataset.trades.reason].filter(reason => reason !== null))]
+        const details = [...new Set([dataset.listings.reason, dataset.trades.reason].filter(reason => reason !== null && reason !== 'before-collection' && reason !== 'weekend'))]
         return <div key={dataset.market}>
           <p className="state">{dataset.market}
             {dataset.listingDate && ' · 종목 기준 ' + dataset.listingDate}
@@ -90,7 +90,7 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
                   {quote ? <>
                     <strong>{number.format(quote.price)}원</strong>
                     {quote.change !== null && quote.changePercent !== null &&
-                      <Change quote={{ change: quote.change, percent: quote.changePercent }} />}
+                      <Change market="KR" quote={{ change: quote.change, percent: quote.changePercent }} />}
                     <small className="watch-trading-date"><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가</small>
                     <small>거래량 {quote.volume === null ? '미확인' : number.format(quote.volume)}</small>
                   </> : <small>유효한 시세 없음</small>}

@@ -86,12 +86,12 @@ export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: {
               <small>KRX 정규장 종가</small>
               <strong>{formatAnalysisPrice(quote.price, 'KRW')}</strong>
               {quote.change !== null && quote.changePercent !== null &&
-                <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
+                <Change market="KR" quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
             </div> : <p className="state">최신 공식 종가 없음</p>}
             {actions}
             <div className="analysis-meta">
               {quote && <span><Clock size={14} aria-hidden="true" /> 거래일 <time dateTime={quote.tradingDate}>{quote.tradingDate}</time></span>}
-              {(data.reason || data.usingPreviousClose) && <span className="detail-attention">{data.usingPreviousClose ? "이전 정상 종가 사용" : data.reason && krxStateLabels[data.reason]}</span>}
+              {(data.usingPreviousClose || (data.reason && data.reason !== 'before-collection' && data.reason !== 'weekend')) && <span className="detail-attention">{data.usingPreviousClose ? "이전 정상 종가 사용" : data.reason && krxStateLabels[data.reason]}</span>}
             </div>
           </header>
           <KrxAfterHoursStatus details={data.afterHours} />
