@@ -42,7 +42,7 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
     <h2>기술적 분석</h2>
     <p className="heatmap-meta" role="status">분석 불가 · {risk.status} · 기준일에 맞는 유효한 연속 확정 일봉이 필요합니다.</p>
   </section>
-  const { trend, reasons, zones, invalidation, breakVolumeConfirmed, tradingDate } = assessment
+  const { trend, reasons, zones, invalidation, breakVolumeConfirmed, tradingDate, priceStructure } = assessment
   const { dmi, bands, volume, atr14, cross, sma, sma20Slope, rsi14, macd } = indicators
   const display: PriceDisplay = { unit: index ? 'pt' : history.currency, tick }
   const basis = history.adjustment === 'total-return-adjusted' ? '배당·분할 조정 가격'
@@ -62,7 +62,7 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
       </dl>
       <dl className="technical-key-metrics">
         {!index && <div><dt>SMA 20</dt><dd>{format(sma[20])}</dd></div>}
-        <div><dt>RSI 14</dt><dd>{format(rsi14)}</dd></div>
+        <div><dt>RSI 14</dt><dd>{format(rsi14)}{rsi14 !== null && <small>{rsi14 >= 70 ? '과매수 구간' : rsi14 <= 30 ? '과매도 구간' : '중립 구간'}</small>}</dd></div>
         <div><dt>MACD 12·26</dt><dd>{format(macd.line)}
           {macd.line !== null && <small>{macd.histogram === null ? '시그널 자료 부족'
             : macd.histogram > 0 ? '시그널 위' : macd.histogram < 0 ? '시그널 아래' : '시그널과 같음'}</small>}</dd></div>
@@ -100,7 +100,10 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
         {' · '}{breakVolumeConfirmed == null ? '거래량 비교 불가' : breakVolumeConfirmed ? '거래량 급증 동반' : '거래량 급증 기준 미달'}
       </p>}
       <details className="technical-risk-checks">
-        <summary>가격 구간 산출 근거 <ChevronDown size={16} aria-hidden="true" /></summary>
+        <summary>추세선 후보 및 산출 근거 <ChevronDown size={16} aria-hidden="true" /></summary>
+        {priceStructure.channel && <p>채널 후보 · {formatAnalysisPrice(priceStructure.channel.lower, display.unit)} ~ {formatAnalysisPrice(priceStructure.channel.upper, display.unit)}</p>}
+        {([['고점 추세선', priceStructure.upper], ['저점 추세선', priceStructure.lower]] as const).map(([label, line]) => line && line.latest > 0 &&
+          <p key={label}>{label} · {formatAnalysisPrice(line.latest, display.unit)} <small>확정 스윙 {line.from.date} · {line.to.date}</small></p>)}
         <p className="heatmap-meta">좌우 2봉으로 확정된 스윙, 직전 20·60·120거래일 극값과 이동평균을 직전 ATR로 묶습니다. 화면 범위는 하단을 내리고 상단을 올려 표시합니다. 돌파와 이탈 판정에는 이전 봉까지 확정된 원시 계산 구간을 사용합니다.</p>
       </details>
     </section>
@@ -134,7 +137,7 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
           <div><dt>볼린저 하단</dt><dd>{format(bands?.lower)}</dd></div>
           <div><dt>%B</dt><dd>{bands?.percentB == null ? '산출 불가' : formatPercent(bands.percentB)}</dd></div>
           <div><dt>밴드 폭</dt><dd>{bands?.bandwidth == null ? '자료 부족' : formatPercent(bands.bandwidth)}</dd></div>
-          <div><dt>거래량 평균 5 / 20</dt><dd>{index && volume.latest === 0 ? '미제공' : [formatVolume(volume.sma5), formatVolume(indicators.volumeSma20)].join(' / ')}</dd></div>
+          <div><dt>거래량 평균 5 / 20 / 50</dt><dd>{index && volume.latest === 0 ? '미제공' : [formatVolume(volume.sma5), formatVolume(indicators.volumeSma20), formatVolume(indicators.volumeSma50)].join(' / ')}</dd></div>
           <div><dt>직전 20거래일 대비</dt><dd>{volume.ratio === null ? '비교 불가' : format(volume.ratio) + '배'}<small>급증 기준 {format(volume.spikeThreshold)}배</small></dd></div>
         </dl>
       </details>

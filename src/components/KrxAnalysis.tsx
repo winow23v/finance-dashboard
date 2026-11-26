@@ -8,6 +8,7 @@ import type { KrxAnalysis as Analysis } from '../types/finance'
 import { Change } from './QuoteDisplay'
 import { krxStateLabels } from './KrxStocks'
 import { KrxAfterHoursStatus } from './KrxAfterHoursStatus'
+import { StockDisclosures } from './Disclosures'
 import { TechnicalSummary } from './TechnicalSummary'
 import { confirmedKrxTick, formatAnalysisPrice, formatPercent } from '../services/analysisPrices'
 import type { KrxStocks } from '../types/finance'
@@ -132,6 +133,7 @@ export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: {
               </> },
             ]} />
           </section>
+          <StockDisclosures key={symbol} symbol={symbol} />
           {data.stoppedAt && data.stoppedReason && <small>{data.stoppedAt} 및 이전 제외 · {historyStop[data.stoppedReason]}</small>}
         </>}
   </section>
