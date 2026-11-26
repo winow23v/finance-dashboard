@@ -25,7 +25,9 @@ const desktopHeatmap = () => false
 const movementClass = (value: number | null) => value === null || value === 0 ? 'krx-flat' : value > 0 ? 'krx-up' : 'krx-down'
 
 function MarketBasis({ data }: { data: KrxOverview }) {
-  const status = data.usingPreviousClose ? '이전 정상 종가 사용' : data.reason && !['same-date-data-unavailable', 'before-collection', 'weekend'].includes(data.reason) ? krxStateLabels[data.reason as keyof typeof krxStateLabels] : null
+  const { reason } = data
+  const status = data.usingPreviousClose ? '이전 정상 종가 사용'
+    : reason === 'provider-error' || reason === 'provider-not-configured' || reason === 'not-published' ? krxStateLabels[reason] : null
   return <p className="heatmap-meta">{data.tradingDate && <time dateTime={data.tradingDate}>{data.tradingDate}</time>}{status && <> <span className="muted-badge">{status}</span></>}</p>
 }
 
@@ -42,7 +44,7 @@ export function KrxMovers({ data, message, summary }: { data?: KrxOverview | nul
   return <section className="panel movers-panel" aria-label="주요 등락 현황">
     <div className="section-heading"><h2>주요 등락 현황</h2>{summary && <a href="#domestic" className="text-link">국내시장 보기</a>}</div>
     {!data || !leaders ? <p className="state" role="status">{message ?? state(data)}</p> : <>
-      {!summary && <MarketBasis data={data} />}
+      <MarketBasis data={data} />
       <SegmentTabs label="시장 랭킹" items={(summary ? rankings.slice(0, 2) : rankings).flatMap(({ key, label, format }) => {
           const rows = leaders[key]
           if (!rows) return []
@@ -96,7 +98,7 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
           </span>)}
         </div>
       </div>
-      {!summary && <MarketBasis data={data} />}
+      <MarketBasis data={data} />
       <p className="heatmap-meta">시가총액 상위 {selected?.length}종목</p>
       {groups.length ? <div className="krx-heatmap-layout">
         <div className="heatmap-map">
