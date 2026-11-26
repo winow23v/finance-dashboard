@@ -5,11 +5,12 @@ const providers = ['krx', 'fx', 'ecos', 'dart', 'yfinance', 'kr-intraday']
 const incidentStatuses = new Set(['Degraded', 'Stale', 'Unavailable', 'Rate Limited'])
 const codePattern = /^(?:PROVIDER_|KRX_|FX_|ECOS_|DART_|US_)[A-Z0-9_]{1,48}$/
 const safeCode = value => typeof value === 'string' && codePattern.test(value) ? value : null
+const limited = code => code === 'DART_PROVIDER_LIMITED' || code?.endsWith('RATE_LIMITED')
 const timestamp = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null
 
 function resultStatus(data, error, configured) {
   if (!configured || error?.endsWith('CONFIGURATION_MISSING') || data?.reason === 'provider-not-configured') return 'Not Configured'
-  if (error?.endsWith('RATE_LIMITED') || data?.reason === 'rate-limited') return 'Rate Limited'
+  if (limited(error) || limited(safeCode(data?.filingsError)) || limited(safeCode(data?.financialsError)) || data?.reason === 'rate-limited') return 'Rate Limited'
   if (error || data?.reason === 'provider-error') {
     return data?.tradingDate || data?.reference?.observationDate || data?.collectedAt ? 'Stale' : 'Unavailable'
   }

@@ -56,3 +56,27 @@ test('ECOS partial failure is distinct from a missing release and DART records a
   assert.equal(rows().dart.succeededAt, now)
   assert.equal(rows().dart.observationDate, date)
 })
+
+test('DART body and partial rate-limit codes both classify as rate limited', async () => {
+  const health = createProviderHealth()
+  const status = () => health.snapshot().providers.find(row => row.provider === 'dart').status
+  await assert.rejects(health.observe('dart', () => { throw new ProviderError(503, 'DART_PROVIDER_LIMITED') }))
+  assert.equal(status(), 'Rate Limited')
+  await health.observe('dart', () => ({ filingsError: 'DART_PROVIDER_LIMITED', financials: [] }))
+  assert.equal(status(), 'Rate Limited')
+})
+
+test('US index snapshot observes stale provider state on the admin health endpoint', async t => {
+  const app = await buildApp({ logger: false, membership: {
+    verify: token => ({ id: token }), read: () => ({ status: 'approved' }), isAdmin: () => true,
+  }, memberUs: {
+    index: async () => ({ status: 'stale', reason: 'not-published', price: 100, tradingDate: '2026-11-25' }),
+  } })
+  t.after(() => app.close())
+  const headers = { authorization: 'Bearer test.admin.token' }
+  assert.equal((await app.inject({ url: '/api/v1/market/snapshot', headers })).statusCode, 200)
+  const health = await app.inject({ url: '/api/v1/admin/providers', headers })
+  const us = health.json().providers.find(row => row.provider === 'yfinance')
+  assert.equal(us.status, 'Stale')
+  assert.equal(us.observationDate, '2026-11-25')
+})

@@ -100,9 +100,9 @@ export function createUsMarketProvider({ root, queue, clock = Date.now }) {
       return quote ? { ...state, price: quote.close, change: quote.change, changePercent: quote.changePercent } : state
     },
     async history(symbol, period) {
-      const { raw, observedAt } = await read(symbol, true)
+      const { raw, observedAt, status, reason, tradingDate, collectedAt } = await read(symbol, true)
       const sessions = { '1D': 1, '1W': 5, '1M': 22, '3M': 66, '1Y': 252 }
-      return { asOf: observedAt ?? null, data: raw?.slice(-sessions[period])
+      return { asOf: observedAt ?? null, status, reason, tradingDate, collectedAt, data: raw?.slice(-sessions[period])
         .map(bar => ({ at: bar.tradingDate, value: bar.close })) ?? [] }
     },
     async stock(symbol) {

@@ -67,6 +67,12 @@ export async function buildApp({
     throw new Error('Member KRX requires membership authentication')
   }
   if (memberUs && (!membership || privateOnly)) throw new Error('Member US market requires membership authentication')
+  if (memberUs) {
+    const provider = memberUs
+    memberUs = Object.fromEntries(['index', 'indexAnalysis', 'history', 'stock', 'request'].flatMap(method =>
+      typeof provider[method] === 'function'
+        ? [[method, (...args) => providerHealth.observe('yfinance', () => provider[method](...args))]] : []))
+  }
   const memberSnapshot = (memberKrx || memberUs) && createIndexSnapshot(undefined, memberKrx,
     memberUs ? 'Market indices' : 'KRX OPEN API', memberUs)
   const krxFor = request => localKrx && isLocalResearchRequest(request) ? localKrx : memberKrx
@@ -366,7 +372,7 @@ export async function buildApp({
     params: { type: 'object', required: ['symbol'], properties: { symbol: usTickerSchema } },
   }
   app.get('/api/v1/market/us/stocks/:symbol/history', { schema: usStockSchema }, async request =>
-    memberUs ? providerHealth.observe('yfinance', () => memberUs.stock(request.params.symbol)) : { status: 'unavailable', reason: 'provider-not-configured' })
+    memberUs ? memberUs.stock(request.params.symbol) : { status: 'unavailable', reason: 'provider-not-configured' })
   const limitUsRequests = memberUs && app.createRateLimit({
     max: 3, keyGenerator: request => 'us-collection:' + request.memberUser.id,
   })
