@@ -97,7 +97,8 @@ export interface KrxStock {
   name: string
   englishName: string
   market: KrxMarket
-  listedOn: string
+  listedOn: string | null
+  fullName?: string
   shareClass: string
   quote: {
     price: number
@@ -117,6 +118,7 @@ export interface KrxStocks {
 }
 
 export interface KrxAnalysis {
+  fullName?: string
   symbol: string
   name: string
   shareClass?: string

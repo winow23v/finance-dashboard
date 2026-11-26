@@ -50,7 +50,7 @@ export async function watchlistObservations(items: MarketSymbol[], signal: Abort
       observation.quote = { price: quote.price, changePercent: quote.changePercent, tradingDate: quote.tradingDate }
     }
     if (row.listing.market === 'KR' && typeof row.name === 'string' && row.name.trim()
-      && row.name !== row.listing.symbol && (row.segment === 'KOSPI' || row.segment === 'KOSDAQ') && row.currency === 'KRW') {
+      && (row.segment === 'KOSPI' || row.segment === 'KOSDAQ') && row.currency === 'KRW') {
       const regular = row.regular
       if (isRecord(regular) && regular.source === 'KRX OPEN API'
         && (regular.collectedAt === null || typeof regular.collectedAt === 'string' && Number.isFinite(Date.parse(regular.collectedAt)))

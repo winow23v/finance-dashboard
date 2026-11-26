@@ -79,6 +79,7 @@ export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: {
           <header className="analysis-quote">
             <div className="stock-identity">
               <h1>{data.name}</h1>
+              {data.fullName && data.fullName !== data.name && <small>{data.fullName}</small>}
               <small>{data.symbol} · {data.market} (XKRX) · KRW{data.shareClass && ' · ' + data.shareClass}</small>
             </div>
             {quote ? <div className="analysis-price">

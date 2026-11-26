@@ -144,7 +144,7 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
           <summary>{summary ? '시가총액 상위 5종목' : '종가·등락률을 종목 목록으로 보기'}</summary>
           <ul className="stock-list">
             {(summary ? selected?.slice(0, 5) ?? [] : groups.flatMap(group => group.tiles.map(tile => tile.row))).map(row => <li key={key(row)}>
-              <a className="stock-detail-link" href={link(row)}>{row.shortName}<small>{row.market} · {row.symbol}</small></a>
+              <a className="stock-detail-link" href={link(row)} title={row.shortName}><span className="krx-stock-name">{row.shortName}</span><small>{row.market} · {row.symbol}</small></a>
               <span>{!summary && <strong className="heatmap-list-price">{number.format(row.price)}원</strong>}<span className={movementClass(row.changePercent)}>{rate(row)}</span></span>
             </li>)}
           </ul>
@@ -165,7 +165,7 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
 
 function KrxTileInfo({ row }: { row: KrxMarketRow }) {
   return <>
-    <strong>{row.shortName} · {row.symbol}{!row.mapped && ' · 명칭 미매핑'}</strong>
+    <strong>{row.shortName} · {row.symbol}</strong>
     <small>{row.market} · 종가 {number.format(row.price)}원 · {rate(row)}</small>
     <small>시가총액 {row.marketCap === null ? '미확인' : number.format(row.marketCap) + '원'}</small>
   </>
