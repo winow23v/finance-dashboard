@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createUsMarketProvider } from './us-market-provider.mjs'
 import { createProviderHealth } from './health-provider.mjs'
 import { ProviderError, withHealthMetadata } from './public-provider.mjs'
 import { buildApp } from './server.mjs'
@@ -197,4 +201,21 @@ test('healthy US holdings cannot clear a stale holding or evict its incident und
   assert.equal(us().status, 'Healthy')
   assert.equal(us().consecutiveFailures, 0)
   assert.deepEqual(health.snapshot().alerts.events.map(event => event.kind), ['incident', 'recovery'])
+})
+
+
+test('repeated unreadable yfinance snapshots count without collector metadata', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'provider-health-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await mkdir(join(root, 'stocks'))
+  await writeFile(join(root, 'stocks', 'AAPL.json'), '{bad json')
+  let now = Date.parse('2026-11-26T00:00:00Z')
+  const health = createProviderHealth({ clock: () => now, alertDelayMs: 100 })
+  const us = createUsMarketProvider({ root })
+  const read = () => health.observe('yfinance', () => us.stock('AAPL'), 'AAPL')
+  await read()
+  now += 200
+  await read()
+  assert.equal(health.snapshot().providers.find(row => row.provider === 'yfinance').consecutiveFailures, 2)
+  assert.deepEqual(health.snapshot().alerts.events.map(event => event.kind), ['incident'])
 })

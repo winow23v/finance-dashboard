@@ -108,7 +108,8 @@ export function createProviderHealth({ configured = {}, clock = Date.now, alertD
     const worst = [...usIndexObservations.values(), ...usStockObservations.values()].reduce((a, b) =>
       severity.indexOf(a.status) > severity.indexOf(b.status) ? a : b)
     record(provider, worst.status, { ...worst.fields, succeededAt: fields.succeededAt },
-      incidentStatuses.has(status) && (before?.status !== status || before?.fields.observationDate !== fields.observationDate
+      incidentStatuses.has(status) && ((!fields.attemptedAt && !fields.observationDate)
+        || before?.status !== status || before?.fields.observationDate !== fields.observationDate
         || before?.fields.attemptedAt !== fields.attemptedAt))
   }
 
