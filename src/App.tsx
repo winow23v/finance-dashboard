@@ -10,6 +10,7 @@ import type { MemberSession } from './services/membership'
 import { MemberAdmin } from './components/MemberAdmin'
 import { Disclosures } from './components/Disclosures'
 import { KoreaEconomy } from './components/KoreaEconomy'
+import { useAnalytics } from './services/useAnalytics'
 import { providerStatuses } from './services/providerStatus'
 import { DataStatus } from './components/DataStatus'
 import { Economics } from './components/Economics'
@@ -113,6 +114,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
 } = {}) {
   const [settings, setSettings] = useState(guestStorage.loadSettings)
   const [tab, setTab] = useState<Page>(() => hashPage(settings.market) ?? settings.market)
+  const analytics = useAnalytics(tab)
   const { selected: watchlist, toggle, localError, blocked, sync } = useWatchlist(member?.userId)
   const [settingsFailure, setSettingsFailure] = useState(false)
   const [snapshot, setSnapshot] = useState<FinanceSnapshot>()
@@ -521,6 +523,11 @@ export function App({ member, signOut, accountBusy, accountError }: {
             <SettingSelect label="기본 표시 시장" description="대시보드를 처음 열 때 표시" value={settings.market} options={{ overview: '개요', domestic: '국내시장', global: '해외시장' }} onChange={market => setSettings({ ...settings, market })} />
             <SettingSelect label="데이터 표시 단위" description="큰 종목 가격의 표시 방식" value={settings.units} options={{ full: '전체 숫자', compact: '간략 단위' }} onChange={units => setSettings({ ...settings, units })} />
             <SettingSelect label="상승·하락 색상" description="등락 수치의 색상입니다. 히트맵은 시장별 색상 범례를 사용합니다." value={settings.colors} options={{ green: '상승 초록 · 하락 빨강', red: '상승 빨강 · 하락 파랑' }} onChange={colors => setSettings({ ...settings, colors })} />
+            {analytics.available && <div className="setting">
+              <label><input type="checkbox" checked={analytics.enabled}
+                onChange={event => analytics.setConsent(event.target.checked)} /> 선택적 이용 통계 허용</label>
+              <a href="#privacy">개인정보처리방침</a>
+            </div>}
             {isApi && <div className="setting"><strong>환율 설정</strong><a href="#economy/fx-settings" className="button">환율 설정 열기</a></div>}
           </section>
         </>}

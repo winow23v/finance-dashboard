@@ -23,3 +23,21 @@ test('a failed request can be retried without retaining the failure', async () =
   await assert.rejects(cache.load('a', async () => { throw new Error('unavailable') }), /unavailable/)
   assert.equal(await cache.load('a', async () => 1), 1)
 })
+
+test('analytics is opt-in and events redact ticker, account paths and search text', async () => {
+  const { analyticsId, createAnalytics } = await import('./analytics.ts')
+  assert.equal(analyticsId('', ''), undefined)
+  assert.equal(analyticsId('1', 'invalid'), undefined)
+  const events = []
+  const tracker = createAnalytics({ measurementId: 'fixture', origin: 'https://example.test', base: '/finance/',
+    command: (...args) => events.push(args) })
+  tracker.configure()
+  tracker.page('stock/XKRX/005930')
+  tracker.page('stock/XKRX/005930')
+  tracker.page('search/secret-query')
+  tracker.page('domestic')
+  assert.equal(events.filter(args => args[0] === 'event' && args[1] === 'page_view').length, 3)
+  assert.equal(events.filter(args => args[1] === 'market_view').length, 1)
+  assert.ok(events.some(args => args[1] === 'stock_detail_view'))
+  assert.doesNotMatch(JSON.stringify(events), /005930|secret-query|XKRX/)
+})
