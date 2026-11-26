@@ -162,6 +162,10 @@ export function App({ member, signOut, accountBusy, accountError }: {
     if (saved) window.scrollTo({ top: location.hash === saved.hash ? saved.top : 0, behavior: 'instant' })
     setMenuOpen(false)
   }
+  const closeMobileMenuForNavigation = () => {
+    menuScroll.current = null
+    menuDialog.current?.close()
+  }
   const onMenuBackdrop = (event: React.MouseEvent<HTMLDialogElement>) => {
     const bounds = event.currentTarget.getBoundingClientRect()
     return event.target === event.currentTarget && (event.clientX < bounds.left || event.clientX > bounds.right ||
@@ -321,10 +325,14 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const pageLabel = tab === 'members' ? '회원 승인 관리' : index?.name ?? current?.label ?? (information && informationPages[information])
   const fx = snapshot?.quotes.find(quote => quote.kind === 'fx')
   const watchlistProps = { selected: watchlist, onToggle: toggle, blocked, loading: sync?.status === 'loading' || sync?.failure === 'load', live: isApi }
-  const navigationLinks = (items: readonly (typeof tabs[number] | typeof trends | typeof memberAdminTab | typeof mobileTabs[number])[]) =>
+  const navigationLinks = (
+    items: readonly (typeof tabs[number] | typeof trends | typeof memberAdminTab | typeof mobileTabs[number])[],
+    beforeNavigate?: () => void,
+  ) =>
     items.map(({ id, label, icon: Icon }) => <a key={id} href={'#' + id} title={label} aria-label={label}
       aria-current={id === navSection ? (id === section ? 'page' : 'location') : undefined}
       onClick={event => {
+        beforeNavigate?.()
         if (id === 'market' && market && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
           event.preventDefault()
           window.scrollTo(0, 0)
@@ -539,7 +547,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
     <dialog id="mobile-menu" ref={menuDialog} aria-labelledby="mobile-menu-title" onClose={onMobileMenuClose}
       onPointerDown={event => { backdropPress.current = onMenuBackdrop(event) }}
       onClick={event => {
-        if ((backdropPress.current && onMenuBackdrop(event)) || (event.target instanceof Element && event.target.closest('a')))
+        if (backdropPress.current && onMenuBackdrop(event))
           event.currentTarget.close()
         backdropPress.current = false
       }}>
@@ -549,7 +557,8 @@ export function App({ member, signOut, accountBusy, accountError }: {
       </div>
       <nav className="side-navigation" aria-label="전체 메뉴">{navigationLinks(
         [...tabs, ...(!isApi ? [trends] : []), ...(member?.admin ? [memberAdminTab] : [])]
-          .filter(item => !mobileTabs.some(mobileTab => mobileTab.id === item.id))
+          .filter(item => !mobileTabs.some(mobileTab => mobileTab.id === item.id)),
+        closeMobileMenuForNavigation,
       )}</nav>
     </dialog>
   </div>
