@@ -4,9 +4,10 @@ import { marketSymbolKey, type EquityMarket, type MarketSymbol } from '../types/
 import { marketListings, stockHref } from '../services/marketListings'
 import { favoriteKey, isWatchlistSymbol } from '../services/watchlist'
 import { regularQuoteStatus } from './KrxAfterHoursStatus'
-import { getKrxAnalysis, getKrxStocks, getUsAnalysis } from '../services/apiFinanceService'
+import { getKrxStocks } from '../services/apiFinanceService'
 import { krxObservation, registeredObservation, watchlistObservations, type Observation } from '../services/watchlistMetadata'
 
+import { readKrxStockHistory, readUsStockHistory } from '../services/stockHistoryCache'
 import { memberDataEpoch } from '../services/memberTransport'
 import { createRequestCache } from '../services/requestCache'
 import { calculateTechnicalIndicators } from '../services/technicalIndicators'
@@ -20,8 +21,7 @@ const trendLabels: Record<WatchlistTrend, string> = {
 }
 
 async function loadAnalysis(listing: MarketSymbol) {
-  const signal = AbortSignal.timeout(15_000)
-  const result = await (listing.market === 'KR' ? getKrxAnalysis(listing.symbol, signal) : getUsAnalysis(listing.symbol, signal))
+  const result = await (listing.market === 'KR' ? readKrxStockHistory(listing.symbol) : readUsStockHistory(listing.symbol))
   if (!('history' in result) || !result.quote || result.history.bars.at(-1)?.tradingDate !== result.quote.tradingDate) return null
   const indicators = calculateTechnicalIndicators(result.history)
   if (!indicators) return null
@@ -81,20 +81,27 @@ function StockList({ rows, saved, onToggle, label, blocked, showQuoteStatus, ana
 export function Watchlist({ selected, onToggle, market, blocked, loading, live, summary, standalone, storage }: Props) {
   const [order, setOrder] = useState<WatchlistSort>('saved')
   const [region, setRegion] = useState<'all' | EquityMarket>('all')
+  const [direction, setDirection] = useState('all')
   const [trend, setTrend] = useState<'all' | WatchlistTrend>('all')
   const [analysisKey, setAnalysisKey] = useState<string>()
+  const [analysisFailed, setAnalysisFailed] = useState(false)
   const [analysisBusy, setAnalysisBusy] = useState(false)
   const [analysisResults, setAnalysisResults] = useState(new Map<string, AnalysisSummary | null>())
   const epoch = memberDataEpoch()
-  const analysisFor = (listing: MarketSymbol) => analysisResults.get(JSON.stringify([epoch, marketSymbolKey(listing)]))
+  const analysisIdentity = (listing: MarketSymbol) => JSON.stringify([epoch, marketSymbolKey(listing)])
+  const analysisFor = (listing: MarketSymbol) => {
+    const key = analysisIdentity(listing)
+    return analysisResults.get(key) ?? analysisCache.read(key)
+  }
   const showAnalysis = (listing: MarketSymbol) => {
-    const key = JSON.stringify([epoch, marketSymbolKey(listing)])
+    const key = analysisIdentity(listing)
     if (analysisKey === key) { setAnalysisKey(undefined); return }
     setAnalysisKey(key)
     setAnalysisBusy(true)
+    setAnalysisFailed(false)
     void analysisCache.load(key, () => loadAnalysis(listing))
       .then(data => setAnalysisResults(previous => new Map([...previous, [key, data]])),
-        () => setAnalysisResults(previous => new Map([...previous, [key, null]])))
+        () => setAnalysisFailed(true))
       .finally(() => setAnalysisBusy(false))
   }
   const [query, setQuery] = useState('')
@@ -108,11 +115,20 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
   const saved = new Set(selected.map(favoriteKey))
   const inMarket = (listing: MarketSymbol) => !market || market === listing.market
   const marketRows = selected.filter(inMarket)
+  const quoteFor = (item: MarketSymbol) => observations.get(marketSymbolKey(item))?.quote
+  const matchesDirection = (item: MarketSymbol) => {
+    const change = quoteFor(item)?.changePercent ?? 0
+    return direction === 'all' || (direction === 'up' ? change > 0 : change < 0)
+  }
   const rows = summary ? marketRows.slice(0, 3) : standalone
     ? rankWatchlist(marketRows.filter(item => (region === 'all' || item.market === region)
+      && matchesDirection(item)
       && (trend === 'all' || (analysisFor(item)?.trend ?? 'unavailable') === trend)), order,
       item => observations.get(marketSymbolKey(item))?.name ?? registeredObservation(item).name ?? item.symbol,
-      item => observations.get(marketSymbolKey(item))?.quote?.changePercent)
+      item => {
+        const quote = quoteFor(item)
+        return order === 'price' ? quote?.price : quote?.changePercent
+      })
     : marketRows
   const term = query.trim().slice(0, 64)
   const domesticSearch = live && market !== 'US' && term.length > 0
@@ -183,12 +199,12 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
     saved={saved} onToggle={onToggle} label={label} blocked={blocked}
     showQuoteStatus={standalone && live && quoteStatus === 'ready'}
     analysisControls={standalone && live ? listing => {
-      const expanded = analysisKey === JSON.stringify([epoch, marketSymbolKey(listing)])
+      const expanded = analysisKey === analysisIdentity(listing)
       const data = analysisFor(listing)
       return <div className="watch-analysis">
         <button type="button" className="button" aria-expanded={expanded} disabled={analysisBusy}
           onClick={() => showAnalysis(listing)}>기술 요약</button>
-        {expanded && <small role="status">{analysisBusy ? '확정 일봉을 확인하는 중입니다.' : !data ? '분석 자료 부족'
+        {expanded && <small role="status">{analysisBusy ? '확정 일봉을 확인하는 중입니다.' : analysisFailed ? '기술 요약을 조회하지 못했습니다.' : !data ? '분석 자료 부족'
           : <><time dateTime={data.date}>{data.date}</time> · {trendLabels[data.trend]} · RSI {data.rsi === null ? '자료 부족'
             : data.rsi >= 70 ? '과매수 구간' : data.rsi <= 30 ? '과매도 구간' : '중립 구간'}
             {data.aboveEma20 !== null && ' · EMA 20 ' + (data.aboveEma20 ? '위' : '이하')}</>}</small>}
@@ -210,8 +226,11 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
         <option value="all">전체</option><option value="KR">국내</option><option value="US">해외</option>
       </select></label>
       <label>정렬 <select value={order} onChange={event => setOrder(event.target.value as WatchlistSort)}>
-        <option value="saved">등록 순서</option><option value="name">종목명</option><option value="change">등락률</option>
+        <option value="saved">등록 순서</option><option value="name">종목명</option><option value="price">가격</option><option value="change">등락률</option>
       </select></label>
+      {live && <label>등락 <select value={direction} onChange={event => setDirection(event.target.value)}>
+        <option value="all">전체</option><option value="up">상승</option><option value="down">하락</option>
+      </select></label>}
       {live && <label>확인한 추세 <select value={trend} onChange={event => setTrend(event.target.value as typeof trend)}>
         <option value="all">전체</option>{Object.entries(trendLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
       </select></label>}
