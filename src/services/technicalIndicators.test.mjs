@@ -423,3 +423,12 @@ test('trendline requires two pivots confirmed by two subsequent bars', async () 
   assert.equal(priceStructure(input).upper.latest, 117)
   assert.equal(priceStructure(input).channel, null)
 })
+
+test('weekly OHLCV uses observed sessions only and excludes range-edge weeks', async () => {
+  const { completedWeeklyBars } = await import('./technicalIndicators.ts')
+  const source = history(ramp(16))
+  const expected = { tradingDate: '2024-01-14', open: 107, high: 114, low: 106, close: 113, volume: 770 }
+  assert.deepEqual(completedWeeklyBars(source), [expected])
+  assert.deepEqual(completedWeeklyBars({ ...source, completeness: 'missing-observations' }), [])
+  assert.deepEqual(completedWeeklyBars({ ...source, bars: source.bars.slice(0, 14) }), [])
+})

@@ -2,7 +2,7 @@ import { ChartNoAxesCombined } from 'lucide-react'
 import { useId, useMemo, useState } from 'react'
 import { Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { formatAnalysisPrice, formatVolume } from '../services/analysisPrices'
-import { technicalChartSeries } from '../services/technicalIndicators'
+import { completedWeeklyBars, technicalChartSeries } from '../services/technicalIndicators'
 import type { MarketDailyHistory } from '../types/marketDataProvider'
 
 const periods = [20, 60, 120] as const
@@ -39,6 +39,7 @@ const grid = { stroke: 'var(--line)', strokeDasharray: '4 5', vertical: false }
 const margin = { top: 6, right: 10, left: 4, bottom: 0 }
 
 export default function StockHistoryChart({ history }: { history: MarketDailyHistory }) {
+  const [weekly, setWeekly] = useState(false)
   const [period, setPeriod] = useState<(typeof periods)[number]>(60)
   const [priceView, setPriceView] = useState<'close' | 'candle'>('close')
   const [momentum, setMomentum] = useState<'off' | 'rsi' | 'macd'>('off')
@@ -49,7 +50,9 @@ export default function StockHistoryChart({ history }: { history: MarketDailyHis
   const basis = history.adjustment === 'total-return-adjusted' ? '배당·분할 조정 종가'
     : history.adjustment === 'split-adjusted' ? '분할 조정 종가' : '미수정 종가'
   const series = useMemo(() => technicalChartSeries(history), [history])
-  const points = series.slice(-period)
+  const weeklySeries = useMemo(() => weekly
+    ? technicalChartSeries({ ...history, bars: completedWeeklyBars(history) }, false) : [], [history, weekly])
+  const points = weekly ? weeklySeries.slice(-Math.ceil(period / 5)) : series.slice(-period)
   const hasVolume = points.some(point => point.volume > 0)
   const visibleAverages = averages.filter(({ key }) => selected.has(key) && points.some(point => point[key] !== null))
   const momentumAvailable = points.some(point => momentum === 'rsi' ? point.rsi !== null : point.histogram !== null)
@@ -62,25 +65,30 @@ export default function StockHistoryChart({ history }: { history: MarketDailyHis
     <div className="analysis-heading">
       <div><h2 id={id}><ChartNoAxesCombined size={17} aria-hidden="true" /> 가격 추이</h2>
         <small>{basis} · {currency}</small></div>
+      {bars.length > 0 && <div className="periods" role="group" aria-label="봉 단위">
+        <button type="button" aria-pressed={!weekly} onClick={() => setWeekly(false)}>일봉</button>
+        <button type="button" aria-pressed={weekly} onClick={() => setWeekly(true)}>주봉</button>
+      </div>}
       {bars.length > 0 && <div className="periods" role="group" aria-label="차트 기간">
         {periods.map(days => <button type="button" key={days} aria-pressed={period === days}
-          onClick={() => setPeriod(days)}>{days}일</button>)}
+          onClick={() => setPeriod(days)}>{weekly ? Math.ceil(days / 5) + '주' : days + '일'}</button>)}
       </div>}
     </div>
     <p className="stock-history-range">{points.length ? <>
-      확보한 일봉 {bars.length}개 중 {points.length}거래일 · <time dateTime={points[0].tradingDate}>{points[0].tradingDate}</time>
+      {weekly ? `일봉에서 집계한 주봉 ${points.length}개 ·` : `확보한 일봉 ${bars.length}개 중 ${points.length}거래일 ·`} <time dateTime={points[0].tradingDate}>{points[0].tradingDate}</time>
       {' ~ '}<time dateTime={points.at(-1)?.tradingDate}>{points.at(-1)?.tradingDate}</time>
-    </> : '유효한 일봉 데이터가 없습니다.'}</p>
+    </> : weekly ? '집계할 수 있는 주봉이 없습니다.' : '유효한 일봉 데이터가 없습니다.'}</p>
     {points.length > 0 && history.completeness === 'missing-observations' && <p className="stock-history-range">
       수집된 일봉만 표시합니다. 일부 거래일의 관측값이 없습니다.
     </p>}
-    {points.length === 1 && <p className="state" role="status">일봉이 1개뿐이어서 가격 추이를 비교할 수 없습니다.</p>}
+    {weekly && points.length > 0 && <p className="stock-history-range">자료의 첫 주와 마지막 주를 제외했습니다. 일봉 지표는 일봉에서 확인할 수 있습니다.</p>}
+    {!weekly && points.length === 1 && <p className="state" role="status">일봉이 1개뿐이어서 가격 추이를 비교할 수 없습니다.</p>}
     {points.length > 0 && <>
       <div className="periods" role="group" aria-label="가격 차트 표시">
         <button type="button" aria-pressed={priceView === 'close'} onClick={() => setPriceView('close')}>종가</button>
         <button type="button" aria-pressed={priceView === 'candle'} onClick={() => setPriceView('candle')}>캔들</button>
       </div>
-      <div className="periods" role="group" aria-label="이동평균선">
+      {!weekly && <div className="periods" role="group" aria-label="이동평균선">
         {averages.map(({ key, name }) => {
           const available = points.some(point => point[key] !== null)
           return <button type="button" key={key} aria-pressed={selected.has(key) && available} disabled={!available}
@@ -91,7 +99,7 @@ export default function StockHistoryChart({ history }: { history: MarketDailyHis
               return next
             })}>{name}{!available && ' · 자료 부족'}</button>
         })}
-      </div>
+      </div>}
       <div className="stock-price-plot">
         <ResponsiveContainer width="100%" height="100%" minWidth={0}>
           <ComposedChart data={points} margin={margin} title={basis + ' 차트'} accessibilityLayer syncId={id}>
@@ -101,7 +109,7 @@ export default function StockHistoryChart({ history }: { history: MarketDailyHis
             <Tooltip trigger={tooltipTrigger} isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }} contentStyle={tooltip} itemStyle={{ color: 'var(--text)' }}
               formatter={value => typeof value === 'number' ? formatAnalysisPrice(value, currency) :
                 Array.isArray(value) ? value.map(price => formatAnalysisPrice(Number(price), currency)).join(' ~ ') : '자료 부족'} />
-            {priceView === 'candle' ? <Bar dataKey="candleRange" name="일중 범위" maxBarSize={12}
+            {priceView === 'candle' ? <Bar dataKey="candleRange" name={weekly ? '주간 범위' : '일중 범위'} maxBarSize={12}
               shape={<Candle domestic={currency === 'KRW'} />} isAnimationActive={false} /> :
               <Line dataKey="close" name={basis} stroke="var(--accent)" strokeWidth={2} dot={points.length === 1}
                 isAnimationActive={false} />}
@@ -120,8 +128,8 @@ export default function StockHistoryChart({ history }: { history: MarketDailyHis
             <Tooltip trigger={tooltipTrigger} isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }} contentStyle={tooltip} itemStyle={{ color: 'var(--text)' }}
               formatter={value => typeof value === 'number' ? formatVolume(value) : '자료 부족'} />
             <Bar dataKey="volume" name="거래량" fill="var(--blue)" isAnimationActive={false} />
-            <Line dataKey="volume20" name="거래량 평균 20" stroke="var(--favorite)" dot={false} isAnimationActive={false} />
-            <Line dataKey="volume50" name="거래량 평균 50" stroke="var(--green)" dot={false} isAnimationActive={false} />
+            {!weekly && <><Line dataKey="volume20" name="거래량 평균 20" stroke="var(--favorite)" dot={false} isAnimationActive={false} />
+            <Line dataKey="volume50" name="거래량 평균 50" stroke="var(--green)" dot={false} isAnimationActive={false} /></>}
           </ComposedChart>
         </ResponsiveContainer>
       </div> : <p className="stock-history-range" data-state="insufficient">표시 구간에 양수 거래량이 없습니다.</p>}
@@ -129,24 +137,24 @@ export default function StockHistoryChart({ history }: { history: MarketDailyHis
         <summary>종가·거래량 데이터 표</summary>
         <div className="chart-data-scroll" tabIndex={0} role="region" aria-label="종가·거래량 데이터 표">
           <table>
-            <caption className="sr-only">{basis} ({currency}), 이동평균, 거래량 (주) · {points.length}거래일</caption>
+            <caption className="sr-only">{basis} ({currency}), 이동평균, 거래량 (주) · {points.length}{weekly ? '주' : '거래일'}</caption>
             <thead><tr><th scope="col">거래일</th><th scope="col">종가 ({currency})</th>
-              <th scope="col">SMA 20</th><th scope="col">SMA 50</th><th scope="col">거래량 (주)</th></tr></thead>
+              {!weekly && <><th scope="col">SMA 20</th><th scope="col">SMA 50</th></>}<th scope="col">거래량 (주)</th></tr></thead>
             <tbody>{points.slice().reverse().map(point => <tr key={point.tradingDate}>
               <th scope="row"><time dateTime={point.tradingDate}>{point.tradingDate}</time></th>
               <td>{formatAnalysisPrice(point.close, currency)}</td>
-              <td>{point.sma20 === null ? '자료 부족' : formatAnalysisPrice(point.sma20, currency)}</td>
-              <td>{point.sma50 === null ? '자료 부족' : formatAnalysisPrice(point.sma50, currency)}</td>
+              {!weekly && <><td>{point.sma20 === null ? '자료 부족' : formatAnalysisPrice(point.sma20, currency)}</td>
+              <td>{point.sma50 === null ? '자료 부족' : formatAnalysisPrice(point.sma50, currency)}</td></>}
               <td>{formatVolume(point.volume)}</td>
             </tr>)}</tbody>
           </table>
         </div>
       </details>
-      <div className="periods" role="group" aria-label="모멘텀 차트">
+      {!weekly && <div className="periods" role="group" aria-label="모멘텀 차트">
         {(['off', 'rsi', 'macd'] as const).map(key => <button type="button" key={key} aria-pressed={momentum === key}
           onClick={() => setMomentum(key)}>{{ off: '닫기', rsi: 'RSI 14', macd: 'MACD' }[key]}</button>)}
-      </div>
-      {momentum !== 'off' && (momentumAvailable ? <div className="stock-volume-plot">
+      </div>}
+      {!weekly && momentum !== 'off' && (momentumAvailable ? <div className="stock-volume-plot">
         <ResponsiveContainer width="100%" height="100%" minWidth={0}>
           <ComposedChart data={points} margin={margin} title={momentum === 'rsi' ? 'RSI 14' : 'MACD'} accessibilityLayer syncId={id}>
             <CartesianGrid {...grid} />{dateAxis}<YAxis {...axis} domain={momentum === 'rsi' ? [0, 100] : ['auto', 'auto']} />

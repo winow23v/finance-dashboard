@@ -182,10 +182,27 @@ function macdSeriesFor(closes: readonly number[]) {
   return { line, signal: ema(line, 9) }
 }
 
-export function technicalChartSeries(history: MarketDailyHistory) {
+export function completedWeeklyBars(history: MarketDailyHistory): DailyOhlcvBar[] {
+  if (history.completeness !== 'complete' || !validBars(history.bars)) return []
+  const weeks = new Map<number, DailyOhlcvBar>()
+  for (const bar of history.bars) {
+    const day = new Date(bar.tradingDate)
+    const monday = day.getTime() - ((day.getUTCDay() + 6) % 7) * 86_400_000
+    const week = weeks.get(monday)
+    weeks.set(monday, week ? {
+      tradingDate: bar.tradingDate, open: week.open, high: Math.max(week.high, bar.high),
+      low: Math.min(week.low, bar.low), close: bar.close, volume: week.volume + bar.volume,
+    } : { ...bar })
+  }
+  // The range may begin midweek. The last observed week has no later session
+  // to establish that its collection window has ended.
+  return [...weeks.values()].slice(1, -1).filter(week => Number.isSafeInteger(week.volume))
+}
+
+export function technicalChartSeries(history: MarketDailyHistory, includeIndicators = true) {
   const { bars } = history
   if (!validBars(bars)) return []
-  const valid = history.completeness === 'complete'
+  const valid = includeIndicators && history.completeness === 'complete'
   const closes = bars.map(bar => bar.close)
   const volumes = bars.map(bar => bar.volume)
   const averages = emaWindows.map(period => ema(closes, period))
