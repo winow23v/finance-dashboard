@@ -1,5 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises'
-import { invalidResponse, isDay, providerClient } from './public-provider.mjs'
+import { invalidResponse, isDay, providerClient, ProviderError, withHealthMetadata } from './public-provider.mjs'
 
 export const pairs = ['USD/KRW', 'EUR/KRW', 'USD/JPY']
 const ecbQuotes = ['USD', 'KRW', 'JPY', 'CNY', 'GBP', 'CHF', 'AUD', 'CAD']
@@ -40,9 +40,11 @@ export function createFxProvider({ fetchImpl = fetch, clock = Date.now, timeoutM
     const earliestAnchor = new Date(Date.parse(from) - 7 * 86_400_000).toISOString().slice(0, 10)
     const query = new URLSearchParams({ base: 'EUR', quotes: ecbQuotes.join(','), providers: 'ecb', from, to: today })
     const url = `https://api.frankfurter.dev/v2/rates?${query}`
+    let retries = 0
     const rows = await get(url).catch(async error => {
       if (error.code !== 'PROVIDER_TIMEOUT' && !error.transientNetwork) throw error
       // Keep the two six-second attempts inside the browser's 15-second deadline.
+      retries++
       await delay(500)
       return get(url)
     })
@@ -69,13 +71,15 @@ export function createFxProvider({ fetchImpl = fetch, clock = Date.now, timeoutM
     if (!reference || (lastGood && reference[0] < lastGood.reference[0])) throw invalidResponse()
 
     const time = clock()
-    lastGood = { observations, reference, requestedDay: today, collectedAt: new Date(time).toISOString(), expires: time + freshnessMs }
+    lastGood = { retries, observations, reference, requestedDay: today, collectedAt: new Date(time).toISOString(), expires: time + freshnessMs }
     failure = undefined
   }
 
   async function load() {
     const now = clock()
     const today = new Date(now).toISOString().slice(0, 10)
+    const attempted = !pending && (lastGood?.requestedDay !== today || now >= lastGood.expires)
+      && (!failure || now >= failure.retryAt)
     if (lastGood?.requestedDay !== today || now >= lastGood.expires) {
       if (!failure || now >= failure.retryAt) {
         pending ??= refresh(today).catch(error => {
@@ -83,9 +87,14 @@ export function createFxProvider({ fetchImpl = fetch, clock = Date.now, timeoutM
         }).finally(() => { pending = undefined })
         await pending
       }
-      if (!lastGood) throw failure.error
+      if (!lastGood) {
+        const { statusCode, code } = failure.error
+        throw withHealthMetadata(new ProviderError(statusCode ?? 502, code ?? 'FX_PROVIDER_FAILED'), { attempted, usedCache: false })
+      }
     }
-    return { ...lastGood, today, refreshError: failure?.error.code }
+    return { ...lastGood, today, refreshError: failure?.error.code, telemetry: {
+      attempted, usedCache: !attempted || Boolean(failure), retries: attempted && !failure ? lastGood.retries : 0,
+    } }
   }
 
   function crossRate(rates, base, quote) {
@@ -118,19 +127,20 @@ export function createFxProvider({ fetchImpl = fetch, clock = Date.now, timeoutM
         const point = series(data.observations, pair).at(-1)
         return { ...metadata(pair, point, data), observationDate: point?.observationDate ?? null, rate: point?.rate ?? null }
       })
-      return { rates, ...(data.refreshError && { refreshError: data.refreshError }), reference: {
+      return withHealthMetadata({ rates, ...(data.refreshError && { refreshError: data.refreshError }), reference: {
         observationDate, collectedAt: data.collectedAt, kind: 'reference',
         status: !data.refreshError && observationDate === data.today ? 'published_today' : 'previous_publication',
         rates: Object.fromEntries(fxCurrencies.map(base => [base, Object.fromEntries(
           fxCurrencies.filter(quote => quote !== base).map(quote => [quote, crossRate(eurRates, base, quote)]),
         )])),
-      } }
+      } }, data.telemetry)
     },
     async history(pair, period) {
       const data = await load()
       const from = startDate(data.today, period)
       const points = series(data.observations.filter(([date]) => date >= from), pair)
-      return { ...metadata(pair, points.at(-1), data), period, from, to: data.today, points, ...(data.refreshError && { refreshError: data.refreshError }) }
+      return withHealthMetadata({ ...metadata(pair, points.at(-1), data), period, from, to: data.today, points,
+        ...(data.refreshError && { refreshError: data.refreshError }) }, data.telemetry)
     },
   }
 }

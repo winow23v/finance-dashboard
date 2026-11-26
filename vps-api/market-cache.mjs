@@ -80,6 +80,7 @@ export function createMarketCache({
           bytes += entry.body.length
         }
       }
+      const cacheHit = Boolean(entry)
       if (!entry) {
         let request = pending.get(key)
         if (!request) {
@@ -90,6 +91,7 @@ export function createMarketCache({
         entry = await request
       }
       return {
+        cacheHit,
         body: entry.body,
         storedAt: new Date(entry.storedAt).toISOString(),
         asOf: entry.marketTime === null ? null : new Date(entry.marketTime).toISOString(),

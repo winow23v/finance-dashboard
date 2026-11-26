@@ -16,6 +16,7 @@ const endpoint = {
   KOSDAQ: { index: 'idx/kosdaq_dd_trd', trades: 'sto/ksq_bydd_trd', listings: 'sto/ksq_isu_base_info', name: '코스닥' },
 }
 const services = Object.values(endpoint).flatMap(({ index, trades, listings }) => [index, trades, listings])
+export const krxCollectionEndpoints = Object.freeze([...services])
 const minutes = [16 * 60 + 30, 17 * 60 + 30, 19 * 60]
 const isoDay = value => typeof value === 'string' ? value.replace(/^(\d{4})(\d\d)(\d\d)$/, '$1-$2-$3') : ''
 const codePattern = /^[0-9A-Z]{6}$/

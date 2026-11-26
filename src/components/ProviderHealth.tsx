@@ -5,7 +5,7 @@ const names: Record<string, string> = {
   krx: 'KRX OPEN API', fx: 'Frankfurter', ecos: '한국은행 ECOS', dart: 'OPEN DART',
   yfinance: 'yfinance', 'kr-intraday': '국내 장중 시세',
 }
-const statuses = new Set(['Healthy', 'Degraded', 'Stale', 'Unavailable', 'Rate Limited', 'Not Configured'])
+const statuses = new Set(['Healthy', 'Degraded', 'Stale', 'Unavailable', 'Rate Limited', 'Not Configured', 'Not Yet Collected'])
 const time = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
 const formatTime = (value: unknown) => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? time.format(new Date(value)) : '—'
 const field = (value: unknown) => typeof value === 'string' || typeof value === 'number' ? value : '—'
@@ -28,6 +28,7 @@ export function ProviderHealth({ revision }: { revision: number }) {
         <div><dt>마지막 시도 (KST)</dt><dd>{formatTime(row.attemptedAt)}</dd></div>
         <div><dt>데이터 기준일</dt><dd>{field(row.observationDate)}</dd></div>
         <div><dt>응답 시간 (ms)</dt><dd>{field(row.responseMs)}</dd></div>
+        <div><dt>캐시 사용</dt><dd>{row.usedCache === true ? '사용' : row.usedCache === false ? '미사용' : '—'}</dd></div>
         <div><dt>최근 오류 · HTTP</dt><dd>{field(row.errorCode)} · {field(row.httpStatus)}</dd></div>
         <div><dt>재시도 · 연속 실패</dt><dd>{field(row.retries)} · {field(row.consecutiveFailures)}</dd></div>
       </dl>
