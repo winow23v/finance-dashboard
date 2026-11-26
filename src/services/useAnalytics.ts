@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { analyticsId, createAnalytics, readAnalyticsConsent, saveAnalyticsConsent } from './analytics'
+import { analyticsId, createAnalytics, readAnalyticsConsent, saveAnalyticsConsent, subscribeAnalyticsConsent } from './analytics'
 
 const id = import.meta.env.PROD && import.meta.env.MODE === 'production' && import.meta.env.VITE_DATA_MODE === 'api'
   ? analyticsId(import.meta.env.VITE_GA4_ENABLED, import.meta.env.VITE_GA4_MEASUREMENT_ID) : undefined
@@ -29,6 +29,13 @@ function setEnabled(enabled: boolean) {
 
 export function useAnalytics(page: string) {
   const [enabled, setConsent] = useState(() => Boolean(id && readAnalyticsConsent()))
+  useEffect(() => {
+    if (!id) return
+    return subscribeAnalyticsConsent(granted => {
+      if (!granted) setEnabled(false)
+      setConsent(granted)
+    })
+  }, [])
   useEffect(() => {
     setEnabled(enabled)
     if (enabled) client?.page(page)

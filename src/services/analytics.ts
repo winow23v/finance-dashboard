@@ -56,3 +56,12 @@ export function saveAnalyticsConsent(granted: boolean) {
     else localStorage.removeItem(settingsKey)
   } catch { /* Keep the choice in memory when storage is unavailable. */ }
 }
+
+export function subscribeAnalyticsConsent(onChange: (enabled: boolean) => void, target: EventTarget = window) {
+  const listener = (event: Event) => {
+    const { key } = event as StorageEvent
+    if (key === null || key === settingsKey) onChange(readAnalyticsConsent())
+  }
+  target.addEventListener('storage', listener)
+  return () => target.removeEventListener('storage', listener)
+}
