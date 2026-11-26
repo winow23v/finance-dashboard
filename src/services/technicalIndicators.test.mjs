@@ -395,3 +395,31 @@ test('one rebound session in a downtrend still keeps the entry perspective on wa
   assert.equal(assessment.trend, 'down')
   assert.equal(buildTechnicalScenarios(assessment, indicators).entry.mode, 'watch')
 })
+
+test('chart indicators align with completed bars and never read future prices', async () => {
+  const { technicalChartSeries } = await import('./technicalIndicators.ts')
+  const input = history(ramp(366))
+  const points = technicalChartSeries(input)
+  assert.equal(points[13].rsi, null)
+  assert.equal(points[14].rsi, 100)
+  assert.equal(points[18].ema20, null)
+  assert.equal(points[19].ema20, 109.5)
+  assert.equal(points[24].macd, null)
+  assert.equal(points[25].macd, 7)
+  assert.equal(points[32].signal, null)
+  assert.equal(points[33].histogram, 0)
+  assert.equal(points[49].volume50, 124.5)
+  assert.equal(points[363].sma365, null)
+  assert.equal(points[364].sma365, 282)
+  assert.deepEqual(technicalChartSeries(history(ramp(200))), points.slice(0, 200))
+  assert.equal(technicalChartSeries({ ...input, completeness: 'missing-observations' }).at(-1).ema200, null)
+})
+
+test('trendline requires two pivots confirmed by two subsequent bars', async () => {
+  const { priceStructure } = await import('./technicalAssessment.ts')
+  const input = history([100, 102, 110, 104, 102, 105, 114, 106, 104]).bars
+  assert.equal(priceStructure(input.slice(0, -1)).upper, null)
+  assert.equal(priceStructure(input).upper.slope, 1)
+  assert.equal(priceStructure(input).upper.latest, 117)
+  assert.equal(priceStructure(input).channel, null)
+})
