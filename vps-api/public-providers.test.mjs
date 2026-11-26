@@ -109,7 +109,7 @@ test('Frankfurter timeout, connection, and body failures differ and cold failure
       assert.equal(result.json().code, code)
       assert.ok(!result.body.includes('private upstream error'))
     }
-    assert.equal(calls, 1)
+    assert.equal(calls, code === 'PROVIDER_CONNECTION_ERROR' ? 1 : 2)
   }
 })
 
@@ -377,4 +377,18 @@ test('failed refresh preserves the last publication for both routes and defers r
   assert.equal(recovered.refreshError, undefined)
   assert.equal(recovered.reference.status, 'published_today')
   assert.equal(calls, 4)
+})
+
+test('Frankfurter retries a transient transport failure once and shares the successful publication', async () => {
+  const date = '2026-11-25'
+  let calls = 0
+  const fx = createFxProvider({ clock: () => Date.parse(date), async fetchImpl() {
+    if (++calls === 1) throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } })
+    return Response.json([fxRow(date, 'USD', 1.2), fxRow(date, 'KRW', 1440), fxRow(date, 'JPY', 160)])
+  } })
+  const [latest, history] = await Promise.all([fx.latest(), fx.history('JPY/KRW', '1W')])
+  assert.equal(calls, 2)
+  assert.equal(latest.reference.observationDate, date)
+  assert.equal(latest.reference.rates.USD.KRW, 1200)
+  assert.deepEqual(history.points, [{ observationDate: date, rate: 9 }])
 })

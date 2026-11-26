@@ -67,13 +67,13 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0, onRefreshResul
             : <h3>{symbol} 일별 종가</h3>}
           <div className="analysis-price"><small>최근 확인 종가</small>
           <strong className="us-quote-price" title={String(quote.close)}>{formatAnalysisPrice(quote.close, unit)}</strong>
-          {quote.change !== null && quote.changePercent !== null && <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
+          {quote.change !== null && quote.changePercent !== null && <Change market="US" quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
           </div>{stock?.actions}
           <p className="heatmap-meta analysis-meta">
             <span>거래일 <time dateTime={quote.tradingDate}>{quote.tradingDate}</time></span>
           </p>
-          {data.status === 'stale' && <>
-            <p className="detail-attention" role="status">{data.reason ? ({ 'not-published': '공표 대기', collecting: '수집 대기', 'provider-error': '마지막 유효값', 'rate-limited': '요청 제한', 'provider-not-configured': '공급 미연결', unsupported: '지원되지 않음' })[data.reason] : '갱신 지연'}</p>
+          {data.status === 'stale' && data.reason !== 'collecting' && <>
+            <p className="detail-attention" role="status">{data.reason ? ({ 'not-published': '공표 대기', 'provider-error': '마지막 유효값', 'rate-limited': '요청 제한', 'provider-not-configured': '공급 미연결', unsupported: '지원되지 않음' })[data.reason] : '갱신 지연'}</p>
             {!indexId && !requested && data.reason === 'not-published' &&
               <button className="button" type="button" onClick={() => setRequestedAt(refresh)}>갱신 요청</button>}
           </>}

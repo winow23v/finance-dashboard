@@ -85,9 +85,10 @@ export function providerClient(fetchImpl, intervalMs, {
       }
     } catch (error) {
       if (error instanceof ProviderError) throw error
-      throw signal.aborted
-        ? new ProviderError(504, 'PROVIDER_TIMEOUT')
-        : new ProviderError(502, detailedErrors ? 'PROVIDER_CONNECTION_ERROR' : 'PROVIDER_UNAVAILABLE')
+      if (signal.aborted) throw new ProviderError(504, 'PROVIDER_TIMEOUT')
+      const failure = new ProviderError(502, detailedErrors ? 'PROVIDER_CONNECTION_ERROR' : 'PROVIDER_UNAVAILABLE')
+      if (detailedErrors && isTransientNetworkError(error)) failure.transientNetwork = true
+      throw failure
     } finally {
       active--
     }

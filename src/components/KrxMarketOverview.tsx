@@ -7,7 +7,6 @@ import { krxStateLabels } from './KrxStocks'
 
 const number = new Intl.NumberFormat('ko-KR')
 const percent = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2, signDisplay: 'exceptZero' })
-const time = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
 const link = (row: KrxMarketRow) => stockHref({ market: 'KR', exchange: 'XKRX', symbol: row.symbol })
 const rate = (row: KrxMarketRow) => row.changePercent === null ? '등락률 미확인' : percent.format(row.changePercent) + '%'
 const state = (data?: KrxOverview | null) => data === undefined ? 'KRX 시장 데이터를 불러오는 중입니다.'
@@ -26,19 +25,8 @@ const desktopHeatmap = () => false
 const movementClass = (value: number | null) => value === null || value === 0 ? 'krx-flat' : value > 0 ? 'krx-up' : 'krx-down'
 
 function MarketBasis({ data }: { data: KrxOverview }) {
-  const status = data.usingPreviousClose ? '이전 정상 종가 사용' : data.reason && data.reason !== 'same-date-data-unavailable' ? krxStateLabels[data.reason] : null
+  const status = data.usingPreviousClose ? '이전 정상 종가 사용' : data.reason && !['same-date-data-unavailable', 'before-collection', 'weekend'].includes(data.reason) ? krxStateLabels[data.reason as keyof typeof krxStateLabels] : null
   return <p className="heatmap-meta">{data.tradingDate && <time dateTime={data.tradingDate}>{data.tradingDate}</time>}{status && <> <span className="muted-badge">{status}</span></>}</p>
-}
-
-export function KrxOverviewStatus({ data, message }: { data?: KrxOverview | null; message?: string }) {
-  if (message || !data?.tradingDate) return <p role="status">{message ?? state(data)}</p>
-  return <div role="status" className="krx-collection-status">
-    <span>종가 <time dateTime={data.tradingDate}>{data.tradingDate}</time></span>
-    {data.collectedAt && <span>정상 수집 <time dateTime={data.collectedAt}>{time.format(new Date(data.collectedAt))} KST</time></span>}
-    {data.lastAttemptAt && <span>마지막 시도 <time dateTime={data.lastAttemptAt}>{time.format(new Date(data.lastAttemptAt))} KST</time></span>}
-    {data.usingPreviousClose && <span className="muted-badge">이전 정상 종가 사용</span>}
-    {data.reason && data.reason !== 'same-date-data-unavailable' && <span>{krxStateLabels[data.reason]}</span>}
-  </div>
 }
 
 const rankings = [
