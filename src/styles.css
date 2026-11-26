@@ -627,12 +627,6 @@ img.brand-icon { padding: 0; }
   justify-content: center;
   min-height: 44px;
 }
-:is(.market-overview, .market-explorer) .mover-name {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
-}
 :is(.market-overview, .market-explorer) :is(.ranking-list, .krx-heatmap-list) li > span {
   font-size: .875rem;
   font-weight: 650;
@@ -832,7 +826,6 @@ html { scroll-padding-top: 70px; }
   border-block-end: 1px solid var(--line);
   margin-block-end: 8px;
 }
-#mobile-menu .side-navigation { padding-block-end: max(12px, env(safe-area-inset-bottom)); }
 :is(.economy-workspace, .settings-workspace, .watch-workspace) { --terminal-inset: clamp(12px, 2vw, 18px); }
 :is(.settings-workspace, .watch-workspace) :is(.panel-heading, .setting) { padding: var(--terminal-inset); }
 .settings-workspace :is(.setting, .panel-heading) { overflow-wrap: anywhere; }
@@ -887,7 +880,20 @@ html { scroll-padding-top: 70px; }
 .terminal-chart-tooltip { max-width: calc(100% - 8px); }
 .terminal-chart-tooltip .recharts-default-tooltip { white-space: normal !important; overflow-wrap: anywhere; }
 @media (max-width: 780px) {
-  #mobile-menu { inset: auto 0 max(8px, env(safe-area-inset-bottom)); max-height: min(85dvh, 620px); overscroll-behavior: contain; }
+  html:has(#mobile-menu[open]) { overflow: hidden; overscroll-behavior: none; }
+  body:has(#mobile-menu[open]) { position: fixed; inset: var(--mobile-menu-scroll, 0) 0 auto; overflow: hidden; }
+  #mobile-menu {
+    --menu-edge-block: max(12px, env(safe-area-inset-top), env(safe-area-inset-bottom));
+    --menu-edge-inline: max(12px, env(safe-area-inset-left), env(safe-area-inset-right));
+    position: fixed;
+    inset: var(--menu-edge-block) var(--menu-edge-inline);
+    margin: auto;
+    width: min(560px, calc(100% - 2 * var(--menu-edge-inline)));
+    max-height: min(620px, calc(100vh - 2 * var(--menu-edge-block)));
+    max-height: min(620px, calc(100dvh - 2 * var(--menu-edge-block)));
+    overscroll-behavior: contain;
+  }
+  #mobile-menu :is(a, button):focus:not(:focus-visible) { outline: none; }
 }
 @media (max-width: 480px) {
   .economy-workspace :is(.fx-rates, .ecos-indicators) { grid-template-columns: minmax(0, 1fr); }
@@ -1055,3 +1061,18 @@ span.chart-body { display: block; }
 @container dashboard (width < 570px) {
   .overseas-quotes > :last-child:nth-child(odd) { grid-column: 1 / -1; }
 }
+
+.krx-collection-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem 1rem; }
+.krx-collection-status > span { max-width: 100%; }
+.krx-up, .krx-stock-search .up { color: var(--red); }
+.krx-down, .krx-stock-search .down { color: var(--blue); }
+.krx-flat, .krx-stock-search .change:not(.up, .down) { color: var(--muted); }
+
+.krx-stock-name, .ranking-list .mover-name {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.krx-analysis .stock-identity h1 { overflow-wrap: anywhere; }

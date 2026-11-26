@@ -32,7 +32,7 @@ export function providerClient(fetchImpl, intervalMs, {
   let active = 0
   const recent = []
   const bodyError = code => detailedErrors ? new ProviderError(502, code) : invalidResponse()
-  return async (url, headers = {}, requestTimeoutMs = timeoutMs, observeResponse) => {
+  return async (url, headers = {}, requestTimeoutMs = timeoutMs, observeResponse, timings) => {
     if (active >= 2 || (!queue && performance.now() < next)) throw new ProviderError(503, 'PROVIDER_BUSY')
     active++
     while (performance.now() < next) await delay(Math.ceil(next - performance.now()))
@@ -45,13 +45,16 @@ export function providerClient(fetchImpl, intervalMs, {
         recent.push(now)
       }
       next = now + intervalMs
-      const response = await fetchImpl(url, { headers: { Accept: binary ? 'application/zip, application/json' : 'application/json', ...headers }, signal, redirect: 'error' })
+      const headersStart = performance.now()
+      const response = await fetchImpl(url, { headers: { Accept: binary ? 'application/zip, application/json' : 'application/json', ...headers }, signal, redirect: 'error' }, timings)
+      if (timings) timings.headersMs ??= Math.round(performance.now() - headersStart)
       observeResponse?.(response.status)
       if (!response.ok) {
         void response.body?.cancel().catch(() => {})
         if (response.status === 429) throw new ProviderError(503, 'PROVIDER_RATE_LIMITED')
         throw new ProviderError(502, 'PROVIDER_UNAVAILABLE')
       }
+      const bodyStart = performance.now()
       try {
         let size = 0
         const chunks = []
@@ -61,14 +64,19 @@ export function providerClient(fetchImpl, intervalMs, {
           if (size > maxBytes) throw bodyError('PROVIDER_RESPONSE_TOO_LARGE')
           chunks.push(chunk)
         }
+        if (timings) timings.bodyMs = Math.round(performance.now() - bodyStart)
         const body = Buffer.concat(chunks, size)
         if (binary) return body
+        const jsonStart = performance.now()
         try {
           return JSON.parse(body.toString('utf8'))
         } catch {
           throw bodyError('PROVIDER_INVALID_JSON')
+        } finally {
+          if (timings) timings.jsonMs = Math.round(performance.now() - jsonStart)
         }
       } catch (error) {
+        if (timings) timings.bodyMs ??= Math.round(performance.now() - bodyStart)
         if (signal.aborted) throw new ProviderError(504, 'PROVIDER_TIMEOUT')
         if (error instanceof ProviderError) throw error
         const failure = bodyError('PROVIDER_BODY_ERROR')

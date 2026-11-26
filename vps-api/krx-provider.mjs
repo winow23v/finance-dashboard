@@ -1,8 +1,10 @@
 import { spawn } from 'node:child_process'
+import { get as httpsGet } from 'node:https'
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { Readable } from 'node:stream'
 import { performance } from 'node:perf_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { isDay, isTransientNetworkError, providerClient, ProviderError } from './public-provider.mjs'
@@ -17,6 +19,35 @@ const services = Object.values(endpoint).flatMap(({ index, trades, listings }) =
 const minutes = [16 * 60 + 30, 17 * 60 + 30, 19 * 60]
 const isoDay = value => typeof value === 'string' ? value.replace(/^(\d{4})(\d\d)(\d\d)$/, '$1-$2-$3') : ''
 const codePattern = /^[0-9A-Z]{6}$/
+const nameText = value => typeof value === 'string' ? value.trim() : ''
+const shortCode = value => {
+  const code = nameText(value).toUpperCase()
+  return /^\d{1,6}$/.test(code) ? code.padStart(6, '0') : codePattern.test(code) ? code : null
+}
+
+export function fetchKrx(url, { headers, signal, ca }, timings) {
+  return new Promise((resolve, reject) => {
+    let start = performance.now()
+    const mark = stage => {
+      const now = performance.now()
+      timings[stage] = Math.round(now - start)
+      start = now
+    }
+    // A dedicated connection makes DNS, TCP and TLS individually observable.
+    const request = httpsGet(url, { agent: false, ca, headers: { ...headers, 'Accept-Encoding': 'identity' }, signal }, response => {
+      mark('headersMs')
+      timings.socketReused = request.reusedSocket
+      resolve({ status: response.statusCode, ok: response.statusCode >= 200 && response.statusCode < 300,
+        headers: new Headers(response.headers), body: Readable.toWeb(response) })
+    })
+    request.once('socket', socket => {
+      socket.once('lookup', error => { if (!error) mark('dnsMs') })
+      socket.once('connect', () => mark('connectMs'))
+      socket.once('secureConnect', () => mark('tlsMs'))
+    })
+    request.once('error', reject)
+  })
+}
 const historyDays = 780
 const historySessions = 500
 const firstOfficialDate = '2010-01-04'
@@ -24,6 +55,11 @@ const markets = Object.keys(endpoint)
 const backfillStopCodes = new Set(['PROVIDER_RATE_LIMITED', 'KRX_BACKFILL_BUDGET', 'KRX_AUTH_REJECTED',
   'KRX_ACCESS_DENIED', 'KRX_HISTORY_CACHE_FAILED'])
 const requestLimit = 300
+const defaultTimeouts = { index: 10_000, trades: 30_000, listings: 20_000 }
+
+function requestKind(path) {
+  return path.endsWith('_bydd_trd') ? 'trades' : path.endsWith('_base_info') ? 'listings' : 'index'
+}
 const recoveryLookback = 10
 const recoveryLimit = 4
 const retryableHttp = new Set([408, 500, 502, 503, 504])
@@ -84,9 +120,44 @@ function unique(rows) {
   return [...byCode.values()].filter(Boolean)
 }
 
-// Callers resolve the master row by exact market and symbol before naming it.
-function listingDisplayName(symbol, listing) {
-  return listing?.name?.trim() || symbol
+function listingDisplayName(symbol, listing, tradeName) {
+  return nameText(listing?.name) || nameText(tradeName) || symbol
+}
+
+function tradeNameMatches(listing, trade) {
+  const name = nameText(trade.name).normalize('NFC')
+  return Boolean(name) && name !== trade.symbol &&
+    [listing.name, listing.fullName].some(value => nameText(value).normalize('NFC') === name)
+}
+
+function matchesTrade(listing, trade, catalogDate, tradeDate) {
+  return Boolean(listing && trade && (!trade.market || listing.market === trade.market) &&
+    isDay(listing.listedOn) && listing.listedOn <= tradeDate &&
+    (catalogDate === tradeDate || tradeNameMatches(listing, trade)))
+}
+
+function tradeListing(trade, date, current, currentDate, prior, priorDate) {
+  const priorApplies = date < currentDate && date >= priorDate && matchesTrade(prior, trade, priorDate, date)
+  if (priorApplies && current && current.isin && prior.isin) {
+    if (current.isin !== prior.isin || current.listedOn !== prior.listedOn) return prior
+    if (/^[A-Z]{2}[A-Z0-9]{9}\d$/.test(prior.isin)) return current
+  }
+  return matchesTrade(current, trade, currentDate, date) ? current : priorApplies ? prior : undefined
+}
+
+function stockObservation(market, current, trade, catalog, prior, date) {
+  const listing = trade && tradeListing(trade, date, current, catalog.data?.date, prior, catalog.previousData?.date)
+  if (listing) {
+    if (current && listing !== current) return { listing: current, quote: null }
+    return { listing, quote: trade }
+  }
+  // Keep the current listing addressable when older trades belong to another issue.
+  if (current && (catalog.data.date >= date || !trade || shortCode(trade.name) === trade.symbol || !trade.name)) {
+    return { listing: current, quote: null }
+  }
+  if (!trade) return { listing: current, quote: null }
+  return { listing: { market, symbol: trade.symbol, name: listingDisplayName(trade.symbol, null, trade.name),
+    fullName: nameText(trade.name), englishName: '', shareClass: '', listedOn: null }, quote: trade }
 }
 
 function normalize(path, rows, date) {
@@ -97,18 +168,18 @@ function normalize(path, rows, date) {
     return quote ? [{ ...quote, indexClass: market, indexName: config.name }] : []
   }
   if (path === config.listings) return unique(rows.flatMap(row => {
-    const symbol = row?.ISU_SRT_CD
-    if (typeof symbol !== 'string' || !codePattern.test(symbol) || row.MKT_TP_NM !== market ||
-      typeof row.ISU_ABBRV !== 'string' || !row.ISU_ABBRV.trim() ||
+    const symbol = shortCode(row?.ISU_SRT_CD)
+    if (!symbol || row.MKT_TP_NM !== market || !nameText(row.ISU_ABBRV) ||
       !isDay(isoDay(row.LIST_DD)) || isoDay(row.LIST_DD) > date) return []
-    return [{ symbol, market, name: row.ISU_ABBRV, englishName: row.ISU_ENG_NM?.trim() || '',
-      fullName: row.ISU_NM?.trim() || row.ISU_ABBRV,
-      isin: row.ISU_CD, listedOn: isoDay(row.LIST_DD), shareClass: row.KIND_STKCERT_TP_NM?.trim() || '' }]
+    return [{ symbol, market, name: nameText(row.ISU_ABBRV), englishName: nameText(row.ISU_ENG_NM),
+      fullName: nameText(row.ISU_NM) || nameText(row.ISU_ABBRV),
+      isin: row.ISU_CD, listedOn: isoDay(row.LIST_DD), shareClass: nameText(row.KIND_STKCERT_TP_NM) }]
   }))
   return unique(rows.flatMap(row => {
     const quote = observation(row, date, false)
-    if (!quote || row.MKT_NM !== market || !codePattern.test(row.ISU_CD) || !row.ISU_NM?.trim()) return []
-    return [{ ...quote, symbol: row.ISU_CD, name: row.ISU_NM, market }]
+    const symbol = shortCode(row?.ISU_CD)
+    if (!quote || row.MKT_NM !== market || !symbol) return []
+    return [{ ...quote, symbol, name: nameText(row.ISU_NM), market }]
   }))
 }
 
@@ -127,7 +198,7 @@ export function configureMemberKrx({
 export function createKrxProvider({
   key = process.env.KRX_API_KEY,
   root = fileURLToPath(new URL('.krx-cache/', import.meta.url)),
-  fetchImpl = fetch, clock = Date.now, scheduledOnly = false, calendar = createKrxCalendar(),
+  fetchImpl = fetchKrx, retryDelays = [2_000, 5_000], timeouts = defaultTimeouts, clock = Date.now, scheduledOnly = false, calendar = createKrxCalendar(),
   log = scheduledOnly ? entry => console.info(JSON.stringify(entry)) : () => {},
 } = {}) {
   const ledgerFile = join(root, 'krx-request-budget.json')
@@ -143,10 +214,10 @@ export function createKrxProvider({
   let operation = Promise.resolve()
   const targetFor = () => scheduledOnly ? krxCollectionSession(clock(), calendar) : session(clock())
   const historyClosed = scheduledOnly ? calendar.closed : weekend
-  const get = providerClient(async (url, options) => {
+  const get = providerClient(async (url, options, timings) => {
     let response
     try {
-      response = await fetchImpl(url, options)
+      response = await fetchImpl(url, options, timings)
     } catch (error) {
       if (error instanceof ProviderError || options.signal.aborted) throw error
       if (isTransientNetworkError(error)) throw error
@@ -155,7 +226,7 @@ export function createKrxProvider({
     if (response.status === 429) {
       const header = response.headers.get('retry-after')
       const resume = header && /^\d+$/.test(header) ? clock() + Number(header) * 1000 : Date.parse(header ?? '')
-      ledger.blockedUntil = Math.max(clock() + 30 * 60_000, Number.isFinite(resume) ? resume : 0)
+      ledger.blockedUntil = Number.isFinite(resume) && resume >= clock() ? resume : clock() + 30 * 60_000
       await persistLedger()
     }
     return response
@@ -265,13 +336,15 @@ export function createKrxProvider({
   }
   const states = new Map()
   const pending = new Map()
+  const mappingReported = new Map()
   const historyPending = new Map()
   let queue = Promise.resolve()
 
   async function request(path, date, { retries = 0, requests } = {}) {
     const url = new URL('https://data-dbg.krx.co.kr/svc/apis/' + path)
     url.searchParams.set('basDd', date.replaceAll('-', ''))
-    const timeoutMs = path.endsWith('_bydd_trd') ? 10_000 : 5_000
+    const kind = requestKind(path)
+    const timeoutMs = timeouts[kind] ?? defaultTimeouts[kind]
     for (let retry = 0; ; retry++) {
       let httpStatus = null
       const call = queue.then(async () => {
@@ -279,12 +352,15 @@ export function createKrxProvider({
         const at = new Date(clock()).toISOString()
         const start = performance.now()
         let code = null
+        const timings = { dnsMs: null, connectMs: null, tlsMs: null, headersMs: null, bodyMs: null, jsonMs: null }
         try {
-          const body = await get(url, { AUTH_KEY: key.trim() }, timeoutMs, status => { httpStatus = status })
+          const body = await get(url, { AUTH_KEY: key.trim() }, timeoutMs, status => { httpStatus = status }, timings)
           if (!Array.isArray(body?.OutBlock_1)) throw new ProviderError(502, 'KRX_INVALID_RESPONSE')
           if (body.OutBlock_1.length === 0) return []
           const rows = normalize(path, body.OutBlock_1, date)
           if (!rows.length) throw new ProviderError(502, 'KRX_INVALID_OBSERVATIONS')
+          if (kind === 'listings' && rows.length !== body.OutBlock_1.length)
+            throw new ProviderError(502, 'KRX_INCOMPLETE_MASTER')
           return rows
         } catch (error) {
           code = { 400: 'KRX_INVALID_REQUEST', 401: 'KRX_AUTH_REJECTED', 403: 'KRX_ACCESS_DENIED' }[httpStatus]
@@ -292,7 +368,7 @@ export function createKrxProvider({
           if (code === error.code) throw error
           throw new ProviderError(502, code)
         } finally {
-          const entry = { at, date, attempt: retry + 1, httpStatus, elapsedMs: Math.round(performance.now() - start), code }
+          const entry = { at, date, attempt: retry + 1, httpStatus, timeoutMs, timings, elapsedMs: Math.round(performance.now() - start), code }
           requests?.push(entry)
           log({ event: 'krx-request', endpoint: path, ...entry })
         }
@@ -304,7 +380,7 @@ export function createKrxProvider({
         const transient = retryableHttp.has(httpStatus) || error.code === 'PROVIDER_TIMEOUT'
           || error.code === 'PROVIDER_CONNECTION_ERROR'
         if (!transient || retry >= retries) throw error
-        await delay(500 * 2 ** retry)
+        await delay(retryDelays[retry])
       }
     }
   }
@@ -413,6 +489,16 @@ export function createKrxProvider({
         const rows = staged?.date === date && Array.isArray(staged.rows) && staged.rows.length ? staged.rows :
           await request(path, date, { retries: offset === 0 ? 2 : 0, requests: attempt.requests })
         if (!rows.length) continue
+        if (path.endsWith('_base_info') && state.data) {
+          const market = rows[0].market
+          const trades = (await readState(endpoint[market].trades)).data
+          const codes = new Set(rows.map(row => row.symbol))
+          const traded = new Map(trades?.date === date ? trades.rows.map(row => [row.symbol, row]) : [])
+          const missingKnownIssue = state.data.rows.some(row => !codes.has(row.symbol) &&
+            matchesTrade(row, traded.get(row.symbol), state.data.date, date))
+          if (rows.length < state.data.rows.length * 0.9 || missingKnownIssue)
+            throw new ProviderError(502, 'KRX_INCOMPLETE_MASTER')
+        }
         await saveLatestHistory(path, date, rows)
         if (state.data && state.data.date < date) state.previousData = state.data
         state.data = { date, collectedAt: new Date(clock()).toISOString(), rows }
@@ -464,7 +550,16 @@ export function createKrxProvider({
   async function stockHistory(symbol) {
     const target = targetFor()
     const catalogs = await Promise.all(markets.map(market => load(endpoint[market].listings, target)))
-    const matches = catalogs.flatMap(state => state.data?.rows.filter(row => row.symbol === symbol) ?? [])
+    const current = catalogs.map(state => state.data?.rows.find(row => row.symbol === symbol))
+    const candidates = current.some(Boolean) ? markets.filter((_, index) => current[index]) : markets
+    const matches = (await Promise.all(candidates.map(async market => {
+      const catalog = catalogs[markets.indexOf(market)]
+      const listing = catalog.data?.rows.find(row => row.symbol === symbol)
+      const prior = catalog.previousData?.rows.find(row => row.symbol === symbol)
+      const trades = await load(endpoint[market].trades, target)
+      const trade = trades.data?.rows.find(row => row.symbol === symbol)
+      return { trades, ...stockObservation(market, listing, trade, catalog, prior, trades.data?.date) }
+    }))).filter(result => result.listing)
     if (matches.length !== 1) {
       if (catalogs.some(state => !state.data)) {
         const reasons = catalogs.map(state => metadata(state, target).reason)
@@ -473,18 +568,16 @@ export function createKrxProvider({
       }
       return null
     }
-    const [listing] = matches
+    const [{ listing, trades, quote: latestQuote }] = matches
     const { market, listedOn, fullName, shareClass } = listing
-    const trades = await load(endpoint[market].trades, target)
     const latest = trades.data ?? null
     const latestDate = latest?.date ?? null
-    const latestQuote = latest?.rows.find(row => row.symbol === symbol && row.tradingDate >= listedOn) ?? null
     const bars = []
     let stoppedAt = null
     let stoppedReason = null
     for (const date of latestDate ? tradingCandidates(latestDate, historyClosed) : []) {
       if (bars.length >= historySessions) break
-      if (date < listedOn) break
+      if (date < (listedOn ?? latestDate) || (date === latestDate && !latestQuote)) break
       const cached = date === latestDate
         ? { rows: latest.rows.map(toBar).filter(Boolean) }
         : await readHistory(market, date)
@@ -721,15 +814,37 @@ export function createKrxProvider({
         leaders: null, tiles: [], marketTiles: { KOSPI: [], KOSDAQ: [] } }
     }
     const catalogs = await Promise.all(markets.map(market => load(endpoint[market].listings, target)))
-    const names = new Map(catalogs.flatMap(state => state.data?.rows.filter(row => row.listedOn <= date) ?? [])
-      .map(row => [row.market + ':' + row.symbol, row]))
-    const rows = datasets.flatMap(state => state.data.rows.filter(row => row.volume > 0))
-      .map(({ symbol, name: rawName, market, price, changePercent, volume, turnover, marketCap }) => {
-        const listing = names.get(market + ':' + symbol)
-        const name = listingDisplayName(symbol, listing)
+    const rows = datasets.flatMap((state, index) => {
+      const market = markets[index]
+      const { data, previousData } = catalogs[index]
+      const current = new Map(data?.rows.map(row => [row.symbol, row]))
+      const previous = new Map(previousData?.rows.map(row => [row.symbol, row]))
+      const eligible = state.data.rows.filter(row => row.volume > 0)
+      let mapped = 0
+      let named = 0
+      let sameDateNameConflicts = 0
+      const result = eligible.map(trade => {
+        const { symbol, name: rawName, price, changePercent, volume, turnover, marketCap } = trade
+        const candidate = current.get(symbol)
+        const prior = previous.get(symbol)
+        const listing = tradeListing(trade, date, candidate, data?.date, prior, previousData?.date)
+        const name = listingDisplayName(symbol, listing, rawName)
+        if (listing) mapped++
+        if (data?.date === date && listing === candidate && candidate && nameText(rawName) &&
+            rawName !== symbol && !tradeNameMatches(candidate, trade)) sameDateNameConflicts++
+        if (name !== symbol) named++
         return { symbol, name, shortName: name, rawName, fullName: listing?.fullName, shareClass: listing?.shareClass,
           mapped: Boolean(listing), market, price, changePercent, volume, turnover: turnover ?? null, marketCap }
       })
+      const signature = JSON.stringify([date, state.data.collectedAt, data?.date, data?.collectedAt, previousData?.date])
+      if (mappingReported.get(market) !== signature) {
+        mappingReported.set(market, signature)
+        log({ event: 'krx-name-mapping', market, tradingDate: date, listingDate: data?.date ?? null,
+          total: eligible.length, mapped, failed: eligible.length - mapped, sameDateNameConflicts,
+          mappingRate: eligible.length ? mapped / eligible.length : null, named, codeOnly: eligible.length - named })
+      }
+      return result
+    })
     const top = (field, direction, filter = () => true) => rows.filter(filter)
       .sort((a, b) => direction * (a[field] - b[field]) || a.symbol.localeCompare(b.symbol))
     const tiles = top('marketCap', -1, row => row.marketCap > 0 && Number.isFinite(row.changePercent))
@@ -826,23 +941,23 @@ export function createKrxProvider({
       const listings = await load(config.listings, target)
       const trades = await load(config.trades, target)
       const byCode = new Map(trades.data?.rows.map(row => [row.symbol, row]))
-      const term = q?.trim().toLowerCase()
-      const exact = symbols && new Set(symbols)
-      const matches = (listings.data?.rows ?? []).filter(row => {
-        if (exact) return exact.has(row.symbol)
-        if (symbol) return row.symbol === symbol
-        return !term || [row.symbol, row.name, row.fullName, row.englishName]
-          .some(text => text?.toLowerCase().includes(term))
+      const current = new Map(listings.data?.rows.map(row => [row.symbol, row]))
+      const previous = new Map(listings.previousData?.rows.map(row => [row.symbol, row]))
+      const term = q?.trim().normalize('NFC').toLowerCase()
+      const requested = symbols ?? (symbol ? [symbol] : [...new Set([...current.keys(), ...byCode.keys()])])
+      const matches = requested.flatMap(code => {
+        const master = current.get(code)
+        const { listing, quote } = stockObservation(market, master, byCode.get(code), listings,
+          previous.get(code), trades.data?.date)
+        if (!listing || (term && ![code, listing.name, listing.fullName, listing.englishName,
+          master?.name, master?.fullName].some(value => nameText(value).normalize('NFC').toLowerCase().includes(term)))) return []
+        return [{ ...listing, name: listingDisplayName(code, listing, quote?.name), quote }]
       })
       if (term) matches.sort((a, b) => Number(b.symbol === term.toUpperCase()) - Number(a.symbol === term.toUpperCase()))
       return { market, listings: metadata(listings, target),
         trades: { ...metadata(trades, target), tradingDate: trades.data?.date ?? null },
         afterHours: afterHours(target),
-        listingDate: listings.data?.date ?? null, items: matches.slice(0, 20).map(row => ({
-          ...row, name: listingDisplayName(row.symbol, row),
-          quote: trades.data && row.listedOn <= trades.data.date
-            ? byCode.get(row.symbol) ?? null : null,
-        })) }
+        listingDate: listings.data?.date ?? null, items: matches.slice(0, 20) }
     },
     async collect(signal) {
       const target = targetFor()

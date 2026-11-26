@@ -83,7 +83,7 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
               const quote = item.quote
               return <li className="terminal-stock-row" key={item.symbol}>
                 <div className="terminal-symbol">
-                  <a className="stock-detail-link" href={stockHref(listing)}>{item.name}</a>
+                  <a className="stock-detail-link" href={stockHref(listing)} title={item.name}><span className="krx-stock-name">{item.name}</span></a>
                   <small>{item.symbol} · {item.market}{item.shareClass && ' · ' + item.shareClass}</small>
                 </div>
                 <div className="terminal-metrics">

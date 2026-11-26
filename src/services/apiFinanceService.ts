@@ -84,7 +84,7 @@ export function isKrxAfterHours(value: unknown): value is NonNullable<KrxAnalysi
 
 function isKrxStock(value: unknown): value is KrxStock {
   return isRecord(value) && isText(value.symbol) && /^[0-9A-Z]{6}$/.test(value.symbol) && isText(value.name)
-    && typeof value.englishName === 'string' && typeof value.shareClass === 'string' && isDate(value.listedOn)
+    && typeof value.englishName === 'string' && typeof value.shareClass === 'string' && (value.listedOn === null || isDate(value.listedOn))
     && isKrxMarket(value.market) && isKrxQuote(value.quote)
 }
 
@@ -111,6 +111,7 @@ export async function getKrxStocks(market: KrxMarket, filters: { q?: string; sym
 export async function getKrxAnalysis(symbol: string, signal: AbortSignal): Promise<KrxAnalysis> {
   const value = await getJson('/api/v1/market/kr/stocks/' + encodeURIComponent(symbol) + '/history', false, signal)
   if (!isRecord(value) || value.symbol !== symbol || !isText(value.name) || !isKrxMarket(value.market)
+    || (value.fullName !== undefined && typeof value.fullName !== 'string')
     || (value.shareClass !== undefined && typeof value.shareClass !== 'string')
     || value.source !== 'KRX OPEN API' || !isKrxQuote(value.quote) || !isKrxReason(value.reason)
     || (value.afterHours !== undefined && !isKrxAfterHours(value.afterHours))

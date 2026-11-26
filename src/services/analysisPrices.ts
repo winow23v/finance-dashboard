@@ -15,7 +15,7 @@ const positive = (value: number) => Number.isFinite(value) && value > 0
 export function confirmedKrxTick(listing: KrxStocks, market: KrxMarket, symbol: string, date: string): TickSchedule | undefined {
   if (listing.market !== market || listing.listings.status === 'unavailable' || !listing.listingDate
     || listing.listingDate < date || date < effectiveDate) return
-  const matches = listing.items.filter(row => row.symbol === symbol && row.market === market && row.listedOn <= date)
+  const matches = listing.items.filter(row => row.symbol === symbol && row.market === market && row.listedOn !== null && row.listedOn <= date)
   if (matches.length !== 1) return
   if (krxStockClasses.has(matches[0].shareClass)) return 'stock'
 }

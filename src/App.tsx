@@ -145,6 +145,32 @@ export function App({ member, signOut, accountBusy, accountError }: {
     setNotice({ message: current.failed ? '일부 데이터를 갱신하지 못했습니다.' : '데이터를 갱신했습니다.', failed: current.failed })
   }, [])
   const menuDialog = useRef<HTMLDialogElement>(null)
+  const menuScroll = useRef<{ top: number; hash: string }>(null)
+  const backdropPress = useRef(false)
+  const openMobileMenu = () => {
+    const dialog = menuDialog.current
+    if (!dialog || dialog.open) return
+    menuScroll.current = { top: window.scrollY, hash: location.hash }
+    document.body.style.setProperty('--mobile-menu-scroll', `-${window.scrollY}px`)
+    dialog.showModal()
+    setMenuOpen(true)
+  }
+  const onMobileMenuClose = () => {
+    const saved = menuScroll.current
+    menuScroll.current = null
+    document.body.style.removeProperty('--mobile-menu-scroll')
+    if (saved) window.scrollTo({ top: location.hash === saved.hash ? saved.top : 0, behavior: 'instant' })
+    setMenuOpen(false)
+  }
+  const closeMobileMenuForNavigation = () => {
+    menuScroll.current = null
+    menuDialog.current?.close()
+  }
+  const onMenuBackdrop = (event: React.MouseEvent<HTMLDialogElement>) => {
+    const bounds = event.currentTarget.getBoundingClientRect()
+    return event.target === event.currentTarget && (event.clientX < bounds.left || event.clientX > bounds.right ||
+      event.clientY < bounds.top || event.clientY > bounds.bottom)
+  }
   const mainContent = useRef<HTMLElement>(null)
   const previousTab = useRef(tab)
   useEffect(() => {
@@ -299,10 +325,14 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const pageLabel = tab === 'members' ? '회원 승인 관리' : index?.name ?? current?.label ?? (information && informationPages[information])
   const fx = snapshot?.quotes.find(quote => quote.kind === 'fx')
   const watchlistProps = { selected: watchlist, onToggle: toggle, blocked, loading: sync?.status === 'loading' || sync?.failure === 'load', live: isApi }
-  const navigationLinks = (items: readonly (typeof tabs[number] | typeof trends | typeof memberAdminTab | typeof mobileTabs[number])[]) =>
+  const navigationLinks = (
+    items: readonly (typeof tabs[number] | typeof trends | typeof memberAdminTab | typeof mobileTabs[number])[],
+    beforeNavigate?: () => void,
+  ) =>
     items.map(({ id, label, icon: Icon }) => <a key={id} href={'#' + id} title={label} aria-label={label}
       aria-current={id === navSection ? (id === section ? 'page' : 'location') : undefined}
       onClick={event => {
+        beforeNavigate?.()
         if (id === 'market' && market && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
           event.preventDefault()
           window.scrollTo(0, 0)
@@ -512,20 +542,24 @@ export function App({ member, signOut, accountBusy, accountError }: {
       {navigationLinks(mobileTabs)}
       <button type="button" aria-haspopup="dialog" aria-controls="mobile-menu" aria-expanded={menuOpen}
         className={mobileTabs.some(item => item.id === navSection) ? undefined : 'mobile-menu-active'}
-        onClick={() => {
-          menuDialog.current?.showModal()
-          setMenuOpen(true)
-        }}><Menu className="navigation-icon" size={19} aria-hidden="true" /><span>전체</span></button>
+        onClick={openMobileMenu}><Menu className="navigation-icon" size={19} aria-hidden="true" /><span>전체</span></button>
     </nav>
-    <dialog id="mobile-menu" ref={menuDialog} aria-labelledby="mobile-menu-title" onClose={() => setMenuOpen(false)} onClick={event => {
-      if (event.target === event.currentTarget || (event.target instanceof Element && event.target.closest('a')))
-        menuDialog.current?.close()
-    }}>
+    <dialog id="mobile-menu" ref={menuDialog} aria-labelledby="mobile-menu-title" onClose={onMobileMenuClose}
+      onPointerDown={event => { backdropPress.current = onMenuBackdrop(event) }}
+      onClick={event => {
+        if (backdropPress.current && onMenuBackdrop(event))
+          event.currentTarget.close()
+        backdropPress.current = false
+      }}>
       <div className="panel-heading"><h2 id="mobile-menu-title">전체 메뉴</h2>
         <button type="button" className="icon-button" aria-label="닫기" title="닫기"
           onClick={() => menuDialog.current?.close()}><X size={18} /></button>
       </div>
-      <nav className="side-navigation" aria-label="전체 메뉴">{navigationLinks(member?.admin ? [...tabs, memberAdminTab] : isApi ? tabs : [...tabs, trends])}</nav>
+      <nav className="side-navigation" aria-label="전체 메뉴">{navigationLinks(
+        [...tabs, ...(!isApi ? [trends] : []), ...(member?.admin ? [memberAdminTab] : [])]
+          .filter(item => !mobileTabs.some(mobileTab => mobileTab.id === item.id)),
+        closeMobileMenuForNavigation,
+      )}</nav>
     </dialog>
   </div>
 }

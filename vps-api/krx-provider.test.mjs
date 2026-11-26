@@ -4,10 +4,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { setTimeout as delay } from 'node:timers/promises'
-import { configureMemberKrx, createKrxProvider } from './krx-provider.mjs'
+import { configureMemberKrx as configureMember, createKrxProvider as createProvider } from './krx-provider.mjs'
 import { createKrxCalendar, krxCollectionSession } from './krx-calendar-provider.mjs'
 import { createIndexSnapshot } from './market-index-provider.mjs'
 import { buildApp, registerKrxCollector } from './server.mjs'
+
+const createKrxProvider = options => createProvider({ retryDelays: [0, 0], ...options })
+const configureMemberKrx = options => configureMember({ retryDelays: [0, 0], ...options })
 
 const response = rows => Response.json({ OutBlock_1: rows })
 
@@ -606,7 +609,7 @@ test('HTTP 200 body timeout and transient network errors consume separate reques
   t.after(() => rm(root, { recursive: true, force: true }))
   const log = []
   let calls = 0
-  const provider = createKrxProvider({ root, key: 'fixture', log: entry => log.push(entry),
+  const provider = createKrxProvider({ root, key: 'fixture', timeouts: { index: 100 }, log: entry => log.push(entry),
     clock: () => Date.parse('2026-11-23T08:31:00Z'),
     async fetchImpl(_url, { signal }) {
       calls++
@@ -631,7 +634,10 @@ test('HTTP 200 body timeout and transient network errors consume separate reques
   assert.deepEqual(requests.map(({ attempt, httpStatus, code }) => [attempt, httpStatus, code]), [
     [1, 200, 'PROVIDER_TIMEOUT'], [2, null, 'PROVIDER_CONNECTION_ERROR'], [3, 200, null],
   ])
-  assert.ok(requests[0].elapsedMs >= 4900 && requests[0].elapsedMs < 9500)
+  assert.equal(requests[0].timeoutMs, 100)
+  assert.ok(requests[0].timings.bodyMs >= 80)
+  assert.equal(requests[0].timings.jsonMs, null)
+  assert.equal(typeof requests[2].timings.jsonMs, 'number')
   assert.ok(log.every(entry => !JSON.stringify(entry).includes('fixture')))
 })
 
@@ -724,7 +730,7 @@ function recoveryFixture(url) {
     { IDX_CLSS: market, IDX_NM: kosdaq ? '코스닥' : '코스피', BAS_DD: date, CLSPRC_IDX: '105' },
   ])
   if (path.endsWith('_base_info')) return response([
-    { LIST_DD: '20261120', MKT_TP_NM: market, ISU_ABBRV: symbol, ISU_SRT_CD: symbol },
+    { LIST_DD: '20261120', MKT_TP_NM: market, ISU_ABBRV: symbol, ISU_SRT_CD: symbol, ISU_CD: market === 'KOSPI' ? 'KR7005930003' : 'KR7263860000' },
   ])
   return response([{ BAS_DD: date, MKT_NM: market, ISU_CD: symbol, ISU_NM: symbol,
     TDD_CLSPRC: '105', TDD_OPNPRC: '100', TDD_HGPRC: '110', TDD_LWPRC: '99',
@@ -889,7 +895,7 @@ test('a partial publish keeps both markets on the last common date and reports t
       if (url.searchParams.get('basDd') === '20261123') {
         if (url.pathname.endsWith('/ksq_bydd_trd')) return response([])
         if (url.pathname.endsWith('/ksq_isu_base_info')) return response([
-          { LIST_DD: '20261120', MKT_TP_NM: 'KOSDAQ', ISU_ABBRV: '변경된 종목명', ISU_SRT_CD: '263860' },
+          { LIST_DD: '20261120', MKT_TP_NM: 'KOSDAQ', ISU_ABBRV: '변경된 종목명', ISU_SRT_CD: '263860', ISU_CD: 'KR7263860000' },
         ])
       }
       return recoveryFixture(url)
@@ -931,4 +937,145 @@ test('HTTP failures and a malformed observation never publish index data', async
   now = Date.parse('2026-11-24T12:15Z')
   assert.equal((await provider.indices('KOSPI')).errorCode, 'KRX_INVALID_OBSERVATIONS')
   assert.deepEqual(log.filter(entry => entry.event === 'krx-request').map(entry => entry.httpStatus), [500, 502, 504, 200])
+})
+
+test('uneven KRX snapshots preserve names without joining a new listing to a reused code', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-uneven-names-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const tradeDate = '2026-11-24'
+  const listingDate = '2026-11-25'
+  const snapshot = (date, rows) => ({ version: 1, history: [], data: { date, collectedAt: date + 'T10:00:00Z', rows } })
+  const trade = (market, symbol, name) => ({ market, symbol, name, tradingDate: tradeDate,
+    price: 100, volume: 20, turnover: 2000, marketCap: 1000, changePercent: 1 })
+  const issue = (market, symbol, name, listedOn = '2020-01-01') => ({ market, symbol, name, fullName: name, listedOn })
+  await Promise.all([
+    writeFile(join(root, 'sto-stk_bydd_trd.json'), JSON.stringify(snapshot(tradeDate, [
+      trade('KOSPI', '005930', '삼성전자'), trade('KOSPI', '000123', '이전 회사'),
+    ]))),
+    writeFile(join(root, 'sto-ksq_bydd_trd.json'), JSON.stringify(snapshot(tradeDate, [
+      trade('KOSDAQ', '005930', '코스닥 회사'), trade('KOSDAQ', '263860', '상장폐지 종목'),
+    ]))),
+    writeFile(join(root, 'sto-stk_isu_base_info.json'), JSON.stringify(snapshot(listingDate, [
+      issue('KOSPI', '005930', '삼성전자'), issue('KOSPI', '000123', '신규 회사', listingDate),
+    ]))),
+    writeFile(join(root, 'sto-ksq_isu_base_info.json'), JSON.stringify(snapshot('2026-11-23', [
+      issue('KOSDAQ', '005930', '코스닥 회사'),
+    ]))),
+  ])
+  const log = []
+  const provider = createKrxProvider({ root, key: 'fixture', scheduledOnly: true,
+    clock: () => Date.parse('2026-11-26T00:00Z'), log: entry => log.push(entry),
+    fetchImpl: () => assert.fail('cache reads must never call KRX') })
+  const overview = await provider.overview()
+  assert.equal(overview.tradingDate, tradeDate)
+  assert.deepEqual(overview.marketTiles.KOSPI.map(row => [row.symbol, row.name, row.mapped]),
+    [['000123', '이전 회사', false], ['005930', '삼성전자', true]])
+  assert.deepEqual(overview.marketTiles.KOSDAQ.map(row => [row.name, row.mapped]),
+    [['코스닥 회사', true], ['상장폐지 종목', false]])
+  const listing = await provider.stocks({ market: 'KOSPI', symbol: '000123' })
+  assert.equal(listing.items[0].quote, null)
+  await provider.overview()
+  assert.deepEqual(log.map(({ mapped, failed, mappingRate, codeOnly }) => [mapped, failed, mappingRate, codeOnly]),
+    [[1, 1, 0.5, 0], [1, 1, 0.5, 0]])
+})
+
+test('timeouts, empty or partially invalid masters preserve the last good cache independently', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-incomplete-master-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  let now = Date.parse('2026-11-24T12:15Z')
+  const master = { LIST_DD: '19750611', MKT_TP_NM: 'KOSPI', ISU_ABBRV: '삼성전자',
+    ISU_NM: '삼성전자보통주', ISU_SRT_CD: '5930', ISU_CD: 'KR7005930003' }
+  const log = []
+  const provider = createKrxProvider({ root, key: 'fixture', scheduledOnly: true,
+    clock: () => now, timeouts: { trades: 40 }, log: entry => log.push(entry),
+    async fetchImpl(url, { signal }) {
+      const date = url.searchParams.get('basDd')
+      if (url.pathname.endsWith('/stk_isu_base_info')) {
+        if (date === '20261125') return response([master, { ...master, ISU_SRT_CD: '000660', ISU_ABBRV: '' }])
+        if (date === '20261126') return response([])
+        return response([master])
+      }
+      if (date !== '20261124' && url.pathname.endsWith('/stk_bydd_trd')) await delay(100, undefined, { signal })
+      if (url.pathname.endsWith('/stk_bydd_trd')) return response([{ BAS_DD: date, MKT_NM: 'KOSPI',
+        ISU_CD: '005930', ISU_NM: '삼성전자', TDD_CLSPRC: '100', TDD_OPNPRC: '100',
+        TDD_HGPRC: '101', TDD_LWPRC: '99', ACC_TRDVOL: '20' }])
+      return recoveryFixture(url)
+    },
+  })
+  await provider.collect()
+  for (const date of ['2026-11-25', '2026-11-26']) {
+    now = Date.parse(date + 'T12:15Z')
+    await provider.collect()
+    const stocks = await provider.stocks({ market: 'KOSPI', symbol: '005930' })
+    assert.equal(stocks.listingDate, '2026-11-24')
+    assert.equal(stocks.items[0].name, '삼성전자')
+    assert.equal(stocks.trades.tradingDate, '2026-11-24')
+    assert.equal(stocks.trades.collectedAt, '2026-11-24T12:15:00.000Z')
+    assert.equal(stocks.trades.lastAttemptAt, date + 'T12:15:00.000Z')
+    assert.equal((await provider.indices('KOSDAQ')).tradingDate, date)
+  }
+  assert.equal(log.filter(row => row.event === 'krx-request' && row.code === 'PROVIDER_TIMEOUT').length, 6)
+  assert.ok(log.some(row => row.event === 'krx-request' && row.code === 'KRX_INCOMPLETE_MASTER'))
+})
+
+test('official and trade names remain searchable without joining a reused symbol to older prices', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-name-priority-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const date = '2026-11-24'
+  const prior = '2026-11-23'
+  const snapshot = (day, rows) => ({ date: day, collectedAt: day + 'T10:00:00Z', rows })
+  const cache = (file, data, previousData) =>
+    writeFile(join(root, file + '.json'), JSON.stringify({ version: 1, history: [], data, previousData }))
+  const issue = (market, symbol, name, fullName, isin, listedOn = '2020-01-01') =>
+    ({ market, symbol, name, fullName, listedOn, isin, englishName: '', shareClass: '보통주' })
+  const quote = (market, symbol, name) => ({ market, symbol, name, tradingDate: date, price: 100,
+    open: 100, high: 101, low: 99, volume: 20, changePercent: 0, marketCap: 5000 })
+  await Promise.all([
+    cache('sto-stk_isu_base_info', snapshot(date, [issue('KOSPI', '005930', '공식 약명', '공식 정식명칭', 'KR7005930003')])),
+    cache('sto-stk_bydd_trd', snapshot(date, [quote('KOSPI', '005930', '상이한 거래명')])),
+    cache('sto-ksq_isu_base_info', snapshot('2026-11-25', [
+      issue('KOSDAQ', '000123', '새 약명', '새 정식명칭', 'KR7000120001'),
+      issue('KOSDAQ', '000124', '동일 이름', '새 회사', 'KR7000124009', '2026-11-25'),
+    ]), snapshot(prior, [
+      issue('KOSDAQ', '000123', '이전 약명', '이전 정식명칭', 'KR7000120001'),
+      issue('KOSDAQ', '000124', '동일 이름', '이전 회사', 'KR7000124001'),
+    ])),
+    cache('sto-ksq_bydd_trd', snapshot(date, [
+      quote('KOSDAQ', '000123', '이전 정식명칭'), quote('KOSDAQ', '000124', '이전 회사'),
+      quote('KOSDAQ', '000125', '거래 응답 이름'), quote('KOSDAQ', '000126', ''),
+    ])),
+  ])
+  const log = []
+  const provider = createKrxProvider({ root, key: 'fixture', scheduledOnly: true,
+    log: entry => log.push(entry), clock: () => Date.parse('2026-11-26T00:00Z') })
+  const overview = await provider.overview()
+  assert.equal(overview.marketTiles.KOSPI[0].shortName, '공식 약명')
+  assert.equal(log.find(row => row.market === 'KOSPI').sameDateNameConflicts, 1)
+  assert.deepEqual(overview.marketTiles.KOSDAQ.map(({ shortName }) => shortName),
+    ['새 약명', '동일 이름', '거래 응답 이름', '000126'])
+  for (const q of ['공식 약명', '정식명칭', '005930']) {
+    assert.equal((await provider.stocks({ market: 'KOSPI', q })).items[0].name, '공식 약명')
+  }
+  const renamed = (await provider.stocks({ market: 'KOSDAQ', symbol: '000123' })).items[0]
+  assert.equal(renamed.name, '새 약명')
+  assert.equal(renamed.quote.tradingDate, date)
+  const reused = (await provider.stocks({ market: 'KOSDAQ', symbol: '000124' })).items[0]
+  assert.equal(reused.fullName, '새 회사')
+  assert.equal(reused.quote, null)
+  assert.equal((await provider.stockHistory('000124')).history.bars.length, 0)
+  const fallback = (await provider.stocks({ market: 'KOSDAQ', q: '거래 응답 이름' })).items[0]
+  assert.equal(fallback.listedOn, null)
+  assert.equal(fallback.symbol, '000125')
+  const detail = await provider.stockHistory('000125')
+  assert.equal(detail.name, fallback.name)
+  assert.deepEqual(detail.history.bars.map(bar => bar.tradingDate), [date])
+  const app = await buildApp({ logger: false, memberKrx: provider, membership: {
+    verify: () => ({ id: 'display-name-test' }), read: () => ({ status: 'approved' }),
+  } })
+  t.after(() => app.close())
+  const saved = await app.inject({ method: 'POST', url: '/api/v1/market/watchlist/observations',
+    headers: { authorization: 'Bearer test.good.token' },
+    payload: { items: ['000125', '000126'].map(symbol => ({ market: 'KR', exchange: 'XKRX', symbol })) } })
+  assert.equal(saved.statusCode, 200)
+  assert.deepEqual(saved.json().items.map(item => item.name), ['거래 응답 이름', '000126'])
 })
