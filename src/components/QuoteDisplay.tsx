@@ -14,9 +14,9 @@ export function price(quote: Quote, units: SettingsState['units']) {
   return (equity && quote.currency === 'KRW' ? integer : numeral).format(quote.price)
 }
 
-export function Change({ quote, detailed = false }: { quote: Pick<Quote, 'percent' | 'change'>; detailed?: boolean }) {
+export function Change({ quote, market, detailed = false }: { market?: 'KR' | 'US'; quote: Pick<Quote, 'percent' | 'change'>; detailed?: boolean }) {
   const Icon = quote.percent < 0 ? TrendingDown : TrendingUp
-  return <span className={'change ' + (quote.percent > 0 ? 'up' : quote.percent < 0 ? 'down' : '')}>
+  return <span data-market={market} className={'change ' + (quote.percent > 0 ? 'up' : quote.percent < 0 ? 'down' : 'flat')}>
     {quote.percent !== 0 && <Icon size={15} strokeWidth={1.75} aria-hidden="true" />}
     {detailed ? signed(quote.change) + ' (' + signed(quote.percent) + '%)' : signed(quote.percent) + '%'}
   </span>

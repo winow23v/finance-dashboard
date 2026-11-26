@@ -56,6 +56,29 @@ function parseDetail(value: unknown) {
 
 const searchCache = createRequestCache<ReturnType<typeof parseSearch>>(24, 5 * 60_000)
 const detailCache = createRequestCache<ReturnType<typeof parseDetail>>(16, 5 * 60_000)
+export function StockDisclosures({ symbol }: { symbol: string }) {
+  const [shown, setShown] = useState(false)
+  const search = usePublicData(shown ? path + '?' + new URLSearchParams({ q: symbol }) : undefined,
+    0, parseSearch, 15_000, false, searchCache)
+  const matches = search?.data?.companies.filter(company => company.ticker === symbol) ?? []
+  const corpCode = matches.length === 1 ? matches[0].id : undefined
+  const detail = usePublicData(corpCode ? path + '?' + new URLSearchParams({ corpCode }) : undefined,
+    0, parseDetail, 15_000, false, detailCache)
+  return <details className="technical-detail-group" onToggle={event => { if (event.currentTarget.open) setShown(true) }}>
+    <summary>최근 기업 공시</summary>
+    {shown && (search?.data === null || detail?.data === null || detail?.data?.filingsError
+      ? <p role="status">OPEN DART 공시를 조회하지 못했습니다.</p>
+      : search?.data && !corpCode ? <p role="status">이 종목과 일치하는 공시 기업이 없습니다.</p>
+        : !detail?.data ? <p role="status">공시를 불러오는 중입니다.</p>
+          : detail.data.filings.length === 0 ? <p role="status">최근 90일 공시가 없습니다.</p>
+            : <ul className="disclosure-list">{detail.data.filings.slice(0, 5).map(filing => <li key={filing.id}>
+              <a href={filing.url}>{filing.title}</a> · <time dateTime={filing.filedAt}>{filing.filedAt}</time>
+              {/(?:^|\])\s*(?:주요사항보고서|사업보고서|반기보고서|분기보고서)/u.test(filing.title) && ' · 주요·정기 보고'}
+              {filing.amended && ' · 정정'}
+            </li>)}</ul>)}
+  </details>
+}
+
 const storageKey = 'finance.dart'
 const reportPeriods = ['annual', 'q1', 'half', 'q3'] as const
 

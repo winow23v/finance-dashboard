@@ -1066,8 +1066,6 @@ span.chart-body { display: block; }
   .overseas-quotes > :last-child:nth-child(odd) { grid-column: 1 / -1; }
 }
 
-.krx-collection-status { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem 1rem; }
-.krx-collection-status > span { max-width: 100%; }
 .krx-up, .krx-stock-search .up { color: var(--red); }
 .krx-down, .krx-stock-search .down { color: var(--blue); }
 .krx-flat, .krx-stock-search .change:not(.up, .down) { color: var(--muted); }
@@ -1080,3 +1078,9 @@ span.chart-body { display: block; }
   white-space: nowrap;
 }
 .krx-analysis .stock-identity h1 { overflow-wrap: anywhere; }
+
+[data-market="KR"].up { color: var(--red); }
+[data-market="KR"].down { color: var(--blue); }
+[data-market="US"].up { color: var(--green); }
+[data-market="US"].down { color: var(--red); }
+[data-market].flat { color: var(--muted); }

@@ -1,8 +1,8 @@
 import { LoadingSkeleton } from "./components/LoadingSkeleton"
 import { CommandSearch } from "./components/CommandSearch"
 import { IndexCarousel } from "./components/IndexCarousel"
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
-import { ArrowLeftRight, BarChart3, ChevronDown, Clock, FileSearch, Globe2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, ShieldCheck, Star, Sun, TrendingUp, UserRound, X } from 'lucide-react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { ArrowLeftRight, BarChart3, ChevronDown, FileSearch, Globe2, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, ShieldCheck, Star, Sun, TrendingUp, UserRound, X } from 'lucide-react'
 import { dataMode } from './services/financeService'
 import { getKrxOverview, getMarketIndices, marketRequestMessage } from './services/apiFinanceService'
 import { mockFinanceService } from './mocks/mockFinance'
@@ -10,7 +10,6 @@ import type { MemberSession } from './services/membership'
 import { MemberAdmin } from './components/MemberAdmin'
 import { Disclosures } from './components/Disclosures'
 import { KoreaEconomy } from './components/KoreaEconomy'
-import { providerStatuses } from './services/providerStatus'
 import { DataStatus } from './components/DataStatus'
 import { Economics } from './components/Economics'
 import { informationPages, SiteInformation, type InformationPage } from './components/SiteInformation'
@@ -18,7 +17,7 @@ import { UsAnalysis } from './components/UsAnalysis'
 import { marketListings, parseStockPage, stockHref } from './services/marketListings'
 import { StockDetail } from './components/StockDetail'
 import { KrxStocks, krxStateLabels } from './components/KrxStocks'
-import { KrxHeatmap, KrxMovers, KrxOverviewStatus } from './components/KrxMarketOverview'
+import { KrxHeatmap, KrxMovers } from './components/KrxMarketOverview'
 import { MarketHeatmap } from './components/MarketHeatmap'
 import { Watchlist } from './components/Watchlist'
 import { useWatchlist } from './storage/useWatchlist'
@@ -70,18 +69,18 @@ const indexUnavailable = {
   'not-published': '기준일 자료 미확인',
   'rate-limited': '공급자 요청 제한',
   weekend: '주말 휴장',
-  'before-collection': '당일 수집 대기',
+  'before-collection': '종가 미확인',
 }
 
-function MarketIndexValue({ quote, message }: { quote?: MarketIndex; message?: string }) {
+function MarketIndexValue({ quote, message, market }: { quote?: MarketIndex; message?: string; market: 'KR' | 'US' }) {
   if (message) return <small role="status">{message}</small>
   if (!quote) return <LoadingSkeleton message="지수 시세를 불러오는 중입니다." shape="value" />
   if (quote.status === 'unavailable') return <small>{indexUnavailable[quote.reason]}</small>
   return <>
     <strong>{indexPrice.format(quote.price)}</strong>
-    {quote.change !== null && quote.changePercent !== null && <Change quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
+    {quote.change !== null && quote.changePercent !== null && <Change market={market} quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
     <small className="index-source"><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가</small>
-    {(quote.reason || quote.status === 'stale') && <small className="muted-badge" data-stale={quote.status === 'stale'}>
+    {(quote.reason !== 'before-collection' && quote.reason !== 'weekend' && (quote.reason || quote.status === 'stale')) && <small className="muted-badge" data-stale={quote.status === 'stale'}>
       {quote.reason === 'provider-error' ? '마지막 유효값' : quote.reason ? indexUnavailable[quote.reason] : '갱신 지연'}
     </small>}
   </>
@@ -91,7 +90,7 @@ function MarketQuote({ index, quote, message, missing }: {
 }) {
   return <article className="panel quote-card">
     <div className="quote-label"><h3><a className="stock-detail-link" href={'#index/' + index.id}>{index.name}</a></h3><span>{marketNames[index.market]}</span></div>
-    {missing ? <small>지수 응답 없음</small> : isApi ? <MarketIndexValue quote={quote} message={message} />
+    {missing ? <small>지수 응답 없음</small> : isApi ? <MarketIndexValue quote={quote} message={message} market={index.market} />
       : <small>지수 시세 공급자 미연결</small>}
   </article>
 }
@@ -185,7 +184,6 @@ export function App({ member, signOut, accountBusy, accountError }: {
       mobile.removeEventListener('change', closeMenu)
     }
   }, [])
-  const statuses = useSyncExternalStore(providerStatuses.subscribe, providerStatuses.read)
   const [economyRevision, setEconomyRevision] = useState(0)
   const [pending, setPending] = useState(!isApi)
   const [error, setError] = useState(false)
@@ -203,11 +201,6 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const showKrxOverview = isMarket && market !== 'US'
   const krxOverview = krxResult?.request === request ? krxResult : undefined
   const section = market ? 'market' : economyPage ? 'economy' : tab
-  const providerValues = Object.values(statuses)
-  const dataLabel = !isApi ? 'DEMO 모드' : !providerValues.length ? '연결 확인되지 않음'
-    : providerValues.every(status => status === 'published') ? '공표 데이터 확인'
-      : providerValues.some(status => status === 'published' || status === 'previous' || status === 'partial')
-        ? '공급자별 상태 확인' : '조회 상태 확인 필요'
 
   useEffect(() => {
     if (!refreshUntil) return
@@ -355,12 +348,11 @@ export function App({ member, signOut, accountBusy, accountError }: {
     <header className="topbar">
       <a className="brand" href="#overview" aria-label="Finance Dashboard">
         <img className="brand-icon" src={import.meta.env.BASE_URL + 'favicon.svg?v=19k'} alt="" width={30} height={30} />
-        <span className="brand-name">Finance Dashboard<small>{dataLabel}</small></span>
+        <span className="brand-name">Finance Dashboard{!isApi && <small>DEMO 모드</small>}</span>
       </a>
       <span className="breadcrumb">{stock ? (stock.market === 'KR' ? '국내시장' : '해외시장')
         : <>워크스페이스 <span aria-hidden="true">/</span> <strong>{pageLabel}</strong></>}</span>
       <div className="top-actions">
-        <a className="connection-status" href="#sources" title="공급자별 데이터 상태"><i aria-hidden="true" />{dataLabel}</a>
         <CommandSearch entries={[
           ...[...tabs, ...(!isApi || tab === 'trends' ? [trends] : []), ...(member?.admin ? [memberAdminTab] : [])]
             .map(item => ({ label: item.label, href: '#' + item.id, detail: '메뉴' })),
@@ -431,17 +423,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
             </div>}
           </section>
           {overview ? <>
-            <section className="panel overview-data" aria-labelledby="overview-data-heading">
-              <h2 id="overview-data-heading"><Clock size={16} aria-hidden="true" /> 기준일 및 갱신 상태</h2>
-              {isApi ? <p role="status">{marketResult?.message ? <>시장지수 · {marketResult.message}</> : !marketResult ? '시장지수 갱신 중'
-                : !marketResult.quotes?.length ? '시장지수 응답 없음'
-                  : marketResult.quotes.every(quote => quote.status === 'unavailable') ? '표시 가능한 지수 관측값 없음'
-                    : '지수별 종가 기준일은 위 카드에서 확인할 수 있습니다.'}</p>
-                : <p role={error ? 'alert' : 'status'}>{pending ? '데모 데이터를 불러오는 중입니다.'
-                  : error ? '데이터 갱신에 실패했습니다.' : '데모 데이터가 표시됩니다.'}</p>}
-              {error && !isApi && <button className="button" onClick={refresh} disabled={!!refreshUntil}>다시 시도</button>}
-              {isApi && <KrxOverviewStatus data={krxOverview?.data} message={krxOverview?.message} />}
-            </section>
+            {!isApi && error && <p role="alert">데이터 갱신에 실패했습니다.</p>}
             <KrxMovers data={isApi ? krxOverview?.data : null}
               message={isApi ? krxOverview?.message : 'KRX 공급자 미연결'} summary />
             {isApi ? <KrxHeatmap data={krxOverview?.data} message={krxOverview?.message} summary />

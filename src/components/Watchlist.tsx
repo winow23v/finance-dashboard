@@ -48,7 +48,7 @@ function StockList({ rows, saved, onToggle, label, blocked, showQuoteStatus, ana
       const { name, segment, currency, quote, regular, afterHours } = { ...registeredObservation(listing), ...observation }
       const active = saved.has(favoriteKey(listing))
       const venue = segment ?? (listing.exchange === 'US' ? '거래소 미확인' : listing.exchange)
-      const status = regular?.usingPreviousClose ? '이전 정상 종가 사용' : regular?.reason ? regularQuoteStatus(regular.reason)
+      const status = regular?.usingPreviousClose ? '이전 정상 종가 사용' : regular?.reason && !['before-collection', 'weekend'].includes(regular.reason) ? regularQuoteStatus(regular.reason)
         : afterHours?.every(entry => entry.status === 'market-closed') && afterHours.length ? '시간외 휴장' : undefined
       const price = quote && (currency === 'USD' ? '$' + usd.format(quote.price)
         : number.format(quote.price) + (currency === 'KRW' ? '원' : ''))
@@ -60,7 +60,7 @@ function StockList({ rows, saved, onToggle, label, blocked, showQuoteStatus, ana
         {(quote || showQuoteStatus) && <div className="watch-metrics">
           {quote ? <>
             <strong>{price}</strong>
-            {quote.changePercent !== null && <span className={quote.changePercent > 0 ? 'up' : quote.changePercent < 0 ? 'down' : undefined}>
+            {quote.changePercent !== null && <span data-market={listing.market} className={quote.changePercent > 0 ? 'up' : quote.changePercent < 0 ? 'down' : 'flat'}>
               {percent.format(quote.changePercent)}%
             </span>}
           </> : <small>확인된 종가 없음</small>}

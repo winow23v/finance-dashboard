@@ -7,7 +7,6 @@ import { krxStateLabels } from './KrxStocks'
 
 const number = new Intl.NumberFormat('ko-KR')
 const percent = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2, signDisplay: 'exceptZero' })
-const time = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
 const link = (row: KrxMarketRow) => stockHref({ market: 'KR', exchange: 'XKRX', symbol: row.symbol })
 const rate = (row: KrxMarketRow) => row.changePercent === null ? '등락률 미확인' : percent.format(row.changePercent) + '%'
 const state = (data?: KrxOverview | null) => data === undefined ? 'KRX 시장 데이터를 불러오는 중입니다.'
@@ -26,19 +25,10 @@ const desktopHeatmap = () => false
 const movementClass = (value: number | null) => value === null || value === 0 ? 'krx-flat' : value > 0 ? 'krx-up' : 'krx-down'
 
 function MarketBasis({ data }: { data: KrxOverview }) {
-  const status = data.usingPreviousClose ? '이전 정상 종가 사용' : data.reason && data.reason !== 'same-date-data-unavailable' ? krxStateLabels[data.reason] : null
+  const { reason } = data
+  const status = data.usingPreviousClose ? '이전 정상 종가 사용'
+    : reason === 'provider-error' || reason === 'provider-not-configured' || reason === 'not-published' ? krxStateLabels[reason] : null
   return <p className="heatmap-meta">{data.tradingDate && <time dateTime={data.tradingDate}>{data.tradingDate}</time>}{status && <> <span className="muted-badge">{status}</span></>}</p>
-}
-
-export function KrxOverviewStatus({ data, message }: { data?: KrxOverview | null; message?: string }) {
-  if (message || !data?.tradingDate) return <p role="status">{message ?? state(data)}</p>
-  return <div role="status" className="krx-collection-status">
-    <span>종가 <time dateTime={data.tradingDate}>{data.tradingDate}</time></span>
-    {data.collectedAt && <span>정상 수집 <time dateTime={data.collectedAt}>{time.format(new Date(data.collectedAt))} KST</time></span>}
-    {data.lastAttemptAt && <span>마지막 시도 <time dateTime={data.lastAttemptAt}>{time.format(new Date(data.lastAttemptAt))} KST</time></span>}
-    {data.usingPreviousClose && <span className="muted-badge">이전 정상 종가 사용</span>}
-    {data.reason && data.reason !== 'same-date-data-unavailable' && <span>{krxStateLabels[data.reason]}</span>}
-  </div>
 }
 
 const rankings = [
@@ -54,7 +44,7 @@ export function KrxMovers({ data, message, summary }: { data?: KrxOverview | nul
   return <section className="panel movers-panel" aria-label="주요 등락 현황">
     <div className="section-heading"><h2>주요 등락 현황</h2>{summary && <a href="#domestic" className="text-link">국내시장 보기</a>}</div>
     {!data || !leaders ? <p className="state" role="status">{message ?? state(data)}</p> : <>
-      {!summary && <MarketBasis data={data} />}
+      <MarketBasis data={data} />
       <SegmentTabs label="시장 랭킹" items={(summary ? rankings.slice(0, 2) : rankings).flatMap(({ key, label, format }) => {
           const rows = leaders[key]
           if (!rows) return []
@@ -108,7 +98,7 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
           </span>)}
         </div>
       </div>
-      {!summary && <MarketBasis data={data} />}
+      <MarketBasis data={data} />
       <p className="heatmap-meta">시가총액 상위 {selected?.length}종목</p>
       {groups.length ? <div className="krx-heatmap-layout">
         <div className="heatmap-map">
