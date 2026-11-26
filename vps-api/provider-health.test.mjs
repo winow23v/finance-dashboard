@@ -80,3 +80,27 @@ test('US index snapshot observes stale provider state on the admin health endpoi
   assert.equal(us.status, 'Stale')
   assert.equal(us.observationDate, '2026-11-25')
 })
+
+test('FX malformed refresh remains stale even while its diagnostic code is redacted', async () => {
+  const health = createProviderHealth()
+  await health.observe('fx', () => ({ refreshError: 'INVALID_PROVIDER_RESPONSE',
+    reference: { observationDate: '2026-11-25' } }))
+  const fx = health.snapshot().providers.find(row => row.provider === 'fx')
+  assert.equal(fx.status, 'Stale')
+  assert.equal(fx.errorCode, null)
+  assert.equal(fx.consecutiveFailures, 1)
+})
+
+test('KRX scheduled waiting does not clear an earlier failure or disguise an overdue publication', () => {
+  const health = createProviderHealth()
+  const attempt = { event: 'krx-collection', endpoint: 'index', result: 'empty', latestDate: '2026-11-24' }
+  const status = () => health.snapshot().providers.find(row => row.provider === 'krx').status
+  health.krx({ ...attempt, pendingPublication: true })
+  assert.equal(status(), 'Healthy')
+  health.krx(attempt)
+  assert.equal(status(), 'Stale')
+  health.krx({ ...attempt, pendingPublication: true })
+  assert.equal(status(), 'Stale')
+  health.krx({ ...attempt, result: 'available', latestDate: '2026-11-25' })
+  assert.equal(status(), 'Healthy')
+})

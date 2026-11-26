@@ -8,10 +8,10 @@ const safeCode = value => typeof value === 'string' && codePattern.test(value) ?
 const limited = code => code === 'DART_PROVIDER_LIMITED' || code?.endsWith('RATE_LIMITED')
 const timestamp = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null
 
-function resultStatus(data, error, configured) {
+function resultStatus(data, error, configured, refreshFailed = false) {
   if (!configured || error?.endsWith('CONFIGURATION_MISSING') || data?.reason === 'provider-not-configured') return 'Not Configured'
   if (limited(error) || limited(safeCode(data?.filingsError)) || limited(safeCode(data?.financialsError)) || data?.reason === 'rate-limited') return 'Rate Limited'
-  if (error || data?.reason === 'provider-error') {
+  if (error || refreshFailed || data?.reason === 'provider-error') {
     return data?.tradingDate || data?.reference?.observationDate || data?.collectedAt ? 'Stale' : 'Unavailable'
   }
   if (data?.filingsError || data?.financialsError || data?.indicators?.some(item => item.status === 'unavailable' && safeCode(item.code))) return 'Degraded'
@@ -60,7 +60,7 @@ export function createProviderHealth({ configured = {}, clock = Date.now, alertD
   function recordResult(provider, data, error, responseMs) {
     const detail = data?.reference ?? data
     const errorCode = safeCode(data?.refreshError) ?? (error instanceof ProviderError ? safeCode(error.code) : null)
-    const status = error && !errorCode ? 'Unavailable' : resultStatus(data, errorCode, configured[provider] !== false)
+    const status = error && !errorCode ? 'Unavailable' : resultStatus(data, errorCode, configured[provider] !== false, Boolean(data?.refreshError))
     const published = provider === 'ecos' ? (data?.indicators ?? []).filter(item => item.status === 'published') : []
     const newest = values => values.filter(Boolean).sort().at(-1)
     const date = detail?.observationDate ?? data?.tradingDate ?? data?.quote?.tradingDate ?? data?.latestDate
@@ -92,9 +92,13 @@ export function createProviderHealth({ configured = {}, clock = Date.now, alertD
     krx(entry) {
       if (entry.event !== 'krx-collection') return
       const code = safeCode(entry.code)
+      const previous = krxEndpoints.get(entry.endpoint)
+      const missing = entry.result === 'empty' || entry.result === 'fallback'
       const status = entry.result === 'error'
-        ? resultStatus({ tradingDate: entry.latestDate }, code ?? 'KRX_UNAVAILABLE', true) : 'Healthy'
-      krxEndpoints.set(entry.endpoint, { status, entry, code })
+        ? resultStatus({ tradingDate: entry.latestDate }, code ?? 'KRX_UNAVAILABLE', true)
+        : missing && !entry.pendingPublication ? entry.latestDate ? 'Stale' : 'Unavailable'
+          : missing ? previous?.status ?? 'Healthy' : 'Healthy'
+      krxEndpoints.set(entry.endpoint, { status, entry, code: code ?? (missing && entry.pendingPublication ? previous?.code : null) })
       const worst = [...krxEndpoints.values()].reduce((a, b) =>
         severity.indexOf(a.status) > severity.indexOf(b.status) ? a : b)
       const latest = worst.entry

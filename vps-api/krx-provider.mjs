@@ -517,9 +517,12 @@ export function createKrxProvider({
     }
     states.set(path, published)
     if (persisted && attempt.result === 'available') await unlink(recoverySnapshot(path, target.date)).catch(() => {})
+    const previousTradingDate = tradingCandidates(day(Date.parse(target.date) - dayMs), historyClosed).next().value
+    const pendingPublication = published.attempt.result === 'empty' && scheduledOnly && !target.recoveryWindow &&
+      previousTradingDate !== undefined && published.data?.date === previousTradingDate
     log({ event: 'krx-collection', endpoint: path, date: attempt.date, at: attempt.at,
       result: published.attempt.result, code: published.attempt.code, latestDate: published.data?.date ?? null,
-      collectedAt: published.data?.collectedAt ?? null, persisted,
+      collectedAt: published.data?.collectedAt ?? null, persisted, pendingPublication,
       elapsedMs: attempt.requests.reduce((total, request) => total + request.elapsedMs, 0),
       httpStatus: attempt.requests.at(-1)?.httpStatus ?? null, retries: Math.max(0, attempt.requests.length - 1) })
     return published
