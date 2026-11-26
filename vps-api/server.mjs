@@ -1,3 +1,4 @@
+import { createProviderHealth } from './health-provider.mjs'
 import { pathToFileURL } from 'node:url'
 import { STATUS_CODES } from 'node:http'
 import { timingSafeEqual } from 'node:crypto'
@@ -58,11 +59,20 @@ export async function buildApp({
   fx = createFxProvider(),
   ecos = createEcosProvider(),
   dart = createDartProvider(),
+  providerHealth = createProviderHealth({ configured: {
+    krx: Boolean(memberKrx || localKrx), yfinance: Boolean(memberUs), 'kr-intraday': false,
+  } }),
 } = {}) {
   if (memberKrx && (!membership || privateOnly)) {
     throw new Error('Member KRX requires membership authentication')
   }
   if (memberUs && (!membership || privateOnly)) throw new Error('Member US market requires membership authentication')
+  if (memberUs) {
+    const provider = memberUs
+    memberUs = Object.fromEntries(['index', 'indexAnalysis', 'history', 'stock', 'request'].flatMap(method =>
+      typeof provider[method] === 'function'
+        ? [[method, (...args) => providerHealth.observe('yfinance', () => provider[method](...args), args[0])]] : []))
+  }
   const memberSnapshot = (memberKrx || memberUs) && createIndexSnapshot(undefined, memberKrx,
     memberUs ? 'Market indices' : 'KRX OPEN API', memberUs)
   const krxFor = request => localKrx && isLocalResearchRequest(request) ? localKrx : memberKrx
@@ -166,6 +176,9 @@ export async function buildApp({
       page: { type: 'integer', minimum: 1, maximum: 100000, default: 1 },
       status: { enum: memberStatuses },
     }
+    app.get('/api/v1/admin/providers', {
+      config: { access: 'admin' }, schema: { querystring: noQuery },
+    }, () => providerHealth.snapshot())
     app.get('/api/v1/admin/members', {
       config: { access: 'admin' },
       schema: { querystring: { type: 'object', additionalProperties: false,
@@ -237,7 +250,7 @@ export async function buildApp({
     return getEconomyIndicators()
   })
 
-  app.get('/api/v1/fx/latest', { schema: { querystring: noQuery } }, () => fx.latest())
+  app.get('/api/v1/fx/latest', { schema: { querystring: noQuery } }, () => providerHealth.observe('fx', () => fx.latest()))
 
   app.get('/api/v1/fx/history', {
     schema: {
@@ -256,10 +269,10 @@ export async function buildApp({
     const { base, quote, period } = request.query
     const pair = `${base}/${quote}`
     if (base === quote) return reply.code(400).send({ code: 'UNSUPPORTED_CURRENCY_PAIR' })
-    return fx.history(pair, period)
+    return providerHealth.observe('fx', () => fx.history(pair, period))
   })
 
-  app.get('/api/v1/economy/korea', { schema: { querystring: noQuery } }, () => ecos())
+  app.get('/api/v1/economy/korea', { schema: { querystring: noQuery } }, () => providerHealth.observe('ecos', ecos))
 
   const searchTerm = { type: 'string', minLength: 1, maxLength: 64, pattern: '^[^\\s].*$' }
   app.get('/api/v1/disclosures/kr', {
@@ -277,7 +290,7 @@ export async function buildApp({
         period: { type: 'string', enum: Object.keys(dartPeriods) },
       },
     } },
-  }, request => dart(request.query))
+  }, request => providerHealth.observe('dart', () => dart(request.query)))
 
   app.get('/api/v1/market/snapshot', {
     schema: { querystring: noQuery },
@@ -434,7 +447,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const research = !privateFred && process.env.FINANCE_LOCAL_INDEX_RESEARCH === '1'
       ? await import('../research/market-data/provider.mjs') : null
     const krx = !privateFred && process.env.FINANCE_LOCAL_KRX === '1' ? createKrxProvider() : undefined
-    const memberKrx = privateFred ? undefined : configureMemberKrx()
+    const memberUs = privateFred ? undefined : configureMemberUsMarket()
+    const providerHealth = createProviderHealth({ configured: {
+      krx: process.env.FINANCE_MEMBER_KRX === '1' || Boolean(krx), yfinance: Boolean(memberUs),
+      ecos: Boolean(process.env.ECOS_API_KEY?.trim()), dart: Boolean(process.env.DART_API_KEY?.trim()), 'kr-intraday': false,
+    } })
+    const memberKrx = privateFred ? undefined : configureMemberKrx({ log: entry => {
+      console.info(JSON.stringify(entry))
+      providerHealth.krx(entry)
+    } })
     if (krx && memberKrx) throw new Error('Local and member KRX modes are mutually exclusive')
     const app = await buildApp(privateFred ? {
       privateOnly: true,
@@ -442,10 +463,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       privateAccessToken: process.env.FINANCE_PRIVATE_API_TOKEN,
     } : {
       membership: createMembership(),
+      providerHealth,
       memberFred: configureMemberFred(),
       localKrx: krx,
       memberKrx,
-      memberUs: configureMemberUsMarket(),
+      memberUs,
       localIndexResearch: research || krx ? createIndexSnapshot(research?.createResearchProvider(), krx) : undefined,
     })
     const collector = memberKrx ?? krx

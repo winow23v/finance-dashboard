@@ -1,4 +1,4 @@
-import { invalidResponse, isDay, providerClient, ProviderError } from './public-provider.mjs'
+import { invalidResponse, isDay, providerClient, ProviderError, withHealthMetadata } from './public-provider.mjs'
 
 const source = { name: '한국은행 ECOS', url: 'https://ecos.bok.or.kr/' }
 const bok = { name: '한국은행', url: 'https://www.bok.or.kr/portal/singl/baseRate/list.do?menuNo=200656' }
@@ -96,12 +96,13 @@ export function createEcosProvider({ key = process.env.ECOS_API_KEY, fetchImpl =
   }
 
   return async () => {
-    if (cached && clock() < cached.expiresAt) return cached.data
+    if (cached && clock() < cached.expiresAt) return withHealthMetadata({ ...cached.data }, { usedCache: true, attempted: false })
+    const shared = Boolean(pending)
     pending ??= load().then(data => {
       const complete = data.indicators.every(row => row.status === 'published')
       cached = { data, expiresAt: clock() + (complete ? cacheTtlMs : partialCacheTtlMs) }
       return data
     }).finally(() => { pending = undefined })
-    return pending
+    return withHealthMetadata({ ...await pending }, { usedCache: false, attempted: !shared })
   }
 }

@@ -1,7 +1,7 @@
 import { unzipSync } from 'fflate'
 import { XMLParser } from 'fast-xml-parser'
 import { createMarketCache, MarketError } from './market-cache.mjs'
-import { invalidResponse, isDay, providerClient, ProviderError } from './public-provider.mjs'
+import { invalidResponse, isDay, providerClient, ProviderError, withHealthMetadata } from './public-provider.mjs'
 
 const source = { name: '금융감독원 OPEN DART', url: 'https://opendart.fss.or.kr/' }
 export const dartPeriods = { annual: '11011', q1: '11013', half: '11012', q3: '11014' }
@@ -130,7 +130,8 @@ export function createDartProvider({
   }
   return async ({ q, corpCode, year, period, page }) => {
     if (!key?.trim()) throw new ProviderError(503, 'DART_CONFIGURATION_MISSING')
-    if (clock() >= catalogExpires) pendingCatalog ??= loadCatalog().finally(() => { pendingCatalog = undefined })
+    const catalogCached = clock() < catalogExpires
+    if (!catalogCached) pendingCatalog ??= loadCatalog().finally(() => { pendingCatalog = undefined })
     const companies = pendingCatalog ? await pendingCatalog : catalog
     if (!corpCode) {
       const term = q.trim().toUpperCase()
@@ -138,13 +139,15 @@ export function createDartProvider({
         || company.name.toUpperCase().includes(term))
         .sort((a, b) => Number(b.ticker === term || b.id === term) - Number(a.ticker === term || a.id === term))
       const offset = page === undefined ? 0 : (page - 1) * 10
-      return { source, total: matches.length, companies: matches.slice(offset, offset + (page === undefined ? 20 : 10)) }
+      return withHealthMetadata({ source, total: matches.length, companies: matches.slice(offset, offset + (page === undefined ? 20 : 10)) },
+        { usedCache: catalogCached, attempted: !catalogCached })
     }
     const company = companies.find(item => item.id === corpCode)
     if (!company) throw new ProviderError(404, 'COMPANY_NOT_FOUND')
     const compact = time => new Date(time).toISOString().slice(0, 10).replaceAll('-', '')
     const now = clock() + 9 * 60 * 60_000
     const end = compact(now)
+    let filingsCached = false
     const filings = await readRows(async () => {
       const result = await filingsCache.get(`${corpCode}:${end}`, { ttlMs: 5 * 60_000, staleAfterMs: 0 }, async () => ({
         asOf: new Date(clock()).toISOString(),
@@ -153,14 +156,16 @@ export function createDartProvider({
           last_reprt_at: 'N', sort: 'date', sort_mth: 'desc', page_count: '30',
         }))), corpCode),
       }))
+      filingsCached = result.cacheHit
       return JSON.parse(result.body)
     })
     const financials = year ? await readRows(async () => financialsFrom(checkedRows(json(await request('fnlttSinglAcnt.json', {
       corp_code: corpCode, bsns_year: year, reprt_code: dartPeriods[period],
     }))), year, period, company)) : { rows: [] }
     if (filings.error && (!year || financials.error)) throw filings.error
-    return { source, company, filings: filings.rows, financials: financials.rows,
+    return withHealthMetadata({ source, company, filings: filings.rows, financials: financials.rows,
       ...(filings.error && { filingsError: filings.error.code }),
-      ...(financials.error && { financialsError: financials.error.code }) }
+      ...(financials.error && { financialsError: financials.error.code }) },
+    { usedCache: catalogCached || filingsCached, attempted: !catalogCached || !filingsCached || Boolean(year) })
   }
 }

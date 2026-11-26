@@ -16,6 +16,7 @@ const endpoint = {
   KOSDAQ: { index: 'idx/kosdaq_dd_trd', trades: 'sto/ksq_bydd_trd', listings: 'sto/ksq_isu_base_info', name: '코스닥' },
 }
 const services = Object.values(endpoint).flatMap(({ index, trades, listings }) => [index, trades, listings])
+export const krxCollectionEndpoints = Object.freeze([...services])
 const minutes = [16 * 60 + 30, 17 * 60 + 30, 19 * 60]
 const isoDay = value => typeof value === 'string' ? value.replace(/^(\d{4})(\d\d)(\d\d)$/, '$1-$2-$3') : ''
 const codePattern = /^[0-9A-Z]{6}$/
@@ -517,9 +518,14 @@ export function createKrxProvider({
     }
     states.set(path, published)
     if (persisted && attempt.result === 'available') await unlink(recoverySnapshot(path, target.date)).catch(() => {})
+    const previousTradingDate = tradingCandidates(day(Date.parse(target.date) - dayMs), historyClosed).next().value
+    const pendingPublication = published.attempt.result === 'empty' && scheduledOnly && !target.recoveryWindow &&
+      previousTradingDate !== undefined && published.data?.date === previousTradingDate
     log({ event: 'krx-collection', endpoint: path, date: attempt.date, at: attempt.at,
       result: published.attempt.result, code: published.attempt.code, latestDate: published.data?.date ?? null,
-      collectedAt: published.data?.collectedAt ?? null, persisted })
+      collectedAt: published.data?.collectedAt ?? null, persisted, pendingPublication,
+      elapsedMs: attempt.requests.reduce((total, request) => total + request.elapsedMs, 0),
+      httpStatus: attempt.requests.at(-1)?.httpStatus ?? null, retries: Math.max(0, attempt.requests.length - 1) })
     return published
   }
 

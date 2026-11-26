@@ -1,3 +1,4 @@
+import { healthMetadata, withHealthMetadata } from './public-provider.mjs'
 import { open, readdir, readFile, stat } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import { isDay } from './public-provider.mjs'
@@ -54,7 +55,9 @@ export function createUsMarketProvider({ root, queue, clock = Date.now }) {
     if (record?.version !== 1 || record.symbol !== symbol) return { status: 'unavailable', reason: 'provider-error' }
     const { snapshot, attempt } = record
     const reason = reasons.includes(attempt?.reason) ? attempt.reason : null
-    if (!snapshot) return { status: 'unavailable', reason: reason ?? 'not-published' }
+    const telemetry = { usedCache: Boolean(snapshot), attemptedAt: attempt?.attemptedAt,
+      retries: Number.isSafeInteger(attempt?.count) && attempt.count > 0 ? attempt.count - 1 : 0 }
+    if (!snapshot) return withHealthMetadata({ status: 'unavailable', reason: reason ?? 'not-published' }, telemetry)
     const { raw, adjusted, tradingDate, observedAt, collectedAt, nextSessionClose } = snapshot
     if (!validBars(raw) || raw.at(-1).tradingDate !== tradingDate ||
       ![observedAt, collectedAt, nextSessionClose].every(validTime) ||
@@ -67,12 +70,12 @@ export function createUsMarketProvider({ root, queue, clock = Date.now }) {
     const previous = raw.at(-2)
     const change = previous ? last.close - previous.close : null
     const stale = Boolean(reason) || clock() >= Date.parse(nextSessionClose) + 20 * 60_000
-    return {
+    return withHealthMetadata({
       status: stale ? 'stale' : 'available', reason: reason ?? (stale ? 'not-published' : null),
       tradingDate, observedAt, collectedAt, source,
       quote: { ...last, change, changePercent: previous ? change / previous.close * 100 : null },
       raw, adjusted,
-    }
+    }, telemetry)
   }
 
   function read(symbol, index = false) {
@@ -81,12 +84,13 @@ export function createUsMarketProvider({ root, queue, clock = Date.now }) {
   }
 
   async function analysis(symbol, index = false) {
-    const { raw, adjusted, ...data } = await read(symbol, index)
-    if (!raw) return data
+    const result = await read(symbol, index)
+    const { raw, adjusted, ...data } = result
+    if (!raw) return withHealthMetadata(data, result[healthMetadata])
     const bars = index ? raw : adjusted
-    return { ...data, analysisStatus: bars.length >= 260 ? 'available' : 'insufficient-history',
+    return withHealthMetadata({ ...data, analysisStatus: bars.length >= 260 ? 'available' : 'insufficient-history',
       history: { currency: 'USD', timeZone: 'America/New_York',
-        adjustment: index ? 'unadjusted' : 'total-return-adjusted', completeness: 'complete', bars } }
+        adjustment: index ? 'unadjusted' : 'total-return-adjusted', completeness: 'complete', bars } }, result[healthMetadata])
   }
 
   async function stock(symbol) {
@@ -96,20 +100,23 @@ export function createUsMarketProvider({ root, queue, clock = Date.now }) {
 
   return {
     async index(symbol) {
-      const { raw, adjusted, quote, ...state } = await read(symbol, true)
-      return quote ? { ...state, price: quote.close, change: quote.change, changePercent: quote.changePercent } : state
+      const result = await read(symbol, true)
+      const { raw, adjusted, quote, ...state } = result
+      return withHealthMetadata(quote ? { ...state, price: quote.close, change: quote.change, changePercent: quote.changePercent } : state,
+        result[healthMetadata])
     },
     async history(symbol, period) {
-      const { raw, observedAt } = await read(symbol, true)
+      const result = await read(symbol, true)
+      const { raw, observedAt, status, reason, tradingDate, collectedAt } = result
       const sessions = { '1D': 1, '1W': 5, '1M': 22, '3M': 66, '1Y': 252 }
-      return { asOf: observedAt ?? null, data: raw?.slice(-sessions[period])
-        .map(bar => ({ at: bar.tradingDate, value: bar.close })) ?? [] }
+      return withHealthMetadata({ asOf: observedAt ?? null, status, reason, tradingDate, collectedAt, data: raw?.slice(-sessions[period])
+        .map(bar => ({ at: bar.tradingDate, value: bar.close })) ?? [] }, result[healthMetadata])
     },
     async stock(symbol) {
       const data = await stock(symbol)
       if (queue && tickerPattern.test(symbol) && data.status === 'unavailable' && data.reason === 'not-published') {
         const queued = await stat(join(queue, symbol)).catch(() => null)
-        if (queued?.isFile()) return { ...data, reason: 'collecting' }
+        if (queued?.isFile()) return withHealthMetadata({ ...data, reason: 'collecting' }, data[healthMetadata])
       }
       return data
     },
@@ -119,7 +126,7 @@ export function createUsMarketProvider({ root, queue, clock = Date.now }) {
       if (!queue || !tickerPattern.test(symbol) ||
         (data.status !== 'stale' && !(data.status === 'unavailable' && data.reason === 'not-published'))) return data
       const reason = await enqueue(symbol)
-      return { ...data, reason }
+      return withHealthMetadata({ ...data, reason }, data[healthMetadata])
     },
   }
 }

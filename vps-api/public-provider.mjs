@@ -94,3 +94,11 @@ export function providerClient(fetchImpl, intervalMs, {
     }
   }
 }
+
+// Internal provider telemetry is ignored by JSON serialization.
+export const healthMetadata = Symbol('health metadata')
+
+export function withHealthMetadata(value, metadata) {
+  Object.defineProperty(value, healthMetadata, { value: metadata })
+  return value
+}
