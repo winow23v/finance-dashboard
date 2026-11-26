@@ -4,6 +4,8 @@ import { isDay, ProviderError, healthMetadata } from './public-provider.mjs'
 
 const providers = ['krx', 'fx', 'ecos', 'dart', 'yfinance', 'kr-intraday']
 const incidentStatuses = new Set(['Degraded', 'Stale', 'Unavailable', 'Rate Limited'])
+const usIndices = new Set(['^GSPC', '^IXIC', '^DJI'])
+const usStockLimit = 64
 const idle = 'Not Yet Collected'
 const codePattern = /^(?:PROVIDER_|KRX_|FX_|ECOS_|DART_|US_)[A-Z0-9_]{1,48}$/
 const safeCode = value => typeof value === 'string' && codePattern.test(value) ? value : null
@@ -35,7 +37,8 @@ export function createProviderHealth({ configured = {}, clock = Date.now, alertD
   const incidents = new Map()
   const events = []
   const krxEndpoints = new Map()
-  const usObservations = new Map()
+  const usIndexObservations = new Map()
+  const usStockObservations = new Map()
   const severity = [idle, 'Healthy', 'Not Configured', 'Degraded', 'Stale', 'Unavailable', 'Rate Limited']
 
   function record(provider, status, fields, countFailure = true) {
@@ -89,12 +92,20 @@ export function createProviderHealth({ configured = {}, clock = Date.now, alertD
       record(provider, status, fields, metadata?.attempted !== false)
       return
     }
-    // Scope is restricted to the three configured indices plus a stock bucket.
-    const key = ['^GSPC', '^IXIC', '^DJI'].includes(scope) ? scope : 'stocks'
-    const before = usObservations.get(key)
+    const observations = usIndices.has(scope) ? usIndexObservations : usStockObservations
+    const key = typeof scope === 'string' && (usIndices.has(scope) || /^[A-Z][A-Z0-9]{0,9}(?:-[A-Z0-9]{1,5})?$/.test(scope))
+      ? scope : 'other'
+    const before = observations.get(key)
     if (status === idle && before) return
-    usObservations.set(key, { status, fields })
-    const worst = [...usObservations.values()].reduce((a, b) =>
+    if (observations === usStockObservations && !before && observations.size >= usStockLimit) {
+      const replaceable = [...observations].find(([, observation]) => !incidentStatuses.has(observation.status))
+      // Healthy reads cannot displace the only evidence of an active incident.
+      if (!replaceable && !incidentStatuses.has(status)) return
+      observations.delete(replaceable?.[0] ?? observations.keys().next().value)
+    }
+    observations.delete(key)
+    observations.set(key, { status, fields })
+    const worst = [...usIndexObservations.values(), ...usStockObservations.values()].reduce((a, b) =>
       severity.indexOf(a.status) > severity.indexOf(b.status) ? a : b)
     record(provider, worst.status, { ...worst.fields, succeededAt: fields.succeededAt },
       incidentStatuses.has(status) && (before?.status !== status || before?.fields.observationDate !== fields.observationDate

@@ -174,3 +174,27 @@ test('yfinance counts distinct collector attempts and reports cached snapshot ti
   assert.equal(us().retries, 1)
   assert.equal(us().usedCache, true)
 })
+
+
+test('healthy US holdings cannot clear a stale holding or evict its incident under load', async () => {
+  let now = Date.parse('2026-11-26T01:00:00Z')
+  const health = createProviderHealth({ clock: () => now, alertDelayMs: 100 })
+  const us = () => health.snapshot().providers.find(row => row.provider === 'yfinance')
+  const read = (symbol, status, reason) => health.observe('yfinance', () => withHealthMetadata({
+    status, reason, tradingDate: '2026-11-25', collectedAt: '2026-11-25T22:00:00Z',
+  }, { usedCache: true, attemptedAt: new Date(now).toISOString() }), symbol)
+  await read('AAPL', 'stale', 'provider-error')
+  await read('MSFT', 'available', null)
+  assert.equal(us().status, 'Stale')
+  assert.equal(us().consecutiveFailures, 1)
+  now += 200
+  await read('AAPL', 'stale', 'provider-error')
+  for (let i = 0; i < 100; i++) await read(`TEST${i}`, 'available', null)
+  assert.equal(us().status, 'Stale')
+  assert.equal(us().consecutiveFailures, 2)
+  assert.deepEqual(health.snapshot().alerts.events.map(event => event.kind), ['incident'])
+  await read('AAPL', 'available', null)
+  assert.equal(us().status, 'Healthy')
+  assert.equal(us().consecutiveFailures, 0)
+  assert.deepEqual(health.snapshot().alerts.events.map(event => event.kind), ['incident', 'recovery'])
+})
