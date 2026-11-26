@@ -71,7 +71,7 @@ export async function buildApp({
     const provider = memberUs
     memberUs = Object.fromEntries(['index', 'indexAnalysis', 'history', 'stock', 'request'].flatMap(method =>
       typeof provider[method] === 'function'
-        ? [[method, (...args) => providerHealth.observe('yfinance', () => provider[method](...args))]] : []))
+        ? [[method, (...args) => providerHealth.observe('yfinance', () => provider[method](...args), args[0])]] : []))
   }
   const memberSnapshot = (memberKrx || memberUs) && createIndexSnapshot(undefined, memberKrx,
     memberUs ? 'Market indices' : 'KRX OPEN API', memberUs)

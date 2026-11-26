@@ -31,9 +31,10 @@ export function createProviderHealth({ configured = {}, clock = Date.now, alertD
   const incidents = new Map()
   const events = []
   const krxEndpoints = new Map()
+  const usObservations = new Map()
   const severity = ['Healthy', 'Not Configured', 'Degraded', 'Stale', 'Unavailable', 'Rate Limited']
 
-  function record(provider, status, fields) {
+  function record(provider, status, fields, countFailure = true) {
     const previous = rows.get(provider)
     if (!previous) return
     const now = clock()
@@ -42,7 +43,7 @@ export function createProviderHealth({ configured = {}, clock = Date.now, alertD
     const incident = incidents.get(provider)
     if (failed) {
       if (!incident) incidents.set(provider, { start: now, notified: false })
-      else if (!incident.notified && now - incident.start >= alertDelayMs) {
+      else if (countFailure && !incident.notified && now - incident.start >= alertDelayMs) {
         incident.notified = true
         events.push({ provider, at, kind: 'incident', status })
       }
@@ -54,10 +55,12 @@ export function createProviderHealth({ configured = {}, clock = Date.now, alertD
     rows.set(provider, { ...previous, ...fields, status, attemptedAt: fields.attemptedAt ?? at,
       succeededAt: status === 'Healthy' ? (fields.succeededAt ?? previous.succeededAt) : previous.succeededAt,
       observationDate: fields.observationDate ?? previous.observationDate,
-      consecutiveFailures: failed ? previous.consecutiveFailures + 1 : 0 })
+      consecutiveFailures: failed ? previous.consecutiveFailures + Number(countFailure) : 0 })
   }
 
-  function recordResult(provider, data, error, responseMs) {
+  function recordResult(provider, data, error, responseMs, scope) {
+    if (provider === 'dart' && error instanceof ProviderError && error.statusCode === 404 && error.code === 'COMPANY_NOT_FOUND') return
+    if (provider === 'yfinance' && data?.reason === 'unsupported') return
     const detail = data?.reference ?? data
     const errorCode = safeCode(data?.refreshError) ?? (error instanceof ProviderError ? safeCode(error.code) : null)
     const status = error && !errorCode ? 'Unavailable' : resultStatus(data, errorCode, configured[provider] !== false, Boolean(data?.refreshError))
@@ -68,24 +71,34 @@ export function createProviderHealth({ configured = {}, clock = Date.now, alertD
       ?? (provider === 'dart' && newest((data?.filings ?? []).map(item => isDay(item.filedAt) ? item.filedAt : null)))
     const succeededAt = timestamp(detail?.collectedAt) ?? newest(published.map(item => timestamp(item.collectedAt)))
       ?? (provider === 'dart' && status === 'Healthy' ? new Date(clock()).toISOString() : null)
-    record(provider, status, {
+    const fields = {
       succeededAt, observationDate: isDay(date) ? date : null,
       responseMs, httpStatus: error ? error.statusCode ?? 500 : 200,
       errorCode: errorCode ?? safeCode(data?.filingsError) ?? safeCode(data?.financialsError)
         ?? (provider === 'ecos' ? (data?.indicators ?? []).map(item => safeCode(item.code)).find(Boolean) : null),
       usedCache: data?.usingPreviousClose === true || Boolean(data?.refreshError) || data?.status === 'stale' ? true : null,
-    })
+    }
+    if (provider !== 'yfinance') {
+      record(provider, status, fields)
+      return
+    }
+    // Scope is restricted to the three configured indices plus a stock bucket.
+    const key = ['^GSPC', '^IXIC', '^DJI'].includes(scope) ? scope : 'stocks'
+    usObservations.set(key, { status, fields })
+    const worst = [...usObservations.values()].reduce((a, b) =>
+      severity.indexOf(a.status) > severity.indexOf(b.status) ? a : b)
+    record(provider, worst.status, worst.fields, incidentStatuses.has(status))
   }
 
   return {
-    async observe(provider, load) {
+    async observe(provider, load, scope) {
       const start = performance.now()
       try {
         const result = await load()
-        recordResult(provider, result, null, Math.round(performance.now() - start))
+        recordResult(provider, result, null, Math.round(performance.now() - start), scope)
         return result
       } catch (error) {
-        recordResult(provider, null, error, Math.round(performance.now() - start))
+        recordResult(provider, null, error, Math.round(performance.now() - start), scope)
         throw error
       }
     },
@@ -108,7 +121,7 @@ export function createProviderHealth({ configured = {}, clock = Date.now, alertD
         responseMs: Number.isFinite(latest.elapsedMs) ? latest.elapsedMs : null,
         httpStatus: Number.isInteger(latest.httpStatus) ? latest.httpStatus : null,
         retries: Number.isInteger(latest.retries) ? latest.retries : 0,
-      })
+      }, incidentStatuses.has(status) && !(missing && entry.pendingPublication))
     },
     snapshot() {
       return { providers: [...rows.values()], alerts: { mode: 'test', events: [...events] } }

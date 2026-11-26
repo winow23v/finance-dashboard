@@ -70,7 +70,9 @@ test('US index snapshot observes stale provider state on the admin health endpoi
   const app = await buildApp({ logger: false, membership: {
     verify: token => ({ id: token }), read: () => ({ status: 'approved' }), isAdmin: () => true,
   }, memberUs: {
-    index: async () => ({ status: 'stale', reason: 'not-published', price: 100, tradingDate: '2026-11-25' }),
+    index: async symbol => symbol === '^GSPC'
+      ? { status: 'stale', reason: 'not-published', price: 100, tradingDate: '2026-11-25' }
+      : { status: 'available', price: 200, tradingDate: '2026-11-26' },
   } })
   t.after(() => app.close())
   const headers = { authorization: 'Bearer test.admin.token' }
@@ -79,6 +81,7 @@ test('US index snapshot observes stale provider state on the admin health endpoi
   const us = health.json().providers.find(row => row.provider === 'yfinance')
   assert.equal(us.status, 'Stale')
   assert.equal(us.observationDate, '2026-11-25')
+  assert.equal(us.consecutiveFailures, 1)
 })
 
 test('FX malformed refresh remains stale even while its diagnostic code is redacted', async () => {
@@ -103,4 +106,12 @@ test('KRX scheduled waiting does not clear an earlier failure or disguise an ove
   assert.equal(status(), 'Stale')
   health.krx({ ...attempt, result: 'available', latestDate: '2026-11-25' })
   assert.equal(status(), 'Healthy')
+})
+
+test('DART company not found does not count as a provider outage', async () => {
+  const health = createProviderHealth()
+  await health.observe('dart', () => ({ filings: [] }))
+  const before = health.snapshot().providers.find(row => row.provider === 'dart')
+  await assert.rejects(health.observe('dart', () => { throw new ProviderError(404, 'COMPANY_NOT_FOUND') }))
+  assert.deepEqual(health.snapshot().providers.find(row => row.provider === 'dart'), before)
 })
