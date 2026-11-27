@@ -31,8 +31,8 @@ const report = (year, changes = {}) => ({
   year: String(year), status: 'available', period: 'annual', reportCode: '11011', scope: 'CFS',
   fiscalEnd: year + '-12-31', receipt: { id: (year + 1) + '0328000001', filedAt: (year + 1) + '-03-28' },
   collectedAt: '2026-11-26T00:00:00Z', source: 'synthetic-dart',
-  incomePeriod: { current: { start: year + '-01-01', end: year + '-12-31' },
-    previous: { start: (year - 1) + '-01-01', end: (year - 1) + '-12-31' } },
+  incomePeriods: { IS: { current: { start: year + '-01-01', end: year + '-12-31' },
+    previous: { start: (year - 1) + '-01-01', end: (year - 1) + '-12-31' } } },
   accounts: [
     account('revenue', 120, 100), account('operatingIncome', 24), account('parentNetIncome', 20), account('netIncome', 50),
     account('closingParentEquity', 100), account('openingParentEquity', 60), account('equity', 200), account('liabilities', 70),
@@ -126,9 +126,9 @@ test('does not mix scopes, currencies or non-comparable revenue periods and labe
   assert.equal(metrics.roe.exactFraction.numerator, '10000')
   assert.equal(metrics.roe.value, '33.333333333333333333333333')
   assert.equal(metrics.roe.basis, 'separate-entity-net-income-and-equity')
-  data.financials.years[0].incomePeriod.previous.start = '2024-06-01'
+  data.financials.years[0].incomePeriods.IS.previous.start = '2024-06-01'
   assert.equal(compute(data).revenueGrowth.reason, 'comparative-fiscal-period-unverified')
-  data.financials.years[0].incomePeriod.previous.start = '2024-01-01'
+  data.financials.years[0].incomePeriods.IS.previous.start = '2024-01-01'
   replace(data, 'revenue', account('revenue', 120, 0))
   assert.equal(compute(data).revenueGrowth.reason, 'nonpositive-prior-revenue')
 })
@@ -171,6 +171,33 @@ test('uses only available receipts as of evaluation, never substitutes current c
   assert.equal(byId(result.metrics).roe.value, null)
   assert.equal(byId(result.trend.at(-1).metrics).roe.reason, 'annual-report-not-verified-as-of')
   assert.equal(byId(result.trend[0].metrics).roe.status, 'missing-data')
+})
+
+test('does not use an earlier receipt or year when a filed replacement has incomplete metadata', () => {
+  const data = input()
+  const amended = report(2025, { fiscalEnd: null, receipt: { id: '20261126000002', filedAt: '2026-11-26' } })
+  data.financials.years.push(amended)
+  const result = calculateFundamentals(data, clock)
+  assert.equal(byId(result.metrics).per.status, 'unverified')
+  assert.equal(byId(result.metrics).roe.value, null)
+  assert.equal(byId(result.trend.at(-1).metrics).roe.status, 'unverified')
+  assert.equal(byId(result.trend[0].metrics).roe.value, '25')
+  amended.receipt.filedAt = '2026-11-28'
+  assert.equal(compute(data).per.value, '10')
+})
+
+test('requires a verified full annual income period for PER and ROE with the matching statement', () => {
+  const data = input()
+  const periods = data.financials.years[0].incomePeriods
+  periods.IS.current.start = '2025-07-01'
+  assert.equal(compute(data).per.reason, 'annual-income-period-unverified')
+  assert.equal(compute(data).roe.reason, 'annual-income-period-unverified')
+  assert.equal(compute(data).pbr.value, '2')
+  replace(data, 'parentNetIncome', account('parentNetIncome', 20, null, { statement: 'CIS' }))
+  assert.equal(compute(data).roe.reason, 'annual-income-period-unverified')
+  periods.CIS = { current: { start: '2025-01-01', end: '2025-12-31' }, previous: null }
+  assert.equal(compute(data).per.value, '10')
+  assert.equal(compute(data).roe.value, '25')
 })
 
 test('computes exact decimals, labels mock inputs and handles financial-insurance applicability', () => {
@@ -216,7 +243,13 @@ test('reads official fiscal bounds and OFS opening equity without importing CFS 
   assert.deepEqual(dartFiscalDates([
     { ...row, sj_div: 'BS', thstrm_dt: '2025.12.31 현재' },
     { ...row, sj_div: 'IS', thstrm_dt: '2025.01.01 ~ 2025.12.31', frmtrm_dt: '2024.01.01 ~ 2024.12.31' },
-  ], context), { fiscalEnd: '2025-12-31', incomePeriod: report(2025).incomePeriod })
+  ], context), { fiscalEnd: '2025-12-31', incomePeriods: report(2025).incomePeriods })
+  const dates = dartFiscalDates([
+    { ...row, sj_div: 'CIS', thstrm_dt: '2025.01.01 ~ 2025.12.31', frmtrm_dt: '2024.01.01 ~ 2024.12.31' },
+    { ...row, sj_div: 'IS', thstrm_dt: '2025.07.01 ~ 2025.12.31' },
+    { ...row, sj_div: 'IS', thstrm_dt: '2025.01.01 ~ 2025.12.31' },
+  ], context)
+  assert.deepEqual(dates.incomePeriods, { CIS: report(2025).incomePeriods.IS })
   const sce = { ...row, corp_code: corpCode, sj_div: 'SCE', account_nm: '기초자본',
     account_id: 'dart_EquityAtBeginningOfPeriod', currency: 'KRW', thstrm_amount: '12' }
   const normalized = normalizeDartAccounts([

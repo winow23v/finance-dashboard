@@ -216,12 +216,26 @@ function freeCashFlow(report) {
   return { ...success(text(value), evidence), amount: value, currency: operands[0].currency }
 }
 
-function comparableAnnualPeriods(report) {
-  const { current, previous } = report.incomePeriod ?? {}
-  if (![current?.start, current?.end, previous?.start, previous?.end].every(isDay)) return false
-  const days = period => (Date.parse(period.end) - Date.parse(period.start)) / 86_400_000 + 1
-  return current.end === report.fiscalEnd && Date.parse(current.start) - Date.parse(previous.end) === 86_400_000 &&
-    [365, 366].includes(days(current)) && [365, 366].includes(days(previous))
+function fullAnnualPeriod(period) {
+  if (!isDay(period?.start) || !isDay(period?.end)) return false
+  const days = (Date.parse(period.end) - Date.parse(period.start)) / 86_400_000 + 1
+  return [365, 366].includes(days)
+}
+
+function annualIncomePeriod(report, operand) {
+  const period = report.incomePeriods?.[operand.row?.statement]
+  return fullAnnualPeriod(period?.current) && period.current.end === report.fiscalEnd ? period : null
+}
+
+function comparableAnnualPeriods(report, operand) {
+  const period = annualIncomePeriod(report, operand)
+  return period && fullAnnualPeriod(period.previous) &&
+    Date.parse(period.current.start) - Date.parse(period.previous.end) === 86_400_000
+}
+
+function requireAnnualIncome(report, operand) {
+  if (operand.status !== 'success' || annualIncomePeriod(report, operand)) return operand
+  return invalid('unverified', 'annual-income-period-unverified', operand.evidence)
 }
 
 function family(report) {
@@ -251,6 +265,7 @@ const quotient = (a, b) => [a, b]
 function calculate(report, issuer, sector) {
   const basis = family(report)
   const net = account(report, basis.net)
+  const annualNet = requireAnnualIncome(report, net)
   const closing = account(report, basis.closing)
   const marketAmount = issuer && decimal(issuer.value)
   const cap = issuer?.status === 'success' && !marketAmount
@@ -263,13 +278,13 @@ function calculate(report, issuer, sector) {
   const fcf = sectorRestriction ?? freeCashFlow(report)
   const debt = sectorRestriction ?? ratio([account(report, 'liabilities'), account(report, 'equity')], quotient, 100, 'nonpositive-equity')
   const previousRevenue = account(report, 'revenue', 'previous')
-  const revenueGrowth = !comparableAnnualPeriods(report)
+  const revenueGrowth = !comparableAnnualPeriods(report, revenue)
     ? invalid('unverified', 'comparative-fiscal-period-unverified', [...revenue.evidence, ...previousRevenue.evidence])
     : ratio([revenue, previousRevenue], (current, previous) => [add(current, negate(previous)), previous], 100, 'nonpositive-prior-revenue')
   return {
-    ...(cap && { per: ratio([cap, net], quotient, 1, 'nonpositive-net-income'),
+    ...(cap && { per: ratio([cap, annualNet], quotient, 1, 'nonpositive-net-income'),
       pbr: ratio([cap, closing], quotient, 1, 'nonpositive-equity') }),
-    roe: ratio([net, account(report, basis.opening), closing], (profit, open, close) => [profit, add(open, close)], 200,
+    roe: ratio([annualNet, account(report, basis.opening), closing], (profit, open, close) => [profit, add(open, close)], 200,
       'nonpositive-average-equity'),
     fcf, debtRatio: debt, revenueGrowth,
     operatingMargin: ratio([operatingIncome, revenue], quotient, 100, 'nonpositive-revenue'),
@@ -279,39 +294,60 @@ function calculate(report, issuer, sector) {
 }
 
 function selectedReports(financials, evaluationDate) {
+  const candidates = new Map()
   const selections = new Map()
   const unavailable = new Map()
+  const blocked = new Set()
   for (const report of financials.years ?? []) {
     if (!/^20\d{2}$/.test(report?.year ?? '') || report.period !== 'annual' || report.reportCode !== annualCode) continue
     if (report.status !== 'available') {
       if (!unavailable.has(report.year)) unavailable.set(report.year, 'annual-report-unavailable')
       continue
     }
-    const { fiscalEnd, receipt } = report
-    if (!isDay(fiscalEnd) || !isDay(receipt?.filedAt) || !receiptCode.test(receipt.id ?? '') ||
-        !['CFS', 'OFS'].includes(report.scope) || !Array.isArray(report.accounts) ||
-        (report.issuerCorpCode != null && report.issuerCorpCode !== financials.mapping.issuer.corpCode) ||
-        !Number.isFinite(Date.parse(report.collectedAt)) || !report.source ||
-        fiscalEnd > receipt.filedAt || fiscalEnd > evaluationDate || receipt.filedAt > evaluationDate) {
+    const { filedAt } = report.receipt ?? {}
+    if (isDay(filedAt) && filedAt > evaluationDate) {
       unavailable.set(report.year, 'annual-report-not-verified-as-of')
       continue
     }
-    const selected = selections.get(report.year)
-    if (!selected || receipt.filedAt > selected.report.receipt.filedAt ||
-        (receipt.filedAt === selected.report.receipt.filedAt && receipt.id > selected.report.receipt.id)) {
-      selections.set(report.year, { report, conflict: false })
-    } else if (receipt.id === selected.report.receipt.id &&
-      (report.scope !== selected.report.scope || fiscalEnd !== selected.report.fiscalEnd ||
-       JSON.stringify(report.accounts) !== JSON.stringify(selected.report.accounts) ||
-       JSON.stringify(report.incomePeriod) !== JSON.stringify(selected.report.incomePeriod))) selected.conflict = true
+    if (!candidates.has(report.year)) candidates.set(report.year, [])
+    candidates.get(report.year).push(report)
   }
-  for (const [year, entry] of selections) {
-    if (entry.conflict) {
-      selections.delete(year)
-      unavailable.set(year, 'conflicting-annual-report')
-    } else unavailable.delete(year)
+
+  for (const [year, reports] of candidates) {
+    const reject = reason => {
+      blocked.add(year)
+      unavailable.set(year, reason)
+    }
+    if (reports.some(report => !isDay(report.receipt?.filedAt))) {
+      reject('annual-report-filing-date-unverified')
+      continue
+    }
+    reports.sort((a, b) => b.receipt.filedAt.localeCompare(a.receipt.filedAt))
+    const latest = reports.filter(report => report.receipt.filedAt === reports[0].receipt.filedAt)
+    if (latest.some(report => typeof report.receipt.id !== 'string' || !receiptCode.test(report.receipt.id))) {
+      reject('annual-report-receipt-unverified')
+      continue
+    }
+    latest.sort((a, b) => b.receipt.id.localeCompare(a.receipt.id))
+    const report = latest[0]
+    const { fiscalEnd, receipt } = report
+    if (!isDay(fiscalEnd) || fiscalEnd > receipt.filedAt || !['CFS', 'OFS'].includes(report.scope) ||
+        !Array.isArray(report.accounts) || !Number.isFinite(Date.parse(report.collectedAt)) || !report.source ||
+        (report.issuerCorpCode != null && report.issuerCorpCode !== financials.mapping.issuer.corpCode)) {
+      reject('annual-report-not-verified-as-of')
+      continue
+    }
+    if (latest.some(other => other.receipt.id === receipt.id &&
+        (other.scope !== report.scope || other.fiscalEnd !== fiscalEnd ||
+         JSON.stringify(other.accounts) !== JSON.stringify(report.accounts) ||
+         JSON.stringify(other.incomePeriods) !== JSON.stringify(report.incomePeriods)))) {
+      reject('conflicting-annual-report')
+      continue
+    }
+    selections.set(year, report)
+    unavailable.delete(year)
   }
-  return { selections, unavailable }
+  return { selections, unavailable, blocked }
 }
 
 function publicMetric(id, result, report, market, calculatedAt, mock) {
@@ -334,10 +370,11 @@ export function calculateFundamentals({ evaluationDate, financials, market, mode
   const mappingReady = mapping?.status === 'exact-code' && issueKey(mapping.issue) && issuerCode.test(mapping.issuer?.corpCode ?? '') &&
     isDay(mapping.issueAsOf) && mapping.issueAsOf <= evaluationDate
   const { issue, issuer } = aggregateMarket(market, mapping, evaluationDate)
-  const { selections, unavailable } = mappingReady ? selectedReports(financials, evaluationDate)
-    : { selections: new Map(), unavailable: new Map() }
-  const latest = [...selections.values()].map(entry => entry.report).sort((a, b) => b.fiscalEnd.localeCompare(a.fiscalEnd))[0]
-  const firstYear = Math.max(Number(evaluationDate.slice(0, 4)) - 1, Number(latest?.year ?? 0))
+  const { selections, unavailable, blocked } = mappingReady ? selectedReports(financials, evaluationDate)
+    : { selections: new Map(), unavailable: new Map(), blocked: new Set() }
+  const latestYear = [...selections.keys(), ...blocked].sort().at(-1)
+  const latest = selections.get(latestYear)
+  const firstYear = Math.max(Number(evaluationDate.slice(0, 4)) - 1, Number(latestYear ?? 0))
   const unverified = invalid('unverified', 'issuer-mapping-unverified')
   const unavailableFor = year => !mappingReady ? unverified : unavailable.has(year) && unavailable.get(year) !== 'annual-report-unavailable'
     ? invalid('unverified', unavailable.get(year)) : missing('annual-report-unavailable')
@@ -347,7 +384,7 @@ export function calculateFundamentals({ evaluationDate, financials, market, mode
     sources: [...new Set(marketEvidence.map(row => row.source).filter(Boolean))] }
   const values = latest ? calculate(latest, issuer, mapping.sector) : {}
   const trend = Array.from({ length: 3 }, (_, index) => String(firstYear - 2 + index)).map(year => {
-    const report = selections.get(year)?.report
+    const report = selections.get(year)
     const metrics = report ? calculate(report, null, mapping.sector) : {}
     return { year, metrics: trendIds.map(id => publicMetric(id, metrics[id] ?? unavailableFor(year), report, null, calculatedAt, mock)) }
   })
@@ -356,7 +393,7 @@ export function calculateFundamentals({ evaluationDate, financials, market, mode
   return { version: fundamentalFormulaVersion, evaluationDate, calculatedAt, mode, mapping,
     market: { currency: issuer.currency, issuer: publicCap(issuer), issue: publicCap(issue) },
     metrics: ['per', 'pbr', 'roe', 'fcf', 'debtRatio', 'revenueGrowth', 'operatingMargin', 'fcfMargin'].map(id =>
-      publicMetric(id, values[id] ?? unavailableFor(String(firstYear)), latest,
+      publicMetric(id, values[id] ?? unavailableFor(latestYear ?? String(firstYear)), latest,
         ['per', 'pbr'].includes(id) ? marketMetadata : null, calculatedAt, mock)),
     trend }
 }

@@ -109,10 +109,10 @@ export function createDartFinancialCollector({ root, issueFor, catalog, requestR
     const filing = filings.find(row => row?.rcept_no === normalized.receipt && row.corp_code === corpCode &&
       typeof row.rcept_dt === 'string' && /^\d{8}$/.test(row.rcept_dt) && dayFromReceipt(row.rcept_dt) === hint)
     const particulars = await request('fnlttSinglAcnt.json', params)
-    const { fiscalEnd, incomePeriod } = dartFiscalDates(particulars, { receipt: normalized.receipt, stockCode, year, reportCode, scope })
+    const { fiscalEnd, incomePeriods } = dartFiscalDates(particulars, { receipt: normalized.receipt, stockCode, year, reportCode, scope })
     const name = typeof filing?.report_nm === 'string' ? filing.report_nm : null
     return { ...report, collectedAt: new Date(clock()).toISOString(), status: 'available', scope, scopeReason: scope === 'CFS' ? 'consolidated' : 'consolidated-unavailable',
-      fiscalEnd, incomePeriod, receipt: { id: normalized.receipt, filedAt: filing ? dayFromReceipt(filing.rcept_dt) : null,
+      fiscalEnd, incomePeriods, receipt: { id: normalized.receipt, filedAt: filing ? dayFromReceipt(filing.rcept_dt) : null,
         amendment: name === null ? 'unverified' : /정정/.test(name) ? 'amended' : 'as-filed',
         title: name, url: 'https://dart.fss.or.kr/dsaf001/main.do?rcpNo=' + normalized.receipt },
       accounts: normalized.accounts, rowCount: normalized.rowCount, earlierReceipts: normalized.earlierReceipts,

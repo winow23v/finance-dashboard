@@ -134,12 +134,19 @@ export function dartFiscalDates(rows, { receipt, stockCode, year, reportCode, sc
     const [start, end] = matched.slice(1).map(date => date.replaceAll('.', '-'))
     return isDay(start) && isDay(end) && start <= end ? { start, end } : null
   }
-  const periods = new Set()
-  for (const row of matches) {
-    if (row.sj_div !== 'IS') continue
-    const current = bounds(row.thstrm_dt)
-    const previous = bounds(row.frmtrm_dt)
-    if (current && previous) periods.add(JSON.stringify({ current, previous }))
+  const incomePeriods = {}
+  for (const statement of ['IS', 'CIS']) {
+    const current = new Set()
+    const previous = new Set()
+    for (const row of matches) {
+      if (row.sj_div !== statement) continue
+      const currentBounds = bounds(row.thstrm_dt)
+      const previousBounds = bounds(row.frmtrm_dt)
+      if (currentBounds) current.add(JSON.stringify(currentBounds))
+      if (previousBounds) previous.add(JSON.stringify(previousBounds))
+    }
+    if (current.size === 1) incomePeriods[statement] = { current: JSON.parse([...current][0]),
+      previous: previous.size === 1 ? JSON.parse([...previous][0]) : null }
   }
-  return { fiscalEnd, incomePeriod: periods.size === 1 ? JSON.parse([...periods][0]) : null }
+  return { fiscalEnd, incomePeriods }
 }
