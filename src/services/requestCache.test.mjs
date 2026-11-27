@@ -2,6 +2,39 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { createRequestCache } from './requestCache.ts'
 
+test('analytics is opt-in and events redact ticker, account paths and search text', async () => {
+  const { analyticsId, createAnalytics } = await import('./analytics.ts')
+  assert.equal(analyticsId('', ''), undefined)
+  assert.equal(analyticsId('1', 'invalid'), undefined)
+  const events = []
+  const tracker = createAnalytics({ measurementId: 'fixture', origin: 'https://example.test', base: '/finance/',
+    command: (...args) => events.push(args) })
+  tracker.configure()
+  tracker.page('stock/XKRX/005930')
+  tracker.page('stock/XKRX/005930')
+  tracker.page('search/secret-query')
+  tracker.page('domestic')
+  assert.equal(events.filter(args => args[0] === 'event' && args[1] === 'page_view').length, 3)
+  assert.equal(events.filter(args => args[1] === 'market_view').length, 1)
+  assert.ok(events.some(args => args[1] === 'stock_detail_view'))
+  assert.doesNotMatch(JSON.stringify(events), /005930|secret-query|XKRX/)
+})
+
+test('analytics consent responds to removal in a separate tab', async t => {
+  const { subscribeAnalyticsConsent } = await import('./analytics.ts')
+  const states = []
+  const tab = new EventTarget()
+  const unsubscribe = subscribeAnalyticsConsent(granted => states.push(granted), tab)
+  t.after(unsubscribe)
+  const storage = key => Object.assign(new Event('storage'), { key })
+  tab.dispatchEvent(storage('unrelated'))
+  tab.dispatchEvent(storage('finance.analytics-consent.v1'))
+  tab.dispatchEvent(storage(null))
+  unsubscribe()
+  tab.dispatchEvent(storage('finance.analytics-consent.v1'))
+  assert.deepEqual(states, [false, false])
+})
+
 test('browser cache shares concurrent requests, expires entries, and bounds retained responses', async () => {
   let now = 0
   let calls = 0

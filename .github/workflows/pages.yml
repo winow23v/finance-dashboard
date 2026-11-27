@@ -71,6 +71,8 @@ jobs:
       - run: npm run build
         env:
           VITE_DATA_MODE: api
+          VITE_GA4_ENABLED: ${{ github.event_name == 'workflow_dispatch' && vars.VITE_GA4_ENABLED || '' }}
+          VITE_GA4_MEASUREMENT_ID: ${{ github.event_name == 'workflow_dispatch' && vars.VITE_GA4_MEASUREMENT_ID || '' }}
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
           VITE_API_BASE_URL: https://winow.duckdns.org

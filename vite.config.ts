@@ -1,6 +1,7 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
+import { analyticsId } from './src/services/analytics.ts'
 
 const target = process.env.FINANCE_DEV_API_TARGET ?? 'http://192.168.0.68:8088'
 const privateToken = process.env.FINANCE_PRIVATE_API_TOKEN
@@ -9,6 +10,12 @@ const privateTarget = target === 'http://127.0.0.1:3001'
 function browserPolicy(mode: string): Plugin {
   const env = loadEnv(mode, process.cwd(), 'VITE_')
   const origins = new Set<string>()
+  const analytics = mode === 'production' && env.VITE_DATA_MODE === 'api' &&
+    analyticsId(env.VITE_GA4_ENABLED, env.VITE_GA4_MEASUREMENT_ID)
+  if (analytics) {
+    origins.add('https://www.google-analytics.com')
+    origins.add('https://region1.google-analytics.com')
+  }
   for (const name of ['VITE_API_BASE_URL', 'VITE_SUPABASE_URL']) {
     const value = env[name]?.trim()
     if (!value) continue
@@ -32,7 +39,7 @@ function browserPolicy(mode: string): Plugin {
       handler(html) {
         const policy = [
           "default-src 'self'",
-          "script-src 'self'",
+          "script-src 'self'" + (analytics ? ' https://www.googletagmanager.com' : ''),
           "style-src 'self'",
           "style-src-attr 'unsafe-inline'",
           "img-src 'self'",
