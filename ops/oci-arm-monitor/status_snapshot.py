@@ -109,18 +109,21 @@ def public_quota(quota):
     }
 
 
-def record_oci_result(quota=None, *, failed, path=OCI_RESULT_PATH, now=None):
+def record_oci_result(quota=None, *, failed, path=OCI_RESULT_PATH, now=None, unless_checked_since=None):
     """Call once at the end of the existing OCI query, with its real result."""
     checked_at = timestamp(now or utc_now())
     if checked_at is None or type(failed) is not bool or (not failed and not isinstance(quota, dict)):
         raise ValueError("Invalid OCI result")
+    since = timestamp(unless_checked_since)
+    if unless_checked_since is not None and (since is None or not failed):
+        raise ValueError("Invalid timeout start time")
     path = Path(path)
     lock_fd = os.open(path.with_suffix(".lock"), os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     with os.fdopen(lock_fd, "rb+") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         old = read_json(path) or {}
         last_attempt = timestamp(old.get("last_attempt_at"))
-        if last_attempt and last_attempt > checked_at:
+        if last_attempt and (last_attempt > checked_at or (since and last_attempt >= since)):
             return
         result = {
             "last_attempt_at": checked_at,
