@@ -38,7 +38,19 @@ def prepare_monitor(lines):
 
 def prepare_orchestrator(lines):
     # The inserted finally runs inside the existing lock after all acquired paths.
-    body = "".join("    " + line if line.strip() else line for line in lines[38:124])
+    monitor_call = "".join("    " + line for line in lines[87:91])
+    guarded_call = """        monitor_started_at = datetime.now(ZoneInfo("UTC"))
+        try:
+""" + monitor_call + """        except subprocess.TimeoutExpired:
+            try:
+                from status_snapshot import record_oci_result
+                record_oci_result(failed=True, unless_checked_since=monitor_started_at)
+            except Exception:
+                log("STATUS: Could not record monitor timeout")
+            raise
+"""
+    original_flow = [*lines[38:87], *guarded_call.splitlines(keepends=True), *lines[91:124]]
+    body = "".join("    " + line if line.strip() else line for line in original_flow)
     return "".join(lines[:38]) + "        try:\n" + body + """        finally:
             try:
                 from status_snapshot import read_notification_status, write_operational_snapshot
