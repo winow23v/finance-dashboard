@@ -34,7 +34,7 @@ def section(snapshot, key):
 
 
 def build_report(snapshot, now):
-    lines = [f"보고 기준: {now.astimezone(SEOUL):%Y-%m-%d %H:%M %Z}"]
+    lines = ["OCI ARM 상태 보고", f"보고 기준: {now.astimezone(SEOUL):%Y-%m-%d %H:%M %Z}"]
     if not snapshot or snapshot.get("schema_version") != 1:
         return "\n".join(lines + ["감시 상태: 스냅샷 없음 또는 손상"])
     arm = section(snapshot, "arm")
@@ -79,7 +79,7 @@ def queue_report(enqueue, *, path=STATUS_PATH, now=None):
     now = now or utc_now()
     message = build_report(read_json(path), now)
     # The existing queue's UNIQUE event_key is the deduplication boundary.
-    return enqueue(event_key=report_key(now), title="OCI ARM 상태 보고", message=message)
+    return enqueue(report_key(now), message)
 
 
 def main():
