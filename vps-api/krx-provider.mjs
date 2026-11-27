@@ -1018,6 +1018,20 @@ export function createKrxProvider({
       const state = await load(endpoint[market].index, target)
       return { ...state.data?.rows[0], ...metadata(state, target) }
     },
+    async cachedMarketObservation(issue) {
+      const config = endpoint[issue.market]
+      if (!config) return null
+      const [catalog, trades] = await Promise.all([readState(config.listings), readState(config.trades)])
+      if (catalog.data?.date !== issue.asOf || !trades.data || trades.data.date < issue.asOf) return null
+      const listing = catalog.data.rows.find(row => row.symbol === issue.symbol && row.isin === issue.isin &&
+        row.shareClass === issue.shareClass)
+      const trade = trades.data?.rows.find(row => row.symbol === issue.symbol)
+      if (!listing || !trade || trade.tradingDate !== trades.data.date ||
+          tradeListing(trade, trades.data.date, listing, catalog.data.date, undefined, undefined) !== listing) return null
+      return { symbol: issue.symbol, market: issue.market, isin: issue.isin, shareClass: issue.shareClass,
+        tradingDate: trade.tradingDate, close: trade.price, ...tradeValues(trade),
+        listedSharesVerified: validTradeValue(trade.listedShares), source }
+    },
     async cachedIssue(symbol) {
       const matches = (await Promise.all(markets.map(async market => {
         const { data } = await readState(endpoint[market].listings)

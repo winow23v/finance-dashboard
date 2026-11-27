@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, open, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { dartFiscalEnd, normalizeDartAccounts } from './dart-accounts-provider.mjs'
+import { dartFiscalDates, normalizeDartAccounts } from './dart-accounts-provider.mjs'
 import { isDay, ProviderError } from './public-provider.mjs'
 
 const sample = new Map([
@@ -46,9 +46,9 @@ async function readSnapshot(path, corpCode, year) {
       if (!bytesRead) break
     }
     const saved = JSON.parse(bytes.toString('utf8', 0, length))
-    return saved?.version === version && saved.corpCode === corpCode && saved.year === year &&
+    return saved?.version === version && (corpCode === null || saved.corpCode === corpCode) && (Array.isArray(year) ? year.includes(saved.year) : saved.year === year) &&
       Number.isFinite(saved.savedAt) && ['available', 'not-provided'].includes(saved.statement?.status) &&
-      Array.isArray(saved.statement.accounts) ? saved : null
+      saved.statement.year === saved.year && Array.isArray(saved.statement.accounts) ? saved : null
   } catch (error) {
     if (error.code === 'ENOENT' || error instanceof SyntaxError) return null
     throw new ProviderError(503, 'DART_FINANCIAL_CACHE_UNAVAILABLE')
@@ -109,10 +109,10 @@ export function createDartFinancialCollector({ root, issueFor, catalog, requestR
     const filing = filings.find(row => row?.rcept_no === normalized.receipt && row.corp_code === corpCode &&
       typeof row.rcept_dt === 'string' && /^\d{8}$/.test(row.rcept_dt) && dayFromReceipt(row.rcept_dt) === hint)
     const particulars = await request('fnlttSinglAcnt.json', params)
-    const fiscalEnd = dartFiscalEnd(particulars, { receipt: normalized.receipt, stockCode, year, reportCode, scope })
+    const { fiscalEnd, incomePeriods } = dartFiscalDates(particulars, { receipt: normalized.receipt, stockCode, year, reportCode, scope })
     const name = typeof filing?.report_nm === 'string' ? filing.report_nm : null
     return { ...report, collectedAt: new Date(clock()).toISOString(), status: 'available', scope, scopeReason: scope === 'CFS' ? 'consolidated' : 'consolidated-unavailable',
-      fiscalEnd, receipt: { id: normalized.receipt, filedAt: filing ? dayFromReceipt(filing.rcept_dt) : null,
+      fiscalEnd, incomePeriods, receipt: { id: normalized.receipt, filedAt: filing ? dayFromReceipt(filing.rcept_dt) : null,
         amendment: name === null ? 'unverified' : /정정/.test(name) ? 'amended' : 'as-filed',
         title: name, url: 'https://dart.fss.or.kr/dsaf001/main.do?rcpNo=' + normalized.receipt },
       accounts: normalized.accounts, rowCount: normalized.rowCount, earlierReceipts: normalized.earlierReceipts,
@@ -133,13 +133,15 @@ export function createDartFinancialCollector({ root, issueFor, catalog, requestR
     for (const year of years) {
       const path = join(root, symbol + '-' + (Number(year) % 3) + '.json')
       const saved = await readSnapshot(path, corpCode, year)
-      if (saved && clock() >= saved.savedAt && clock() - saved.savedAt < dayMs) {
+      if (saved && clock() >= saved.savedAt && clock() - saved.savedAt < dayMs &&
+          (!saved.mapping || (saved.mapping.issue?.isin === issue.isin && saved.mapping.issue?.market === issue.market &&
+          saved.mapping.issue?.shareClass === issue.shareClass))) {
         results.push({ ...saved.statement, cache: 'hit' })
         continue
       }
       try {
         const statement = await collectYear(corpCode, symbol, year)
-        await saveSnapshot(path, { version, corpCode, year, savedAt: clock(), statement })
+        await saveSnapshot(path, { version, corpCode, year, savedAt: clock(), mapping, statement })
         results.push({ ...statement, cache: 'updated' })
       } catch (error) {
         if (!(error instanceof ProviderError) || !results.length) throw error
@@ -149,7 +151,7 @@ export function createDartFinancialCollector({ root, issueFor, catalog, requestR
     return { mapping, years: results, progress: { status: 'complete' } }
   }
 
-  return async symbol => {
+  const run = async symbol => {
     if (!sample.has(symbol) && !preferredSamples.has(symbol)) throw new ProviderError(404, 'DART_FINANCIAL_SAMPLE_NOT_FOUND')
     if (running?.symbol === symbol) return running.promise
     if (running) throw new ProviderError(503, 'DART_FINANCIAL_COLLECTION_BUSY')
@@ -159,4 +161,35 @@ export function createDartFinancialCollector({ root, issueFor, catalog, requestR
     running = { symbol, promise }
     return promise
   }
+
+  run.readCached = async (symbol, evaluationDate) => {
+    if (!sample.has(symbol) && !preferredSamples.has(symbol)) throw new ProviderError(404, 'DART_FINANCIAL_SAMPLE_NOT_FOUND')
+    const currentIssue = await issueFor(symbol)
+    if (!currentIssue || !isDay(currentIssue.asOf) || currentIssue.asOf > evaluationDate) return { mapping: null, years: [] }
+    const snapshots = []
+    for (let slot = 0; slot < 3; slot++) {
+      const path = join(root, symbol + '-' + slot + '.json')
+      const fileYear = Number(evaluationDate.slice(0, 4))
+      const expected = [fileYear, fileYear - 1, fileYear - 2, fileYear - 3]
+      // The rolling cache has three slots. Validate the envelope before using any contents.
+      const saved = await readSnapshot(path, null, expected.filter(year => year % 3 === slot).map(String))
+      if (saved) snapshots.push(saved)
+    }
+    const sameIssue = saved => saved.mapping?.status === 'exact-code' && saved.corpCode === saved.mapping.issuer?.corpCode &&
+      saved.mapping.issue?.symbol === symbol && saved.mapping.issue?.market === currentIssue.market &&
+      saved.mapping.issue?.isin && saved.mapping.issue.isin === currentIssue.isin &&
+      saved.mapping.issue.shareClass === currentIssue.shareClass &&
+      isDay(saved.mapping.issueAsOf) && saved.mapping.issueAsOf <= evaluationDate && saved.savedAt <= clock()
+    const verified = snapshots.filter(sameIssue).sort((a, b) => b.savedAt - a.savedAt)
+    const candidate = verified[0]
+    if (!candidate) return { mapping: { ...dartIssueMapping(currentIssue, [], null),
+      reason: snapshots.length ? 'snapshot-identity-unverified' : 'financial-snapshot-unavailable' }, years: [] }
+    if (verified.some(saved => saved.corpCode !== candidate.corpCode)) return {
+      mapping: { ...dartIssueMapping(currentIssue, [], null), reason: 'conflicting-snapshot-issuers' }, years: [],
+    }
+    return { mapping: candidate.mapping, years: verified.map(saved => ({ ...saved.statement, issuerCorpCode: saved.corpCode,
+      snapshotStale: clock() - saved.savedAt >= dayMs })) }
+  }
+  return run
+
 }
