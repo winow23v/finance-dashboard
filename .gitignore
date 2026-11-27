@@ -26,6 +26,7 @@ oracle_finance_deploy
 __pycache__/
 
 /vps-api/.krx-cache/
+/vps-api/.dart-cache/
 
 # Local test, log and backup output
 /.pytest_cache/
