@@ -1,3 +1,4 @@
+import { registerOciMonitorStatus } from './oci-monitor-status.mjs'
 import { createProviderHealth } from './health-provider.mjs'
 import { pathToFileURL } from 'node:url'
 import { STATUS_CODES } from 'node:http'
@@ -50,6 +51,7 @@ export async function buildApp({
   memberUs,
   cache = createMarketCache(),
   logger = true,
+  ociMonitorStatus,
   getEconomyIndicators,
   privateAccessToken,
   privateOnly = false,
@@ -116,6 +118,8 @@ export async function buildApp({
     }
   })
 
+  if (!privateOnly && ociMonitorStatus) registerOciMonitorStatus(app, ociMonitorStatus)
+
   if (membership) {
     app.decorateRequest('memberUser', null)
     const limitMember = app.createRateLimit({
@@ -123,7 +127,7 @@ export async function buildApp({
     })
     app.addHook('onRequest', async (request, reply) => {
       const access = request.routeOptions.config?.access
-      if (request.routeOptions.config?.healthCheck || access === 'preflight') return
+      if (request.routeOptions.config?.healthCheck || request.routeOptions.config?.ociMonitorStatus || access === 'preflight') return
       const authorization = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i.exec(request.headers.authorization ?? '')
       const user = authorization && await membership.verify(authorization[1])
       if (!user) return reply.header('www-authenticate', 'Bearer').code(401).send({ code: 'AUTH_REQUIRED' })
@@ -463,6 +467,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       privateAccessToken: process.env.FINANCE_PRIVATE_API_TOKEN,
     } : {
       membership: createMembership(),
+      ociMonitorStatus: {
+        token: process.env.OCI_MONITOR_READ_TOKEN,
+        filename: process.env.OCI_MONITOR_STATUS_FILE,
+      },
       providerHealth,
       memberFred: configureMemberFred(),
       localKrx: krx,
