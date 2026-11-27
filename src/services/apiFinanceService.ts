@@ -68,9 +68,26 @@ const isKrxMarket = (value: unknown) => value === 'KOSPI' || value === 'KOSDAQ'
 const isKrxReason = (value: unknown) => value === null ||
   ['provider-not-configured', 'provider-error', 'not-published', 'weekend', 'before-collection'].includes(String(value))
 const isOptionalDate = (value: unknown) => value === null || isDate(value)
+const isOptionalTradeValue = (value: unknown) => value == null ||
+  (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0)
+const hasKrxTradeValues = (value: Record<string, unknown>) =>
+  [value.turnover, value.marketCap, value.listedShares].every(isOptionalTradeValue)
+
+function isKrxCoverage(value: unknown) {
+  if (!isRecord(value) || !isNumber(value.requestedSessions) || !isNumber(value.availableSessions)
+    || !Number.isInteger(value.requestedSessions) || !Number.isInteger(value.availableSessions)) return false
+  return value.requestedSessions > 0 && value.availableSessions >= 0 && value.availableSessions <= value.requestedSessions
+    && isOptionalDate(value.firstDate) && isOptionalDate(value.lastDate) && isDate(value.targetDate)
+    && typeof value.contiguous === 'boolean' && typeof value.requestedPeriodComplete === 'boolean'
+    && typeof value.isLatest === 'boolean' && typeof value.marketClosed === 'boolean'
+    && ['current', 'provider-timeout', 'cache-write-failed', 'provider-error', 'stale', 'unavailable'].includes(String(value.latestStatus))
+    && (value.shortfallReason === null || ['listed-recently', 'listing-date-unavailable', 'no-trade',
+      'missing-observation', 'not-collected'].includes(String(value.shortfallReason)))
+}
+
 const isKrxQuote = (value: unknown) => value === null || (isRecord(value) && isNumber(value.price) && value.price > 0
   && isNullableNumber(value.volume) && isNullableNumber(value.change)
-  && isNullableNumber(value.changePercent) && isDate(value.tradingDate))
+  && isNullableNumber(value.changePercent) && isDate(value.tradingDate) && hasKrxTradeValues(value))
 
 export function isKrxAfterHours(value: unknown): value is NonNullable<KrxAnalysis['afterHours']> {
   return Array.isArray(value) && value.length === 2 && value.every((item, index) =>
@@ -117,11 +134,12 @@ export async function getKrxAnalysis(symbol: string, signal: AbortSignal): Promi
     || (value.afterHours !== undefined && !isKrxAfterHours(value.afterHours))
     || !hasKrxCollectionMetadata(value) || !isOptionalDate(value.latestDate) || !isOptionalDate(value.collectedAt) || !isOptionalDate(value.stoppedAt)
     || !(value.stoppedReason === null || value.stoppedReason === 'missing-observation' || value.stoppedReason === 'not-collected')
+    || (value.coverage !== undefined && !isKrxCoverage(value.coverage))
     || !isRecord(value.history) || value.history.currency !== 'KRW' || value.history.timeZone !== 'Asia/Seoul'
     || value.history.adjustment !== 'unadjusted' || !['complete', 'missing-observations'].includes(String(value.history.completeness))
     || !Array.isArray(value.history.bars) || value.history.bars.length > 500
     || !value.history.bars.every(bar => isRecord(bar) && isDate(bar.tradingDate)
-      && [bar.open, bar.high, bar.low, bar.close, bar.volume].every(isNumber))) throw new Error('Invalid KRX history')
+      && [bar.open, bar.high, bar.low, bar.close, bar.volume].every(isNumber) && hasKrxTradeValues(bar))) throw new Error('Invalid KRX history')
   return value as unknown as KrxAnalysis
 }
 
@@ -130,7 +148,7 @@ function isKrxMarketRow(value: unknown): value is KrxMarketRow {
     && isText(value.shortName) && typeof value.mapped === 'boolean'
     && isKrxMarket(value.market) && isNumber(value.price) && value.price > 0 && isNumber(value.volume) && value.volume > 0
     && isNullableNumber(value.changePercent) && isNullableNumber(value.marketCap)
-    && (value.turnover === undefined || isNullableNumber(value.turnover))
+    && hasKrxTradeValues(value)
 }
 
 export async function getKrxOverview(signal: AbortSignal): Promise<KrxOverview> {

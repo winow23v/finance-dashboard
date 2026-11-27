@@ -50,7 +50,11 @@ test('scheduled collection keeps old bars on errors and publishes recovered trad
       tradeCalls.push('KOSDAQ')
       if (!available) return new Response(null, { status: 503 })
       return response([{ BAS_DD: '20261123', MKT_NM: 'KOSDAQ', ISU_CD: symbol, ISU_NM: '지니언스',
-        TDD_CLSPRC: '105', TDD_OPNPRC: '100', TDD_HGPRC: '107', TDD_LWPRC: '97', ACC_TRDVOL: '20' }])
+        TDD_CLSPRC: '105', TDD_OPNPRC: '100', TDD_HGPRC: '107', TDD_LWPRC: '97',
+        ACC_TRDVOL: '20', ACC_TRDVAL: '0', MKTCAP: '9,007,199,254,740,991', LIST_SHRS: '1,000' },
+      { BAS_DD: '20261123', MKT_NM: 'KOSDAQ', ISU_CD: '247540', ISU_NM: 'Fixture',
+        TDD_CLSPRC: '100', TDD_OPNPRC: '100', TDD_HGPRC: '101', TDD_LWPRC: '99',
+        ACC_TRDVOL: '20', MKTCAP: '9007199254740992', LIST_SHRS: '1.00000000000000001' }])
     },
   })
   assert.equal((await provider.stockHistory(symbol)).latestDate, oldDate)
@@ -63,6 +67,8 @@ test('scheduled collection keeps old bars on errors and publishes recovered trad
   assert.equal(stale.collectedAt, collectedAt)
   assert.equal(stale.reason, 'provider-error')
   assert.equal(stale.errorCode, 'PROVIDER_UNAVAILABLE')
+  assert.equal(stale.coverage.latestStatus, 'provider-error')
+  assert.equal(stale.coverage.isLatest, false)
   assert.deepEqual(log.filter(entry => entry.endpoint.endsWith('/ksq_bydd_trd') && entry.event === 'krx-request')
     .map(({ attempt, httpStatus }) => [attempt, httpStatus]), [[1, 503], [2, 503], [3, 503]])
   assert.equal(log.filter(entry => entry.httpStatus === 403 && entry.attempt > 1).length, 0)
@@ -79,8 +85,26 @@ test('scheduled collection keeps old bars on errors and publishes recovered trad
   assert.equal(detail.reason, 'before-collection')
   assert.deepEqual(detail.history.bars.map(row => row.tradingDate), [oldDate, newDate])
   assert.equal(await readFile(oldFile, 'utf8'), oldHistory)
+  assert.deepEqual(detail.history.bars.map(({ turnover, marketCap, listedShares }) => [turnover, marketCap, listedShares]),
+    [[null, null, null], [0, Number.MAX_SAFE_INTEGER, 1000]])
+  assert.deepEqual(detail.coverage, { requestedSessions: 500, availableSessions: 2, firstDate: oldDate, lastDate: newDate,
+    contiguous: true, requestedPeriodComplete: false, shortfallReason: 'listed-recently', targetDate: newDate,
+    isLatest: true, latestStatus: 'current', marketClosed: false })
+  const invalid = (await provider.stocks({ market: 'KOSDAQ', symbol: '247540' })).items[0].quote
+  assert.deepEqual([invalid.turnover, invalid.marketCap, invalid.listedShares], [null, null, null])
+  const stored = JSON.parse(await readFile(join(root, 'ohlcv-KOSDAQ-' + newDate + '.json'), 'utf8'))
+  assert.deepEqual(stored.tradeData, { [symbol]: [0, Number.MAX_SAFE_INTEGER, 1000] })
+  assert.ok(stored.rows.every(row => row.length === 6))
   const snapshot = JSON.parse(await readFile(join(root, 'sto-ksq_bydd_trd.json'), 'utf8'))
   assert.deepEqual(snapshot.history.map(entry => entry.result), ['error', 'available'])
+  const followingDate = '2026-11-24'
+  now = Date.parse(followingDate + 'T12:15Z')
+  await writeFile(join(root, 'sto-ksq_bydd_trd.json'), JSON.stringify({
+    version: 1, history: [], data: { date: followingDate, collectedAt, rows: [{ ...bar, name: listing.name, tradingDate: followingDate }] },
+  }))
+  const reopened = createKrxProvider({ scheduledOnly: true, root, key: '', clock: () => now })
+  const history = await reopened.stockHistory(symbol)
+  assert.equal(history.history.bars.find(bar => bar.tradingDate === newDate).listedShares, 1000)
 })
 
 test('member KRX is opt-in and cannot be mounted without membership', async t => {
@@ -259,6 +283,9 @@ test('history excludes closed dates, stops at an invalid session, and ranks only
   assert.deepEqual(history.history.bars.map(row => row.tradingDate), ['2026-11-18', '2026-11-20'])
   assert.equal(history.stoppedAt, '2026-11-17')
   assert.equal(history.stoppedReason, 'missing-observation')
+  assert.equal(history.coverage.shortfallReason, 'no-trade')
+  assert.equal(history.coverage.requestedPeriodComplete, false)
+  assert.equal(history.coverage.contiguous, true)
   assert.equal(history.history.adjustment, 'unadjusted')
   const overview = await krx.overview()
   assert.equal(overview.tradingDate, '2026-11-20')
@@ -411,6 +438,8 @@ test('a member cache supports 500 shared sessions without fetches and stops befo
   const [samsung, hynix, listedRecently] = await Promise.all(symbols.map(symbol => provider.stockHistory(symbol)))
   for (const result of [samsung, hynix]) {
     assert.equal(result.history.bars.length, 500)
+    assert.equal(result.coverage.requestedPeriodComplete, true)
+    assert.equal(result.coverage.marketClosed, true)
     assert.ok(result.history.bars.every(bar => !calendar.closed(bar.tradingDate)))
     assert.equal(result.history.bars[0].tradingDate, dates[499])
     assert.equal(result.history.bars.at(-1).tradingDate, latest)
@@ -418,6 +447,51 @@ test('a member cache supports 500 shared sessions without fetches and stops befo
   assert.equal(listedRecently.history.bars.length, 3)
   assert.equal(listedRecently.stoppedAt, null)
   assert.equal(listedRecently.stoppedReason, null)
+})
+
+test('concurrent stock histories share a daily read and preserve partial contiguous data', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'krx-shared-day-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const symbols = ['005930', '000660']
+  const date = '2026-11-23'
+  const prior = '2026-11-20'
+  const snapshot = rows => JSON.stringify({ version: 1, history: [], data: { date, collectedAt: date, rows } })
+  await Promise.all([
+    writeFile(join(root, 'sto-stk_isu_base_info.json'), snapshot(symbols.map(symbol =>
+      ({ symbol, name: symbol, market: 'KOSPI', listedOn: prior })))),
+    writeFile(join(root, 'sto-stk_bydd_trd.json'), snapshot(symbols.map(symbol =>
+      ({ symbol, price: 100, open: 100, high: 100, low: 100, volume: 5, tradingDate: date })))),
+  ])
+  const bytes = JSON.stringify({ date: prior, rows: symbols.map(symbol => [symbol, 99, 99, 99, 99, 4]) })
+  let reads = 0
+  const provider = createKrxProvider({ root, key: '', scheduledOnly: true, clock: () => Date.parse(date + 'T12:15Z'),
+    async readHistoryFile(path) {
+      assert.ok(path.endsWith(prior + '.json'))
+      reads++
+      await delay(25)
+      return bytes
+    },
+  })
+  const results = await Promise.all(symbols.map(symbol => provider.stockHistory(symbol)))
+  assert.equal(reads, 1)
+  for (const result of results) {
+    assert.deepEqual(result.history.bars.map(bar => bar.tradingDate), [prior, date])
+    assert.equal(result.coverage.availableSessions, 2)
+    assert.equal(result.coverage.requestedPeriodComplete, false)
+    assert.equal(result.coverage.shortfallReason, 'listed-recently')
+  }
+  await provider.stockHistory(symbols[0])
+  assert.equal(reads, 2, 'concurrent sharing must not retain results across requests')
+
+  const missing = createKrxProvider({
+    root, key: '', scheduledOnly: true, clock: () => Date.parse(date + 'T12:15Z'),
+    readHistoryFile: async () => { throw Object.assign(new Error('Missing fixture'), { code: 'ENOENT' }) },
+  })
+  const partial = await missing.stockHistory(symbols[0])
+  assert.equal(partial.stoppedAt, prior)
+  assert.equal(partial.coverage.shortfallReason, 'not-collected')
+  assert.equal(partial.coverage.contiguous, true)
+  assert.equal(partial.coverage.requestedPeriodComplete, false)
 })
 
 test('backfill does not start historical requests after a latest session 429', async t => {
@@ -636,6 +710,7 @@ test('HTTP 200 body timeout and transient network errors consume separate reques
   ])
   assert.equal(requests[0].timeoutMs, 100)
   assert.ok(requests[0].timings.bodyMs >= 80)
+  assert.equal(requests[0].timeoutStage, 'body')
   assert.equal(requests[0].timings.jsonMs, null)
   assert.equal(typeof requests[2].timings.jsonMs, 'number')
   assert.ok(log.every(entry => !JSON.stringify(entry).includes('fixture')))
@@ -1013,8 +1088,11 @@ test('timeouts, empty or partially invalid masters preserve the last good cache 
     assert.equal(stocks.trades.collectedAt, '2026-11-24T12:15:00.000Z')
     assert.equal(stocks.trades.lastAttemptAt, date + 'T12:15:00.000Z')
     assert.equal((await provider.indices('KOSDAQ')).tradingDate, date)
+    assert.equal((await provider.stockHistory('005930')).coverage.latestStatus, 'provider-timeout')
   }
-  assert.equal(log.filter(row => row.event === 'krx-request' && row.code === 'PROVIDER_TIMEOUT').length, 6)
+  const timeouts = log.filter(row => row.event === 'krx-request' && row.code === 'PROVIDER_TIMEOUT')
+  assert.equal(timeouts.length, 6)
+  assert.ok(timeouts.every(row => row.timeoutStage === 'before-headers'))
   assert.ok(log.some(row => row.event === 'krx-request' && row.code === 'KRX_INCOMPLETE_MASTER'))
 })
 

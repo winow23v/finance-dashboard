@@ -92,6 +92,26 @@ export type KrxAfterHours = {
   collectedAt: null
 }
 
+export interface KrxTradeValues {
+  turnover?: number | null
+  marketCap?: number | null
+  listedShares?: number | null
+}
+
+export interface KrxHistoryCoverage {
+  requestedSessions: number
+  availableSessions: number
+  firstDate: string | null
+  lastDate: string | null
+  contiguous: boolean
+  requestedPeriodComplete: boolean
+  shortfallReason: 'listed-recently' | 'listing-date-unavailable' | 'no-trade' | 'missing-observation' | 'not-collected' | null
+  targetDate: string
+  isLatest: boolean
+  marketClosed: boolean
+  latestStatus: 'current' | 'provider-timeout' | 'cache-write-failed' | 'provider-error' | 'stale' | 'unavailable'
+}
+
 export interface KrxStock {
   symbol: string
   name: string
@@ -106,7 +126,7 @@ export interface KrxStock {
     changePercent: number | null
     volume: number | null
     tradingDate: string
-  } | null
+  } & KrxTradeValues | null
 }
 export interface KrxStocks {
   market: KrxMarket
@@ -133,6 +153,8 @@ export interface KrxAnalysis {
   stoppedAt: string | null
   stoppedReason: 'missing-observation' | 'not-collected' | null
   quote: KrxStock['quote']
+  coverage?: KrxHistoryCoverage
+  identity?: { symbol: string; market: KrxMarket; shareClass: string; isin: string | null; tradingDate: string | null }
   history: MarketDailyHistory
 }
 
@@ -147,6 +169,7 @@ export interface KrxMarketRow {
   volume: number
   turnover?: number | null
   marketCap: number | null
+  listedShares?: number | null
 }
 
 export interface KrxOverview {
