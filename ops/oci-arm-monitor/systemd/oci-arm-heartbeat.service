@@ -4,5 +4,14 @@ Description=Queue an OCI ARM status report
 [Service]
 Type=oneshot
 User=rocky
+Group=rocky
+Environment=HOME=/home/rocky
 WorkingDirectory=/home/rocky/oci-arm-monitor
-ExecStart=/usr/bin/python3 /home/rocky/oci-arm-monitor/heartbeat.py
+ExecStart=/usr/bin/python /home/rocky/oci-arm-monitor/heartbeat.py
+CPUQuota=10%
+MemoryMax=200M
+Nice=10
+TimeoutStartSec=120
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
