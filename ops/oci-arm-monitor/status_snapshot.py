@@ -188,11 +188,14 @@ def write_snapshot(*, region, policy, provisioning, notification, interval_secon
                    host_reader=collect_host, timer_reader=collect_timers):
     """Use normalized inputs from the calling monitor, never raw operational JSON."""
     if not isinstance(region, str) or not re.fullmatch(r"[a-z]{2}(?:-[a-z]+)+-\d+", region):
-        raise ValueError("Invalid region")
+        region = None
     result = read_json(result_path) or {}
     quota = public_quota(result.get("quota") or {})
     timers = timer_reader()
     host = host_reader()
+    block_reason = provisioning.get("block_reason")
+    if "block_reason" not in provisioning:
+        block_reason = operational_block_reason(provisioning.get("status"), policy, quota)
     load = host.get("load_average") or ()
     status = {
         "schema_version": 1,
@@ -208,7 +211,7 @@ def write_snapshot(*, region, policy, provisioning, notification, interval_secon
             "created": flag(provisioning.get("created")),
             "attempts": count(provisioning.get("attempts")),
             "auto_create_enabled": flag(policy.get("auto_create_enabled")),
-            "block_reason": choice(provisioning.get("block_reason"), BLOCK_REASONS),
+            "block_reason": choice(block_reason, BLOCK_REASONS),
             "last_attempt_at": timestamp(provisioning.get("last_attempt_at")),
             "completed_at": timestamp(provisioning.get("completed_at")),
             "instance_lifecycle_state": choice(provisioning.get("instance_lifecycle_state"), INSTANCE_STATES),
@@ -240,3 +243,103 @@ def write_snapshot(*, region, policy, provisioning, notification, interval_secon
     }
     atomic_json(path, status)
     return status
+
+
+def normalize_operational_quota(state, policy):
+    ad_cpu, regional_cpu = (number(state.get(field)) for field in ("ad_cpu", "region_cpu"))
+    ad_ram, regional_ram = (number(state.get(field)) for field in ("ad_ram", "region_ram"))
+    cpu = min(ad_cpu, regional_cpu) if ad_cpu is not None and regional_cpu is not None else None
+    ram = min(ad_ram, regional_ram) if ad_ram is not None and regional_ram is not None else None
+    shape = state.get("arm_shape")
+    available = False if shape == "WAIT_ARM_SHAPE" else flag(shape)
+    target_cpu = number(policy.get("target_ocpus"))
+    target_ram = number(policy.get("target_memory_gb"))
+    meets_target = None
+    if None not in (cpu, ram, target_cpu, target_ram) and target_cpu > 0 and target_ram > 0:
+        meets_target = cpu >= target_cpu and ram >= target_ram
+    return {
+        "available_ocpus": cpu,
+        "available_memory_gb": ram,
+        "regional_available_ocpus": regional_cpu,
+        "regional_available_memory_gb": regional_ram,
+        "shape_available": available,
+        "meets_target": meets_target,
+    }
+
+
+def record_operational_oci_result(state=None, *, failed, root, path=OCI_RESULT_PATH, now=None):
+    """Record the result of an existing OCI query at its success or failure boundary."""
+    if failed is not False:
+        return record_oci_result(failed=failed, path=path, now=now)
+    if not isinstance(state, dict):
+        raise ValueError("Successful OCI result requires query data")
+    policy = read_json(Path(root) / "policy.json") or {}
+    quota = normalize_operational_quota(state, policy)
+    if quota["available_ocpus"] is None or quota["available_memory_gb"] is None:
+        raise ValueError("Successful OCI result requires AD and regional quotas")
+    record_oci_result(quota, failed=False, path=path, now=now)
+
+
+def operational_block_reason(status, policy, quota):
+    if status not in PROVISION_STATES or status == "COMPLETED":
+        return None
+    if status in ("CAPACITY_WAIT", "UNKNOWN_RESULT"):
+        return status
+    if policy.get("free_eligibility_verified") is False:
+        return "FREE_ELIGIBILITY_UNVERIFIED"
+    if policy.get("auto_create_enabled") is False:
+        return "AUTO_CREATE_DISABLED"
+    if quota["shape_available"] is False:
+        return "ARM_SHAPE_UNAVAILABLE"
+    if quota["meets_target"] is False:
+        return "ARM_QUOTA_UNAVAILABLE"
+    return "SAFETY_GATE" if status == "BLOCKED" else None
+
+
+def write_operational_snapshot(root, *, notification, interval_seconds, observation=None,
+                               path=STATUS_PATH, result_path=OCI_RESULT_PATH,
+                               host_reader=collect_host, timer_reader=collect_timers):
+    """Read production files without writing them or treating their contents as a new query."""
+    root = Path(root)
+    state = read_json(root / "state.json") or {}
+    provision = read_json(root / "provision_state.json") or {}
+    policy = read_json(root / "policy.json") or {}
+    region = policy.get("region")
+    if region is None:
+        region = state.get("region")
+    if state.get("region") is not None and state["region"] != region:
+        region = None
+
+    auto_create = (flag(policy.get("auto_create_enabled")), flag(provision.get("auto_create_enabled")))
+    public_policy = {
+        "target_ocpus": number(policy.get("target_ocpus")),
+        "target_memory_gb": number(policy.get("target_memory_gb")),
+        "free_eligibility_verified": flag(policy.get("free_eligibility_verified")),
+        "auto_create_enabled": False if False in auto_create else True if auto_create == (True, True) else None,
+    }
+    status = choice(provision.get("status"), PROVISION_STATES)
+    instance_id = provision.get("instance_id")
+    has_instance = isinstance(instance_id, str) and bool(instance_id.strip())
+    created = None
+    if status == "COMPLETED" and has_instance:
+        created = True
+    elif status and status != "COMPLETED":
+        created = False
+    observation = observation if isinstance(observation, dict) else {}
+    observed_at = timestamp(observation.get("observed_at"))
+    lifecycle = choice(observation.get("lifecycle_state"), INSTANCE_STATES)
+    observed = has_instance and observation.get("instance_id") == instance_id and observed_at and lifecycle
+    public_provision = {
+        "status": status,
+        "created": created,
+        "attempts": count(provision.get("attempt_count")),
+        "last_attempt_at": timestamp(provision.get("last_attempt_at")),
+        "completed_at": timestamp(provision.get("completed_at")),
+        "instance_lifecycle_state": lifecycle if observed else None,
+        "instance_observed_at": observed_at if observed else None,
+    }
+    return write_snapshot(
+        region=region, policy=public_policy, provisioning=public_provision,
+        notification=notification, interval_seconds=interval_seconds, path=path,
+        result_path=result_path, host_reader=host_reader, timer_reader=timer_reader,
+    )
