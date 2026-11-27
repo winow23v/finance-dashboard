@@ -1,10 +1,11 @@
 """Queue one current status report for the most recent scheduled KST slot."""
 from datetime import datetime, timedelta
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from status_snapshot import (
     BLOCK_REASONS, INSTANCE_STATES, PROVISION_STATES, STATUS_PATH, choice, collect_host, count, flag, number,
-    read_json, timestamp, utc_now,
+    read_json, retry_snapshot_events, timestamp, utc_now,
 )
 
 SEOUL = ZoneInfo("Asia/Seoul")
@@ -159,6 +160,8 @@ def main():
         queue_report(enqueue)
     except Exception:
         raise SystemExit("OCI ARM heartbeat could not enqueue a report") from None
+    finally:
+        retry_snapshot_events(Path(__file__).resolve().parent)
 
 
 if __name__ == "__main__":

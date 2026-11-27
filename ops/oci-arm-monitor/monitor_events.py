@@ -1,8 +1,20 @@
 """Report changes supported by observed snapshots through the existing queue."""
-import hashlib
 import json
+import os
+import sqlite3
+import stat
+import uuid
+from contextlib import closing
+from pathlib import Path
 
 BACKLOG_THRESHOLD = 10
+# Keep retries bounded so recovering a large backlog does not monopolize a run.
+DELIVERY_BATCH = 32
+QUOTA_FIELDS = {
+    "ad_available_ocpus": "AD CPU", "ad_available_memory_gb": "AD RAM",
+    "regional_available_ocpus": "리전 CPU", "regional_available_memory_gb": "리전 RAM",
+    "available_ocpus": "CPU 확보량", "available_memory_gb": "RAM 확보량",
+}
 
 
 def changes(previous, current):
@@ -11,6 +23,13 @@ def changes(previous, current):
     before_arm, arm = previous.get("arm", {}), current["arm"]
     before_p, provision = previous.get("provisioning", {}), current["provisioning"]
     before_m, monitor = previous.get("monitor", {}), current["monitor"]
+    quota_changes = [
+        f"{label}: {before_arm[field]} → {arm[field]}"
+        for field, label in QUOTA_FIELDS.items()
+        if before_arm.get(field) is not None and arm.get(field) is not None and before_arm[field] != arm[field]
+    ]
+    if quota_changes:
+        yield "QUOTA_CHANGED", "정보", "CPU/RAM 할당량 변경", "\n".join(quota_changes)
     if arm["shape_available"] is not None and before_arm.get("shape_available") != arm["shape_available"]:
         yield "SHAPE_CHANGED", "정보", "ARM Shape 가용 상태 변경", "가용" if arm["shape_available"] else "사용 불가"
     if arm["meets_target"] is True and before_arm.get("meets_target") is not True:
@@ -34,11 +53,72 @@ def changes(previous, current):
         yield "NOTIFICATION_BACKLOG", "주의", "ntfy 알림 큐 적체", f"발송 대기 {pending}건"
 
 
-def enqueue_changes(previous, current, enqueue):
-    for code, priority, title, body in changes(previous, current):
-        if code in ("UNKNOWN_RESULT", "FREE_REVIEW"):
-            # These are owned by the operational orchestrator's existing event keys.
-            continue
-        baseline = json.dumps(previous, sort_keys=True, separators=(",", ":")).encode()
-        key = hashlib.sha256(baseline + code.encode()).hexdigest()[:24]
-        enqueue(f"MONITOR_{code}_{key}", f"[{priority}] {title}\n{body}")
+
+def event_store_path(snapshot_path):
+    return Path(snapshot_path).with_suffix(".events.db")
+
+
+def open_store(path, *, create):
+    flags = os.O_NOFOLLOW | os.O_NONBLOCK | (os.O_CREAT | os.O_RDWR if create else os.O_RDONLY)
+    fd = os.open(path, flags, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("Invalid snapshot event store")
+    finally:
+        os.close(fd)
+    return sqlite3.connect(Path(path).absolute().as_uri() + "?mode=rw", uri=True, timeout=1)
+
+
+def capture_events(snapshot_path, initial, current):
+    """Atomically reserve event keys and advance the observed baseline."""
+    fields = {
+        "arm": (*QUOTA_FIELDS, "shape_available", "meets_target", "free_eligibility_verified"),
+        "provisioning": ("status",),
+        "monitor": ("last_check_failed",),
+        "notification": ("pending_count",),
+    }
+    payload = json.dumps({
+        section: {field: current[section].get(field) for field in names}
+        for section, names in fields.items()
+    }, separators=(",", ":"))
+    with closing(open_store(event_store_path(snapshot_path), create=True)) as db, db:
+        db.execute("BEGIN IMMEDIATE")
+        db.execute("CREATE TABLE IF NOT EXISTS baseline (id INTEGER PRIMARY KEY CHECK (id = 1), snapshot TEXT NOT NULL)")
+        db.execute("""CREATE TABLE IF NOT EXISTS pending (
+            id INTEGER PRIMARY KEY, event_key TEXT NOT NULL UNIQUE, message TEXT NOT NULL
+        )""")
+        baseline = db.execute("SELECT snapshot FROM baseline WHERE id = 1").fetchone()
+        previous = json.loads(baseline[0]) if baseline else initial
+        if baseline and baseline[0] == payload:
+            return
+        for code, priority, title, body in changes(previous, current):
+            if code in ("UNKNOWN_RESULT", "FREE_REVIEW"):
+                # The operational orchestrator already owns these event keys.
+                continue
+            db.execute("INSERT INTO pending(event_key, message) VALUES (?, ?)", (
+                f"MONITOR_{code}_{uuid.uuid4().hex}", f"[{priority}] {title}\n{body}",
+            ))
+        db.execute("INSERT OR REPLACE INTO baseline(id, snapshot) VALUES (1, ?)", (payload,))
+
+
+def deliver_events(snapshot_path, enqueue):
+    """Acknowledge only committed queue inserts or duplicates of the same key."""
+    try:
+        db = open_store(event_store_path(snapshot_path), create=False)
+    except FileNotFoundError:
+        return
+    with closing(db):
+        rows = db.execute(
+            "SELECT event_key, message FROM pending ORDER BY id LIMIT ?", (DELIVERY_BATCH,)
+        ).fetchall()
+        acknowledged = []
+        try:
+            for key, message in rows:
+                enqueue(key, message)
+                acknowledged.append((key,))
+        finally:
+            if acknowledged:
+                # Never hold the journal's write lock during the external SQLite enqueue.
+                # A concurrent retry may replay a key. The notification queue deduplicates it.
+                with db:
+                    db.executemany("DELETE FROM pending WHERE event_key = ?", acknowledged)

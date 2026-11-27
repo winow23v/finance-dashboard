@@ -211,9 +211,8 @@ def collect_timers():
     return timers
 
 
-def write_snapshot(*, region, policy, provisioning, notification, interval_seconds,
-                   path=STATUS_PATH, result_path=OCI_RESULT_PATH,
-                   host_reader=collect_host, timer_reader=collect_timers):
+def build_snapshot(*, region, policy, provisioning, notification, interval_seconds,
+                   result_path=OCI_RESULT_PATH, host_reader=collect_host, timer_reader=collect_timers):
     """Use normalized inputs from the calling monitor, never raw operational JSON."""
     if not isinstance(region, str) or not re.fullmatch(r"[a-z]{2}(?:-[a-z]+)+-\d+", region):
         region = None
@@ -271,6 +270,11 @@ def write_snapshot(*, region, policy, provisioning, notification, interval_secon
             )},
         },
     }
+    return status
+
+
+def write_snapshot(*, path=STATUS_PATH, **inputs):
+    status = build_snapshot(**inputs)
     atomic_json(path, status)
     return status
 
@@ -371,21 +375,36 @@ def write_operational_snapshot(root, *, notification, interval_seconds, observat
         "instance_lifecycle_state": lifecycle if observed else None,
         "instance_observed_at": observed_at if observed else None,
     }
-    previous = read_json(path)
-    snapshot = write_snapshot(
-        region=region, policy=public_policy, provisioning=public_provision,
-        notification=notification, interval_seconds=interval_seconds, path=path,
-        result_path=result_path, host_reader=host_reader, timer_reader=timer_reader,
-    )
-    if previous:
+    try:
+        snapshot = build_snapshot(
+            region=region, policy=public_policy, provisioning=public_provision,
+            notification=notification, interval_seconds=interval_seconds,
+            result_path=result_path, host_reader=host_reader, timer_reader=timer_reader,
+        )
         try:
-            from monitor_events import enqueue_changes
+            from monitor_events import capture_events
+
+            capture_events(path, read_json(path), snapshot)
+        except Exception:
+            print("STATUS: Could not persist snapshot events", flush=True)
+        atomic_json(path, snapshot)
+        return snapshot
+    finally:
+        retry_snapshot_events(root, path=path)
+
+
+def retry_snapshot_events(root, *, path=STATUS_PATH):
+    try:
+        from monitor_events import deliver_events
+
+        def enqueue_event(key, message):
             from notification_queue import enqueue
 
-            enqueue_changes(previous, snapshot, lambda key, message: enqueue(key, message, root=root))
-        except Exception:
-            print("STATUS: Could not queue snapshot event", flush=True)
-    return snapshot
+            enqueue(key, message, root=root)
+
+        deliver_events(path, enqueue_event)
+    except Exception:
+        print("STATUS: Snapshot events remain pending", flush=True)
 
 
 def read_notification_status(root):
