@@ -8,6 +8,9 @@ const minute = 60_000
 const timerNames = ['oci-arm-monitor.timer', 'oci-arm-retry.timer', 'oci-arm-notify.timer']
 const states = ['WAITING_ELIGIBILITY', 'CAPACITY_WAIT', 'SUBMITTING', 'UNKNOWN_RESULT',
   'PROVISIONING', 'COMPLETED', 'BLOCKED']
+const instanceStates = ['PROVISIONING', 'STARTING', 'RUNNING', 'STOPPING', 'STOPPED',
+  'CREATING_IMAGE', 'MOVING', 'TERMINATING', 'TERMINATED']
+const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value)
 const blockReasons = ['ARM_QUOTA_UNAVAILABLE', 'ARM_SHAPE_UNAVAILABLE', 'FREE_ELIGIBILITY_UNVERIFIED',
   'AUTO_CREATE_DISABLED', 'CAPACITY_WAIT', 'UNKNOWN_RESULT', 'DUPLICATE_RISK', 'LIMIT_REACHED', 'SAFETY_GATE']
 const nonnegative = value => Number.isFinite(value) && value >= 0 ? value : null
@@ -31,7 +34,17 @@ function publicStatus(snapshot, now) {
   const status = from(provisioning?.status, states)
   const failed = flag(monitor?.last_check_failed)
   if (snapshot.schema_version !== 1 || !checkedAt || age < 0 || !region || !status ||
-      failed === null || !arm || typeof arm !== 'object' || Array.isArray(arm)) throw new Error('Invalid snapshot')
+      ![arm, provisioning, monitor].every(isRecord) || failed === null ||
+      flag(provisioning.created) === null || count(provisioning.attempts) === null ||
+      flag(provisioning.auto_create_enabled) === null || flag(arm.free_eligibility_verified) === null ||
+      !(arm.shape_available === null || typeof arm.shape_available === 'boolean') ||
+      ![arm.available_ocpus, arm.available_memory_gb].every(value => value === null || nonnegative(value) !== null) ||
+      !(nonnegative(arm.target_ocpus) > 0 && nonnegative(arm.target_memory_gb) > 0)) {
+    throw new Error('Invalid snapshot')
+  }
+  const observedAt = timestamp(provisioning.instance_observed_at)
+  const instanceState = from(provisioning.instance_lifecycle_state, instanceStates)
+  const instanceObserved = instanceState && observedAt && Date.parse(observedAt) <= now
   const dataStatus = age > 180 * minute ? 'critical' : age > 75 * minute ? 'stale' : 'fresh'
 
   return {
@@ -50,7 +63,8 @@ function publicStatus(snapshot, now) {
       target_memory_gb: nonnegative(arm.target_memory_gb),
       meets_target: flag(arm.meets_target),
       free_eligibility_verified: flag(arm.free_eligibility_verified),
-      quota_is_current: dataStatus === 'fresh' && !failed,
+      quota_is_current: dataStatus === 'fresh' && !failed &&
+        arm.available_ocpus !== null && arm.available_memory_gb !== null,
     },
     provisioning: {
       status,
@@ -60,6 +74,8 @@ function publicStatus(snapshot, now) {
       last_attempt_at: timestamp(provisioning.last_attempt_at),
       completed_at: timestamp(provisioning.completed_at),
       block_reason: from(provisioning.block_reason, blockReasons),
+      instance_lifecycle_state: instanceObserved ? instanceState : null,
+      instance_observed_at: instanceObserved ? observedAt : null,
     },
     monitor: {
       status: failed ? 'failed' : dataStatus === 'fresh' ? 'healthy' : 'delayed',
@@ -90,11 +106,14 @@ function publicStatus(snapshot, now) {
   }
 }
 
-async function readSnapshot(filename) {
+async function readSnapshot(filename, ownerUid) {
+  if (!Number.isSafeInteger(ownerUid) || ownerUid < 0) throw new Error('Invalid snapshot owner')
   const file = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
   try {
     const info = await file.stat()
-    if (!info.isFile() || info.size > maxBytes) throw new Error('Invalid snapshot file')
+    // Allow the writer to replace the file and a dedicated group to read it.
+    if (!info.isFile() || info.uid !== ownerUid || info.nlink !== 1 || (info.mode & 0o7137) !== 0 ||
+        info.size > maxBytes) throw new Error('Invalid snapshot file')
     const buffer = Buffer.alloc(maxBytes + 1)
     let length = 0
     while (length < buffer.length) {
@@ -111,7 +130,7 @@ async function readSnapshot(filename) {
 
 const digest = value => createHash('sha256').update(value).digest()
 
-export function registerOciMonitorStatus(app, { token, filename = '/var/lib/oci-arm-monitor/status.json' }) {
+export function registerOciMonitorStatus(app, { token, filename = '/var/lib/oci-arm-monitor/status.json', ownerUid }) {
   // A 32-byte random token is configured as 64 lowercase hexadecimal digits.
   const expected = /^[a-f0-9]{64}$/.test(token ?? '') ? digest(`Bearer ${token}`) : null
   if (!expected) return
@@ -138,7 +157,7 @@ export function registerOciMonitorStatus(app, { token, filename = '/var/lib/oci-
     },
     handler: async (_request, reply) => {
       try {
-        return publicStatus(await readSnapshot(filename), Date.now())
+        return publicStatus(await readSnapshot(filename, ownerUid), Date.now())
       } catch {
         return reply.code(503).send({ data_status: 'unavailable', code: 'OCI_MONITOR_STATUS_UNAVAILABLE' })
       }
