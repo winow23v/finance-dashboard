@@ -1,4 +1,4 @@
-import { registerOciMonitorStatus } from './oci-monitor-status.mjs'
+import { registerOciMonitorStatus } from './oci-monitor-status-provider.mjs'
 import { createProviderHealth } from './health-provider.mjs'
 import { pathToFileURL } from 'node:url'
 import { STATUS_CODES } from 'node:http'
