@@ -1018,6 +1018,17 @@ export function createKrxProvider({
       const state = await load(endpoint[market].index, target)
       return { ...state.data?.rows[0], ...metadata(state, target) }
     },
+    async cachedIssue(symbol) {
+      const matches = (await Promise.all(markets.map(async market => {
+        const { data } = await readState(endpoint[market].listings)
+        const row = data?.rows.find(item => item.symbol === symbol)
+        if (!row) return null
+        return { symbol, market, name: listingDisplayName(symbol, row),
+          isin: /^KR[A-Z0-9]{10}$/.test(row.isin ?? '') ? row.isin : null,
+          shareClass: row.shareClass || null, asOf: data.date }
+      }))).filter(Boolean)
+      return matches.length === 1 ? matches[0] : null
+    },
     async stocks({ market, q, symbol, symbols }) {
       const target = targetFor()
       const config = endpoint[market]

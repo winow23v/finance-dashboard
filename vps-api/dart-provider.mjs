@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url'
+import { createDartFinancialCollector } from './dart-financials-provider.mjs'
 import { unzipSync } from 'fflate'
 import { XMLParser } from 'fast-xml-parser'
 import { createMarketCache, MarketError } from './market-cache.mjs'
@@ -61,7 +63,7 @@ function financialsFrom(rows, year, period, company) {
   const selected = new Map()
   const conflicts = new Set()
   for (const row of rows) {
-    if (row?.corp_code !== company.id || typeof row.stock_code !== 'string' || !/^[0-9A-Z]{6}$/.test(row.stock_code)
+    if (row?.stock_code !== company.ticker || (row.corp_code != null && row.corp_code !== company.id)
       || row.bsns_year !== year || row.reprt_code !== dartPeriods[period]) throw invalidResponse()
     if (row.sj_div !== 'IS' || !Object.hasOwn(metrics, row.account_nm)) continue
     const statement = { CFS: 'consolidated', OFS: 'separate' }[row.fs_div]
@@ -90,14 +92,15 @@ function financialsFrom(rows, year, period, company) {
 }
 
 export function createDartProvider({
-  key = process.env.DART_API_KEY, fetchImpl = fetch, clock = Date.now,
+  key = process.env.DART_API_KEY, fetchImpl = fetch, clock = Date.now, issueFor,
+  financialRoot = process.env.DART_FINANCIAL_CACHE_DIR || fileURLToPath(new URL('.dart-cache/', import.meta.url)),
 } = {}) {
   // Catalog and JSON requests share one limiter. Only the parsed catalog is cached in memory.
   const get = providerClient(fetchImpl, 1000, { queue: true, binary: true, maxBytes: 8 * 1024 * 1024, dailyLimit: 2000, timeoutMs: 3500 })
   const filingsCache = createMarketCache({ maxEntries: 32, maxBytes: 384 * 1024, maxPending: 4, timeoutMs: 6000, wallClock: clock })
-  const request = (path, params, timeoutMs) => get(`https://opendart.fss.or.kr/api/${path}?${new URLSearchParams({
+  const request = (path, params, timeoutMs, observeResponse) => get(`https://opendart.fss.or.kr/api/${path}?${new URLSearchParams({
       crtfc_key: key.trim(), ...params,
-  })}`, {}, timeoutMs)
+  })}`, {}, timeoutMs, observeResponse)
   function json(body) {
     try { return JSON.parse(body.toString('utf8')) } catch { throw invalidResponse() }
   }
@@ -128,11 +131,26 @@ export function createDartProvider({
       return { rows: [], error }
     }
   }
-  return async ({ q, corpCode, year, period, page }) => {
+  async function readCatalog() {
     if (!key?.trim()) throw new ProviderError(503, 'DART_CONFIGURATION_MISSING')
+    if (clock() >= catalogExpires) pendingCatalog ??= loadCatalog().finally(() => { pendingCatalog = undefined })
+    return pendingCatalog ?? catalog
+  }
+
+  async function requestRows(path, params) {
+    let httpStatus
+    try {
+      return checkedRows(json(await request(path, params, undefined, status => { httpStatus = status })))
+    } catch (error) {
+      if ([500, 502, 503, 504].includes(httpStatus) && error.code === 'PROVIDER_UNAVAILABLE')
+        throw new ProviderError(503, 'DART_UPSTREAM_TRANSIENT')
+      throw error
+    }
+  }
+
+  const query = async ({ q, corpCode, year, period, page }) => {
     const catalogCached = clock() < catalogExpires
-    if (!catalogCached) pendingCatalog ??= loadCatalog().finally(() => { pendingCatalog = undefined })
-    const companies = pendingCatalog ? await pendingCatalog : catalog
+    const companies = await readCatalog()
     if (!corpCode) {
       const term = q.trim().toUpperCase()
       const matches = companies.filter(company => company.ticker === term || company.id === term
@@ -168,4 +186,8 @@ export function createDartProvider({
       ...(financials.error && { financialsError: financials.error.code }) },
     { usedCache: catalogCached || filingsCached, attempted: !catalogCached || !filingsCached || Boolean(year) })
   }
+  if (issueFor) query.collectFinancials = createDartFinancialCollector({
+    root: financialRoot, issueFor, catalog: readCatalog, requestRows, clock, source,
+  })
+  return query
 }

@@ -317,6 +317,16 @@ export async function buildApp({
     } },
   }, request => providerHealth.observe('dart', () => dart(request.query)))
 
+  if (membership && dart.collectFinancials) {
+    app.post('/api/v1/financials/kr/:symbol/collect', {
+      config: { access: 'admin' },
+      schema: { querystring: noQuery, params: {
+        type: 'object', additionalProperties: false, required: ['symbol'],
+        properties: { symbol: { type: 'string', pattern: '^[0-9A-Z]{6}$' } },
+      } },
+    }, request => dart.collectFinancials(request.params.symbol))
+  }
+
   app.get('/api/v1/market/snapshot', {
     schema: { querystring: noQuery },
   }, async (request, reply) => {
@@ -500,6 +510,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       },
       providerHealth,
       memberFred: configureMemberFred(),
+      ...(process.env.DART_FINANCIAL_SAMPLE === '1' && memberKrx && {
+        dart: createDartProvider({ issueFor: symbol => memberKrx.cachedIssue(symbol) }),
+      }),
       localKrx: krx,
       memberKrx,
       memberUs,
