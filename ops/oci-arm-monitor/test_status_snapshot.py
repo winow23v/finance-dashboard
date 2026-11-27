@@ -7,11 +7,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from heartbeat import queue_report, report_key
+from heartbeat import kst_time, memory, queue_report, report_key
+from monitor_events import enqueue_changes
 from prepare_operational_hooks import prepare
 from status_snapshot import (
     PROVISION_STATES, atomic_json, read_notification_status, record_oci_result, record_operational_oci_result,
-    write_operational_snapshot, write_snapshot,
+    timer_schedule, write_operational_snapshot, write_snapshot,
 )
 
 NOW = datetime(2026, 11, 27, 0, tzinfo=timezone.utc)
@@ -93,7 +94,7 @@ class StatusTests(unittest.TestCase):
         rows = connection.execute("SELECT event_key, message FROM notifications ORDER BY event_key").fetchall()
         self.assertEqual([key for key, _ in rows], ["HEARTBEAT_20261127_AM", "HEARTBEAT_20261127_PM"])
         self.assertEqual(report_key(before_am), report_key(pm))
-        self.assertTrue(rows[0][1].startswith("OCI ARM 상태 보고\n"))
+        self.assertTrue(rows[0][1].startswith("[OCI ARM 정기 상태 보고]\n"))
         self.assertIn("최근 조회", rows[0][1])
         self.assertIn("심각한 지연", rows[1][1])
         self.assertNotIn(SECRET, str(rows))
@@ -183,7 +184,7 @@ class StatusTests(unittest.TestCase):
         def enqueue(event_key, message, root=root):
             self.assertEqual(event_key, "HEARTBEAT_20261128_AM")
             self.assertIn("심각한 지연", message)
-            self.assertIn("인스턴스 마지막 관측: RUNNING (2026-11-27", message)
+            self.assertIn("인스턴스 마지막 관측: 실행 중 (2026-11-27", message)
             self.assertIn("기존 VPS 수집 시각: 2026-11-28", message)
             self.assertIn("기존 VPS CPU: 42%", message)
             self.assertNotIn(SECRET, message)
@@ -258,6 +259,52 @@ class StatusTests(unittest.TestCase):
         record_oci_result(failed=True, path=self.result, now=started + timedelta(seconds=90),
                           unless_checked_since=started)
         self.assertEqual(self.result.read_bytes(), before_timeout)
+
+
+    def test_timer_selects_first_deadline_and_marks_monotonic_projection(self):
+        wall = NOW.timestamp()
+        real, source = timer_schedule(wall + 500, 700, wall=wall, running_clock=500)
+        self.assertEqual(datetime.fromisoformat(real), NOW + timedelta(seconds=200))
+        self.assertEqual(source, "monotonic_estimate")
+        real, source = timer_schedule(wall + 500, 700, wall=wall, running_clock=500, waking=True)
+        self.assertEqual(datetime.fromisoformat(real), NOW + timedelta(seconds=500))
+        self.assertEqual(source, "calendar")
+        self.assertEqual(timer_schedule(0, 400, wall=wall, running_clock=500), (None, None))
+        self.assertEqual(timer_schedule(0, 0, wall=wall, running_clock=500), (None, None))
+
+    def test_kst_and_binary_memory_format_keep_zero_and_unknown_distinct(self):
+        self.assertEqual(kst_time("2026-11-26T23:00:00Z"), "2026-11-27 08:00:00 KST")
+        self.assertEqual(memory(0), "0.0 MiB")
+        self.assertEqual(memory(None), "미확인")
+        self.assertEqual(memory(2 ** 30), "1.00 GiB")
+
+    def test_event_transitions_reuse_sqlite_unique_key(self):
+        before = {
+            "arm": {"shape_available": False, "meets_target": False, "free_eligibility_verified": False},
+            "provisioning": {"status": "WAITING_ELIGIBILITY"},
+            "monitor": {"last_check_failed": False},
+            "notification": {"pending_count": 1},
+        }
+        after = {
+            "arm": {"shape_available": True, "meets_target": True, "free_eligibility_verified": False},
+            "provisioning": {"status": "CAPACITY_WAIT"},
+            "monitor": {"last_check_failed": True},
+            "notification": {"pending_count": 15},
+        }
+        with sqlite3.connect(":memory:") as db:
+            db.execute("CREATE TABLE queue(event_key TEXT UNIQUE NOT NULL, message TEXT NOT NULL)")
+
+            def enqueue(key, message):
+                db.execute("INSERT OR IGNORE INTO queue VALUES(?,?)", (key, message))
+
+            enqueue_changes(before, after, enqueue)
+            enqueue_changes(before, after, enqueue)
+            rows = db.execute("SELECT message FROM queue").fetchall()
+            self.assertEqual(len(rows), 5)
+            self.assertTrue(any(title.startswith("[중요] OCI 조회 실패") for title, in rows))
+            self.assertFalse(any("Out of host capacity" in title for title, in rows))
+            enqueue_changes(after, before, enqueue)
+            self.assertTrue(db.execute("SELECT 1 FROM queue WHERE message LIKE '%OCI 조회 복구%'").fetchone())
 
 
 if __name__ == "__main__":
