@@ -150,7 +150,7 @@ export async function registerOciMonitorWeb(app, {
   app.addHook('onRequest', async (request, reply) => {
     reply.type('text/html; charset=utf-8')
       .header('content-security-policy', `default-src 'none'; style-src 'sha256-${styleHash}'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`)
-      .header('referrer-policy', 'no-referrer').header('x-frame-options', 'DENY')
+      .header('referrer-policy', 'same-origin').header('x-frame-options', 'DENY')
     if (!isMonitorHttps(request)) return reply.code(403).send(page('접근 제한', '<p>HTTPS가 필요합니다.</p>'))
     if (request.method === 'POST' && request.headers.origin !== origin) {
       return reply.code(403).send(page('접근 제한', '<p>요청 출처를 확인할 수 없습니다.</p>'))
