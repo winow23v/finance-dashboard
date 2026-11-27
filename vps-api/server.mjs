@@ -43,6 +43,22 @@ const favoriteSchema = {
   ],
 }
 
+// Node parser errors may include the raw HTTP packet, including credentials.
+function handleClientError(error, socket) {
+  if (error.code === 'ECONNRESET' || socket.destroyed) return
+  const [status, message] = error.code === 'ERR_HTTP_REQUEST_TIMEOUT' ? [408, 'Client Timeout']
+    : error.code === 'HPE_HEADER_OVERFLOW' ? [431, 'Exceeded maximum allowed HTTP header size']
+      : [400, 'Client Error']
+  const label = STATUS_CODES[status]
+  const body = JSON.stringify({ error: label, message, statusCode: status })
+  if (socket.writable) {
+    socket.end(`HTTP/1.1 ${status} ${label}\r\nContent-Length: ${Buffer.byteLength(body)}\r\n` +
+      `Content-Type: application/json\r\nConnection: close\r\n\r\n${body}`)
+  } else {
+    socket.destroy()
+  }
+}
+
 export async function buildApp({
   provider,
   localIndexResearch,
@@ -84,6 +100,7 @@ export async function buildApp({
   const privateAuthorization = getEconomyIndicators ? Buffer.from(`Bearer ${privateAccessToken}`) : null
   const app = Fastify({
     logger,
+    clientErrorHandler: handleClientError,
     logController: new LogController({ disableRequestLogging: true }),
     bodyLimit: 8192,
     ajv: { customOptions: { removeAdditional: false } },
@@ -470,6 +487,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       ociMonitorStatus: {
         token: process.env.OCI_MONITOR_READ_TOKEN,
         filename: process.env.OCI_MONITOR_STATUS_FILE,
+        ownerUid: /^\d+$/.test(process.env.OCI_MONITOR_STATUS_OWNER_UID ?? '')
+          ? Number(process.env.OCI_MONITOR_STATUS_OWNER_UID) : undefined,
       },
       providerHealth,
       memberFred: configureMemberFred(),
