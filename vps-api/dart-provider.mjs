@@ -63,7 +63,7 @@ function financialsFrom(rows, year, period, company) {
   const selected = new Map()
   const conflicts = new Set()
   for (const row of rows) {
-    if (row?.corp_code !== company.id || typeof row.stock_code !== 'string' || !/^[0-9A-Z]{6}$/.test(row.stock_code)
+    if (row?.stock_code !== company.ticker || (row.corp_code != null && row.corp_code !== company.id)
       || row.bsns_year !== year || row.reprt_code !== dartPeriods[period]) throw invalidResponse()
     if (row.sj_div !== 'IS' || !Object.hasOwn(metrics, row.account_nm)) continue
     const statement = { CFS: 'consolidated', OFS: 'separate' }[row.fs_div]

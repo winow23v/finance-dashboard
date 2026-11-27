@@ -89,7 +89,7 @@ export function createDartFinancialCollector({ root, issueFor, catalog, requestR
     }
   }
 
-  async function collectYear(corpCode, year) {
+  async function collectYear(corpCode, stockCode, year) {
     const params = { corp_code: corpCode, bsns_year: year, reprt_code: reportCode }
     let scope = 'CFS'
     let rows = await request('fnlttSinglAcntAll.json', { ...params, fs_div: scope })
@@ -109,7 +109,7 @@ export function createDartFinancialCollector({ root, issueFor, catalog, requestR
     const filing = filings.find(row => row?.rcept_no === normalized.receipt && row.corp_code === corpCode &&
       typeof row.rcept_dt === 'string' && /^\d{8}$/.test(row.rcept_dt) && dayFromReceipt(row.rcept_dt) === hint)
     const particulars = await request('fnlttSinglAcnt.json', params)
-    const fiscalEnd = dartFiscalEnd(particulars, { receipt: normalized.receipt, corpCode, year, reportCode, scope })
+    const fiscalEnd = dartFiscalEnd(particulars, { receipt: normalized.receipt, stockCode, year, reportCode, scope })
     const name = typeof filing?.report_nm === 'string' ? filing.report_nm : null
     return { ...report, collectedAt: new Date(clock()).toISOString(), status: 'available', scope, scopeReason: scope === 'CFS' ? 'consolidated' : 'consolidated-unavailable',
       fiscalEnd, receipt: { id: normalized.receipt, filedAt: filing ? dayFromReceipt(filing.rcept_dt) : null,
@@ -138,7 +138,7 @@ export function createDartFinancialCollector({ root, issueFor, catalog, requestR
         continue
       }
       try {
-        const statement = await collectYear(corpCode, year)
+        const statement = await collectYear(corpCode, symbol, year)
         await saveSnapshot(path, { version, corpCode, year, savedAt: clock(), statement })
         results.push({ ...statement, cache: 'updated' })
       } catch (error) {

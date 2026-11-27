@@ -243,7 +243,7 @@ test('DART maps the exact stock code, preserves corrections and labels consolida
     if (url.searchParams.get('reprt_code') === '11011') return new Response(null, { status: 502 })
     assert.equal(url.searchParams.get('reprt_code'), '11013')
     assert.equal(url.searchParams.get('bsns_year'), '2025')
-    const row = { corp_code: corp, stock_code: ticker, bsns_year: '2025', reprt_code: '11013',
+    const row = { stock_code: ticker, bsns_year: '2025', reprt_code: '11013',
       sj_div: 'IS', account_nm: '매출액', rcept_no: id, currency: 'KRW', thstrm_dt: '2025.01.01 ~ 2025.03.31',
       thstrm_amount: '10', thstrm_add_amount: '9007199254740993' }
     return Response.json({ status: '000', list: [

@@ -69,7 +69,7 @@ test('distinguishes missing, invalid, signed and cumulative values using the sou
   const accounts = byId(normalizeDartAccounts([
     row('ifrs-full_Revenue', '매출액', 'IS', '3', { ...context, thstrm_add_amount: '5', frmtrm_q_amount: '2', frmtrm_add_amount: '4' }),
     row('dart_OperatingIncomeLoss', '영업이익', 'IS', '10', context),
-    row('', '유형자산의 취득', 'CF', '-15', context),
+    row('', '유형자산의 취득', 'CF', '-15', { ...context, frmtrm_q_amount: '-7', frmtrm_amount: '-90' }),
     row('', '무형자산의 취득', 'CF', 'not a number', context),
   ], quarterly))
   assert.equal(accounts.revenue.basis, 'year-to-date')
@@ -77,6 +77,7 @@ test('distinguishes missing, invalid, signed and cumulative values using the sou
     ['5', '4', '3'])
   assert.equal(accounts.operatingIncome.current.status, 'missing')
   assert.equal(accounts.propertyPlantEquipmentAcquisitions.current.value, '-15')
+  assert.equal(accounts.propertyPlantEquipmentAcquisitions.previous.value, '-7')
   assert.equal(accounts.intangibleAcquisitions.current.status, 'invalid')
   assert.equal(accounts.parentNetIncome.reason, 'scope-not-applicable')
 })
@@ -114,8 +115,12 @@ test('collects three annual slots sequentially, resumes after failure, and reuse
   const requestRows = async (path, params) => {
     calls.push([path, params.bsns_year, params.fs_div])
     if (path === 'list.json') return [{ corp_code: corpCode, rcept_no: receipt, rcept_dt: '20260401', report_nm: '[기재정정]사업보고서' }]
-    if (path === 'fnlttSinglAcnt.json') return [row('ifrs-full_Assets', '자산총계', 'BS', '9',
-      { fs_div: 'CFS', thstrm_dt: '2025.12.31 현재' })]
+    if (path === 'fnlttSinglAcnt.json') return [
+      { stock_code: '999999', rcept_no: receipt, bsns_year: year, reprt_code: reportCode,
+        fs_div: 'CFS', sj_div: 'BS', thstrm_dt: '2025.09.30 현재' },
+      { stock_code: '005930', rcept_no: receipt, bsns_year: year, reprt_code: reportCode,
+        fs_div: 'CFS', sj_div: 'BS', thstrm_dt: '2025.12.31 현재' },
+    ]
     if (params.bsns_year === '2025') return [row('ifrs-full_Revenue', '매출액', 'IS', '9')]
     if (params.bsns_year === '2024' && params.fs_div === 'OFS') {
       if (failed) throw new ProviderError(503, 'DART_PROVIDER_LIMITED')

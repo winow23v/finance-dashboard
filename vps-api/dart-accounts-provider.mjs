@@ -46,7 +46,7 @@ function periodAmounts(row, period) {
     basis: 'year-to-date',
     current: accumulated(row.thstrm_add_amount, row.thstrm_amount),
     previous: comparable
-      ? accumulated(row.frmtrm_add_amount, income ? row.frmtrm_q_amount : undefined)
+      ? accumulated(row.frmtrm_add_amount, row.frmtrm_q_amount)
       : missing('period-not-comparable'),
     ...(income && { reportedQuarter: { current: amount(row.thstrm_amount), previous: amount(row.frmtrm_q_amount) } }),
   }
@@ -116,9 +116,9 @@ export function normalizeDartAccounts(rows, { corpCode, year, period, reportCode
     rowCount: current.length, earlierReceipts: [...receipts].filter(id => id !== receipt).sort() }
 }
 
-export function dartFiscalEnd(rows, { receipt, corpCode, year, reportCode, scope }) {
+export function dartFiscalEnd(rows, { receipt, stockCode, year, reportCode, scope }) {
   const dates = new Set(rows.flatMap(row => {
-    if (row?.rcept_no !== receipt || row.corp_code !== corpCode || row.bsns_year !== year ||
+    if (row?.rcept_no !== receipt || row.stock_code !== stockCode || row.bsns_year !== year ||
         row.reprt_code !== reportCode || row.fs_div !== scope || row.sj_div !== 'BS' || typeof row.thstrm_dt !== 'string') return []
     const date = /^\s*(\d{4}[.-]\d{2}[.-]\d{2})(?:\s*현재)?\s*$/.exec(row.thstrm_dt)?.[1].replaceAll('.', '-')
     return isDay(date) ? [date] : []
