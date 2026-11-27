@@ -44,6 +44,14 @@ test('warmup windows hold unavailable values back', () => {
   assert.equal(calculateTechnicalIndicators(history(ramp(199))).sma[200], null)
 })
 
+test('a contiguous KRX segment keeps RSI available when the requested history is incomplete', () => {
+  const response = { history: { ...history(ramp(15)), currency: 'KRW', adjustment: 'unadjusted' },
+    coverage: { requestedSessions: 500, requestedPeriodComplete: false } }
+  const result = calculateTechnicalIndicators(response.history)
+  assert.equal(result.rsi14, 100)
+  assert.equal(result.sma[365], null)
+})
+
 test('RSI handles flat and falling markets; Wilder updates use true price gaps', () => {
   assert.equal(calculateTechnicalIndicators(history(Array(15).fill(100))).rsi14, 50)
   assert.equal(calculateTechnicalIndicators(history(ramp(15).reverse())).rsi14, 0)

@@ -101,16 +101,35 @@ function value(raw) {
   return Number.isFinite(number) && Math.abs(number) <= Number.MAX_SAFE_INTEGER ? number : null
 }
 
+function nonnegativeInteger(raw) {
+  if (typeof raw !== 'string' || !/^\+?(?:\d+|\d{1,3}(?:,\d{3})+)$/.test(raw.trim())) return null
+  const number = value(raw)
+  return validTradeValue(number) ? number : null
+}
+
+function validTradeValue(number) {
+  return Number.isSafeInteger(number) && number >= 0
+}
+
+function tradeValues({ turnover, marketCap, listedShares }) {
+  return {
+    turnover: validTradeValue(turnover) ? turnover : null,
+    marketCap: validTradeValue(marketCap) ? marketCap : null,
+    listedShares: validTradeValue(listedShares) ? listedShares : null,
+  }
+}
+
 function observation(row, date, index) {
   if (isoDay(row?.BAS_DD) !== date) return null
   const price = value(index ? row.CLSPRC_IDX : row.TDD_CLSPRC)
-  if (price === null || price <= 0) return null
+  const volume = index ? value(row.ACC_TRDVOL) : nonnegativeInteger(row.ACC_TRDVOL)
+  if ((price === null || price <= 0) && (index || volume !== 0)) return null
   return {
     price, change: value(index ? row.CMPPREVDD_IDX : row.CMPPREVDD_PRC), changePercent: value(row.FLUC_RT),
     open: value(index ? row.OPNPRC_IDX : row.TDD_OPNPRC), high: value(index ? row.HGPRC_IDX : row.TDD_HGPRC),
-    low: value(index ? row.LWPRC_IDX : row.TDD_LWPRC), volume: value(row.ACC_TRDVOL),
-    turnover: value(row.ACC_TRDVAL), marketCap: value(row.MKTCAP),
-    ...(index ? {} : { listedShares: value(row.LIST_SHRS) }),
+    low: value(index ? row.LWPRC_IDX : row.TDD_LWPRC), volume,
+    turnover: nonnegativeInteger(row.ACC_TRDVAL), marketCap: nonnegativeInteger(row.MKTCAP),
+    ...(index ? {} : { listedShares: nonnegativeInteger(row.LIST_SHRS) }),
     tradingDate: date, observedAt: date, source,
   }
 }
@@ -150,7 +169,7 @@ function stockObservation(market, current, trade, catalog, prior, date) {
   const listing = trade && tradeListing(trade, date, current, catalog.data?.date, prior, catalog.previousData?.date)
   if (listing) {
     if (current && listing !== current) return { listing: current, quote: null }
-    return { listing, quote: trade }
+    return { listing, quote: trade.price > 0 ? { ...trade, ...tradeValues(trade) } : null }
   }
   // Keep the current listing addressable when older trades belong to another issue.
   if (current && (catalog.data.date >= date || !trade || shortCode(trade.name) === trade.symbol || !trade.name)) {
@@ -158,7 +177,7 @@ function stockObservation(market, current, trade, catalog, prior, date) {
   }
   if (!trade) return { listing: current, quote: null }
   return { listing: { market, symbol: trade.symbol, name: listingDisplayName(trade.symbol, null, trade.name),
-    fullName: nameText(trade.name), englishName: '', shareClass: '', listedOn: null }, quote: trade }
+    fullName: nameText(trade.name), englishName: '', shareClass: '', listedOn: null }, quote: trade.price > 0 ? { ...trade, ...tradeValues(trade) } : null }
 }
 
 function normalize(path, rows, date) {
@@ -200,6 +219,7 @@ export function createKrxProvider({
   key = process.env.KRX_API_KEY,
   root = fileURLToPath(new URL('.krx-cache/', import.meta.url)),
   fetchImpl = fetchKrx, retryDelays = [2_000, 5_000], timeouts = defaultTimeouts, clock = Date.now, scheduledOnly = false, calendar = createKrxCalendar(),
+  readHistoryFile = readFile,
   log = scheduledOnly ? entry => console.info(JSON.stringify(entry)) : () => {},
 } = {}) {
   const ledgerFile = join(root, 'krx-request-budget.json')
@@ -369,7 +389,8 @@ export function createKrxProvider({
           if (code === error.code) throw error
           throw new ProviderError(502, code)
         } finally {
-          const entry = { at, date, attempt: retry + 1, httpStatus, timeoutMs, timings, elapsedMs: Math.round(performance.now() - start), code }
+          const entry = { at, date, attempt: retry + 1, httpStatus, timeoutMs, timings, elapsedMs: Math.round(performance.now() - start), code,
+            ...(code === 'PROVIDER_TIMEOUT' && { timeoutStage: httpStatus === null ? 'before-headers' : 'body' }) }
           requests?.push(entry)
           log({ event: 'krx-request', endpoint: path, ...entry })
         }
@@ -400,8 +421,22 @@ export function createKrxProvider({
   }
 
   const historyFile = (market, date) => join(root, 'ohlcv-' + market + '-' + date + '.json')
+  const pendingHistoryReads = new Map()
+  const maxSharedHistoryReads = 8
+
   async function readHistory(market, date) {
-    const stored = await readFile(historyFile(market, date), 'utf8').then(JSON.parse).catch(() => null)
+    const path = historyFile(market, date)
+    while (!pendingHistoryReads.has(path) && pendingHistoryReads.size >= maxSharedHistoryReads) {
+      await Promise.race(pendingHistoryReads.values())
+    }
+    if (!pendingHistoryReads.has(path)) {
+      pendingHistoryReads.set(path, readHistoryDay(path, date).finally(() => pendingHistoryReads.delete(path)))
+    }
+    return pendingHistoryReads.get(path)
+  }
+
+  async function readHistoryDay(path, date) {
+    const stored = await readHistoryFile(path, 'utf8').then(JSON.parse).catch(() => null)
     if (stored?.date !== date || !Array.isArray(stored.rows) ||
         (stored.noTrades !== undefined && (!Array.isArray(stored.noTrades) ||
           !stored.noTrades.every(code => typeof code === 'string' && codePattern.test(code))))) return null
@@ -413,14 +448,23 @@ export function createKrxProvider({
           !toBar({ symbol, open, high, low, price, volume })) return null
       symbols.add(symbol)
     }
+    const tradeData = stored.tradeData
+    if (tradeData !== undefined && (!tradeData || typeof tradeData !== 'object' || Array.isArray(tradeData) ||
+      !Object.entries(tradeData).every(([symbol, values]) => codePattern.test(symbol) &&
+        Array.isArray(values) && values.length === 3 && values.every(number => number === null || validTradeValue(number))))) return null
     return stored
   }
 
   async function saveHistory(market, date, rows) {
     const bars = rows.map(toBar).filter(Boolean)
-    if (rows.length && !bars.length) throw new ProviderError(502, 'KRX_INVALID_OBSERVATIONS')
     const noTrades = rows.filter(row => row.volume === 0).map(row => row.symbol)
-    const stored = await save(historyFile(market, date), { date, rows: bars, noTrades })
+    if (rows.length && !bars.length && !noTrades.length) throw new ProviderError(502, 'KRX_INVALID_OBSERVATIONS')
+    // Keep six-column OHLCV rows readable by existing releases and the importer.
+    const tradeData = Object.fromEntries(rows.map(row => {
+      const { turnover, marketCap, listedShares } = tradeValues(row)
+      return [row.symbol, [turnover, marketCap, listedShares]]
+    }).filter(([, values]) => values.some(validTradeValue)))
+    const stored = await save(historyFile(market, date), { date, rows: bars, noTrades, tradeData })
     if (!stored) throw new ProviderError(503, 'KRX_HISTORY_CACHE_FAILED')
   }
 
@@ -564,7 +608,10 @@ export function createKrxProvider({
       const prior = catalog.previousData?.rows.find(row => row.symbol === symbol)
       const trades = await load(endpoint[market].trades, target)
       const trade = trades.data?.rows.find(row => row.symbol === symbol)
-      return { trades, ...stockObservation(market, listing, trade, catalog, prior, trades.data?.date) }
+      const observation = stockObservation(market, listing, trade, catalog, prior, trades.data?.date)
+      const noTrade = trade?.volume === 0 && (observation.quote !== null ||
+        Boolean(tradeListing(trade, trades.data.date, listing, catalog.data?.date, prior, catalog.previousData?.date)))
+      return { trades, ...observation, noTrade }
     }))).filter(result => result.listing)
     if (matches.length !== 1) {
       if (catalogs.some(state => !state.data)) {
@@ -574,36 +621,66 @@ export function createKrxProvider({
       }
       return null
     }
-    const [{ listing, trades, quote: latestQuote }] = matches
+    const [{ listing, trades, quote: latestQuote, noTrade: latestNoTrade }] = matches
     const { market, listedOn, fullName, shareClass } = listing
     const latest = trades.data ?? null
     const latestDate = latest?.date ?? null
     const bars = []
     let stoppedAt = null
     let stoppedReason = null
+    let shortfallReason = null
+    const { reason, errorCode, lastAttemptAt, usingPreviousClose } = metadata(trades, target)
+    const isLatest = latestDate === target.date && Boolean(latestQuote && toBar(latestQuote))
+    const latestStatus = isLatest ? 'current'
+      : errorCode === 'PROVIDER_TIMEOUT' ? 'provider-timeout'
+        : ['KRX_HISTORY_CACHE_FAILED', 'KRX_REGULAR_CACHE_FAILED'].includes(errorCode) ? 'cache-write-failed'
+          : errorCode ? 'provider-error' : latestQuote ? 'stale' : 'unavailable'
     for (const date of latestDate ? tradingCandidates(latestDate, historyClosed) : []) {
       if (bars.length >= historySessions) break
-      if (date < (listedOn ?? latestDate) || (date === latestDate && !latestQuote)) break
-      const cached = date === latestDate
-        ? { rows: latest.rows.map(toBar).filter(Boolean) }
-        : await readHistory(market, date)
-      if (date !== latestDate && cached?.rows.length === 0) continue
-      const row = cached?.rows.find(([code]) => code === symbol)
+      if (listedOn && date < listedOn) {
+        shortfallReason = 'listed-recently'
+        break
+      }
+      if (date !== latestDate && !listedOn) {
+        shortfallReason = 'listing-date-unavailable'
+        break
+      }
+      const cached = date === latestDate ? null : await readHistory(market, date)
+      // Historical imports use an empty market file as a non-session marker.
+      // Within the scheduled calendar's coverage, trust its session dates.
+      if (cached?.rows.length === 0 && !cached.noTrades?.length && (!scheduledOnly || !calendar.known(date))) continue
+      const row = date === latestDate ? latestQuote && toBar(latestQuote)
+        : cached?.rows.find(([code]) => code === symbol)
       if (!row) {
         stoppedAt = date
-        stoppedReason = cached ? 'missing-observation' : 'not-collected'
+        const noTrade = date === latestDate ? latestNoTrade : cached?.noTrades?.includes(symbol)
+        stoppedReason = date === latestDate || cached ? 'missing-observation' : 'not-collected'
+        shortfallReason = noTrade ? 'no-trade' : stoppedReason
         break
       }
       const [, open, high, low, close, volume] = row
-      bars.push({ tradingDate: date, open, high, low, close, volume })
+      const [turnover = null, marketCap = null, listedShares = null] = cached?.tradeData?.[symbol] ?? []
+      const values = date === latestDate ? tradeValues(latestQuote) : { turnover, marketCap, listedShares }
+      bars.push({ tradingDate: date, open, high, low, close, volume, ...values })
     }
-    const { reason, errorCode, lastAttemptAt, usingPreviousClose } = metadata(trades, target)
+    const firstDate = bars.at(-1)?.tradingDate ?? null
+    const lastDate = bars[0]?.tradingDate ?? null
+    const coverage = {
+      requestedSessions: historySessions, availableSessions: bars.length, firstDate, lastDate,
+      contiguous: bars.length > 0, requestedPeriodComplete: isLatest && bars.length === historySessions,
+      shortfallReason, targetDate: target.date, isLatest, latestStatus,
+      marketClosed: calendar.closed(target.today ?? day(clock() + koreanOffset)),
+    }
     return { symbol, name: listingDisplayName(symbol, listing), fullName, shareClass, market, source,
+      identity: { symbol, market, shareClass, isin: /^KR[A-Z0-9]{10}$/.test(listing.isin ?? '') ? listing.isin : null,
+        tradingDate: latestQuote?.tradingDate ?? null },
       quote: latestQuote, reason, errorCode,
       latestDate, collectedAt: latest?.collectedAt ?? null, lastAttemptAt, usingPreviousClose, stoppedAt, stoppedReason,
+      coverage,
       afterHours: afterHours(target),
+      // Legacy completeness describes only the returned contiguous segment.
       history: { currency: 'KRW', timeZone: 'Asia/Seoul', adjustment: 'unadjusted',
-        completeness: bars.length ? 'complete' : 'missing-observations', bars: bars.reverse() } }
+        completeness: coverage.contiguous ? 'complete' : 'missing-observations', bars: bars.reverse() } }
   }
 
   function checkBatch(limit) {
@@ -830,7 +907,7 @@ export function createKrxProvider({
       let named = 0
       let sameDateNameConflicts = 0
       const result = eligible.map(trade => {
-        const { symbol, name: rawName, price, changePercent, volume, turnover, marketCap } = trade
+        const { symbol, name: rawName, price, changePercent, volume } = trade
         const candidate = current.get(symbol)
         const prior = previous.get(symbol)
         const listing = tradeListing(trade, date, candidate, data?.date, prior, previousData?.date)
@@ -840,7 +917,7 @@ export function createKrxProvider({
             rawName !== symbol && !tradeNameMatches(candidate, trade)) sameDateNameConflicts++
         if (name !== symbol) named++
         return { symbol, name, shortName: name, rawName, fullName: listing?.fullName, shareClass: listing?.shareClass,
-          mapped: Boolean(listing), market, price, changePercent, volume, turnover: turnover ?? null, marketCap }
+          mapped: Boolean(listing), market, price, changePercent, volume, ...tradeValues(trade) }
       })
       const signature = JSON.stringify([date, state.data.collectedAt, data?.date, data?.collectedAt, previousData?.date])
       if (mappingReported.get(market) !== signature) {

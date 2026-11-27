@@ -24,6 +24,23 @@ const historyStop = {
   'missing-observation': '종목 유효 관측 없음',
 }
 
+const historyShortfall = {
+  'listed-recently': '신규 상장으로 이력 부족',
+  'listing-date-unavailable': '상장일 미확인',
+  'no-trade': '거래량 0 (거래정지 여부 미확인)',
+  'missing-observation': '종목 유효 관측 없음',
+  'not-collected': '시장 일봉 미수집',
+}
+
+const historyFreshness = {
+  current: '',
+  'provider-timeout': '공급자 응답 시간 초과',
+  'cache-write-failed': '시세 저장 실패',
+  'provider-error': '공급자 응답 오류',
+  stale: '이전 시세 사용 중',
+  unavailable: '최신 시세 확인 불가',
+}
+
 export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: { symbol: string; actions: ReactNode; refresh?: number; onRefreshResult?: (key: string, failed: boolean) => void }) {
   const [result, setResult] = useState<{ data: Analysis } | { message: string }>()
   const [listing, setListing] = useState<{ symbol: string; data: KrxStocks }>()
@@ -142,7 +159,13 @@ export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: {
             ]} />
           </section>
           <StockDisclosures key={symbol} symbol={symbol} />
-          {data.stoppedAt && data.stoppedReason && <small>{data.stoppedAt} 및 이전 제외 · {historyStop[data.stoppedReason]}</small>}
+          {data.coverage ? <p className="heatmap-meta">
+            일봉 {data.coverage.availableSessions} / {data.coverage.requestedSessions}거래일
+            {data.coverage.shortfallReason && ' · ' + historyShortfall[data.coverage.shortfallReason]}
+            {data.stoppedAt && ' · 중단일 ' + data.stoppedAt}
+            {!data.coverage.isLatest && ' · ' + historyFreshness[data.coverage.latestStatus]}
+          </p> : data.stoppedAt && data.stoppedReason &&
+            <small>{data.stoppedAt} 및 이전 제외 · {historyStop[data.stoppedReason]}</small>}
         </>}
   </section>
 }

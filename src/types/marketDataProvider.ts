@@ -46,6 +46,9 @@ export interface DailyOhlcvBar {
   low: number
   close: number
   volume: number
+  turnover?: number | null
+  marketCap?: number | null
+  listedShares?: number | null
 }
 
 export interface MarketDailyHistory {
