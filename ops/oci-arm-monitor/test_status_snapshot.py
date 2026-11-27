@@ -88,7 +88,7 @@ class StatusTests(unittest.TestCase):
         pm = NOW + timedelta(hours=11)
         before_am = NOW + timedelta(hours=22)
         for now in (am, am, pm, before_am):
-            queue_report(enqueue, path=self.path, now=now)
+            queue_report(enqueue, path=self.path, now=now, host_reader=lambda: {})
         rows = connection.execute("SELECT event_key, message FROM notifications ORDER BY event_key").fetchall()
         self.assertEqual([key for key, _ in rows], ["HEARTBEAT_20261127_AM", "HEARTBEAT_20261127_PM"])
         self.assertEqual(report_key(before_am), report_key(pm))
@@ -106,7 +106,7 @@ class StatusTests(unittest.TestCase):
                 raise sqlite3.OperationalError("test")
 
             with self.assertRaises(sqlite3.OperationalError):
-                queue_report(enqueue, path=self.path, now=NOW)
+                queue_report(enqueue, path=self.path, now=NOW, host_reader=lambda: {})
             output.assert_not_called()
 
 
@@ -168,6 +168,39 @@ class StatusTests(unittest.TestCase):
         status = self.operational_snapshot(root, observation)["provisioning"]
         self.assertEqual(status["instance_lifecycle_state"], "RUNNING")
         self.assertNotIn(SECRET, self.path.read_text())
+
+
+    def test_completed_heartbeat_rechecks_host_and_labels_past_instance_observation(self):
+        root, state = self.operational_files(status="COMPLETED")
+        record_operational_oci_result(state, failed=False, root=root, path=self.result, now=NOW)
+        self.operational_snapshot(root, {
+            "instance_id": SECRET, "lifecycle_state": "RUNNING", "observed_at": NOW,
+        })
+        now = NOW + timedelta(days=1)
+        previous = self.path.read_bytes()
+
+        def enqueue(event_key, message, root=root):
+            self.assertEqual(event_key, "HEARTBEAT_20261128_AM")
+            self.assertIn("심각한 지연", message)
+            self.assertIn("인스턴스 마지막 관측: RUNNING (2026-11-27", message)
+            self.assertIn("기존 VPS 수집 시각: 2026-11-28", message)
+            self.assertIn("기존 VPS CPU: 42%", message)
+            self.assertNotIn(SECRET, message)
+
+        queue_report(enqueue, path=self.path, now=now, host_reader=lambda: {
+            "sampled_at": now, "cpu_usage_percent": 42,
+        })
+        self.assertEqual(self.path.read_bytes(), previous)
+
+    def test_host_sampling_failure_does_not_hide_missing_monitor_snapshot(self):
+        def host_reader():
+            raise OSError("test")
+
+        def enqueue(event_key, message, root=self.path.parent):
+            self.assertIn("스냅샷 없음 또는 손상", message)
+            self.assertIn("기존 VPS 상태: 수집 실패", message)
+
+        queue_report(enqueue, path=self.path, now=NOW, host_reader=host_reader)
 
 
 if __name__ == "__main__":
