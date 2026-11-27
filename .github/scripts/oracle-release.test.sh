@@ -9,7 +9,7 @@ fixture=$(mktemp -d)
 trap 'rm -rf -- "$fixture"' EXIT
 
 required=(
-  server.mjs market-cache.mjs krx-backfill.mjs package.json package-lock.json
+  server.mjs market-cache.mjs krx-backfill.mjs oci-monitor-status-provider.mjs package.json package-lock.json
   membership-provider.mjs market-index-provider.mjs krx-provider.mjs krx-calendar-provider.mjs us-market-provider.mjs
   fred-provider.mjs ecos-provider.mjs dart-provider.mjs fx-provider.mjs public-provider.mjs
 )
@@ -25,7 +25,7 @@ excluded=(sec-provider.mjs krx-backfill-extra.mjs api.env .env)
 for file in "${required[@]}" "${ship_tests[@]}" "${excluded[@]}"; do
   touch "$fixture/sender/vps-api/$file"
 done
-for file in krx-backfill.mjs krx-provider.mjs krx-calendar-provider.mjs public-provider.mjs; do
+for file in krx-backfill.mjs krx-provider.mjs krx-calendar-provider.mjs public-provider.mjs oci-monitor-status-provider.mjs; do
   cp -- "$repo/vps-api/$file" "$fixture/sender/vps-api/$file"
 done
 mkdir "$fixture/sender/vps-api/.krx-cache"
@@ -90,6 +90,7 @@ api="$api" release="$release" work="$work" bash -euc "$install_candidate"
 [[ ! -e $release/api/krx-backfill.mjs ]]
 mv -- "$fixture/krx-backfill.mjs" "$work/krx-backfill.mjs"
 api="$api" release="$release" work="$work" bash -euc "$install_candidate"
+cmp -s "$repo/vps-api/oci-monitor-status-provider.mjs" "$release/api/oci-monitor-status-provider.mjs"
 cli="$release/api/krx-backfill.mjs"
 cmp -s "$work/krx-backfill.mjs" "$cli"
 [[ $(stat -c '%a:%u:%g' "$cli") == "644:$(stat -c '%u:%g' "$api")" ]]
