@@ -1,3 +1,4 @@
+import { createFundamentalsProvider } from './fundamentals-provider.mjs'
 import { registerOciMonitorWeb } from './oci-monitor-web-provider.mjs'
 import { registerOciMonitorStatus } from './oci-monitor-status-provider.mjs'
 import { createProviderHealth } from './health-provider.mjs'
@@ -325,6 +326,28 @@ export async function buildApp({
         properties: { symbol: { type: 'string', pattern: '^[0-9A-Z]{6}$' } },
       } },
     }, request => dart.collectFinancials(request.params.symbol))
+  }
+
+  if (membership && dart.collectFinancials?.readCached && memberKrx?.cachedMarketObservation) {
+    const fundamentals = createFundamentalsProvider({
+      readFinancials: dart.collectFinancials.readCached,
+      async readMarket(symbol) {
+        const issue = await memberKrx.cachedIssue(symbol)
+        const observation = issue ? await memberKrx.cachedMarketObservation(issue) : null
+        // Neither the current KRX catalog nor the DART exact-code match proves
+        // the complete issuer issue set. Never certify this single observation.
+        return { currency: 'KRW', coverage: { status: 'unverified' }, issues: observation ? [observation] : [] }
+      },
+    })
+    app.get('/api/v1/financials/kr/:symbol/fundamentals', {
+      config: { access: 'admin' },
+      schema: {
+        params: { type: 'object', additionalProperties: false, required: ['symbol'],
+          properties: { symbol: { type: 'string', pattern: '^[0-9A-Z]{6}$' } } },
+        querystring: { type: 'object', additionalProperties: false,
+          properties: { asOf: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' } } },
+      },
+    }, request => fundamentals(request.params.symbol, request.query.asOf))
   }
 
   app.get('/api/v1/market/snapshot', {

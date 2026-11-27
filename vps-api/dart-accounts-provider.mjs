@@ -12,6 +12,7 @@ const accounts = {
   parentEquity: ['BS', ['ifrs-full_EquityAttributableToOwnersOfParent', 'ifrs_EquityAttributableToOwnersOfParent'],
     ['지배기업 소유주지분', '지배기업 소유주 귀속 자본', '지배기업의 소유주에게 귀속되는 자본']],
   openingParentEquity: ['SCE', ['dart_EquityAtBeginningOfPeriod'], ['기초자본', '기초 자본']],
+  openingEquity: ['SCE', ['dart_EquityAtBeginningOfPeriod'], ['기초자본', '기초 자본']],
   operatingCashFlow: ['CF', ['ifrs-full_CashFlowsFromUsedInOperatingActivities', 'ifrs_CashFlowsFromUsedInOperatingActivities'],
     ['영업활동현금흐름', '영업활동으로 인한 현금흐름']],
   propertyPlantEquipmentAcquisitions: ['CF', ['ifrs-full_PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities',
@@ -52,10 +53,10 @@ function periodAmounts(row, period) {
   }
 }
 
-function classify(row, [statement, ids, aliases]) {
+function classify(row, [statement, ids, aliases], id) {
   if (row.sj_div !== statement && !(statement === 'IS' && row.sj_div === 'CIS')) return 0
   const detail = compact(row.account_detail ?? '')
-  if (statement === 'SCE' ? detail !== parentMember : detail && detail !== '-') return 0
+  if (statement === 'SCE' ? detail !== (id === 'openingEquity' ? '자본[member]' : parentMember) : detail && detail !== '-') return 0
   const sectionRank = row.sj_div === 'CIS' ? 0 : 1
   if (ids.includes(row.account_id)) return 4 + sectionRank
   if (standardIds.has(row.account_id) || /^ifrs(?:-full)?_/.test(row.account_id)) return 0
@@ -68,12 +69,13 @@ function normalizedAccount(id, rule, rows, period, scope) {
   const empty = { id, statement: rule[0], basis, original: null, mapping: null, currency: null, unit: null }
   const unavailable = reason => ({ ...empty, quality: reason === 'not-provided' ? 'missing' : 'invalid',
     reason, current: missing(reason), previous: missing(reason) })
+  if (scope === 'CFS' && id === 'openingEquity') return unavailable('scope-not-applicable')
   if (scope === 'OFS' && ['parentNetIncome', 'parentEquity', 'openingParentEquity'].includes(id))
     return unavailable('scope-not-applicable')
   let rank = 0
   let candidates = []
   for (const row of rows) {
-    const scored = classify(row, rule)
+    const scored = classify(row, rule, id)
     if (!scored || scored < rank) continue
     if (scored > rank) candidates = []
     rank = scored
@@ -116,12 +118,28 @@ export function normalizeDartAccounts(rows, { corpCode, year, period, reportCode
     rowCount: current.length, earlierReceipts: [...receipts].filter(id => id !== receipt).sort() }
 }
 
-export function dartFiscalEnd(rows, { receipt, stockCode, year, reportCode, scope }) {
-  const dates = new Set(rows.flatMap(row => {
-    if (row?.rcept_no !== receipt || row.stock_code !== stockCode || row.bsns_year !== year ||
-        row.reprt_code !== reportCode || row.fs_div !== scope || row.sj_div !== 'BS' || typeof row.thstrm_dt !== 'string') return []
+export function dartFiscalDates(rows, { receipt, stockCode, year, reportCode, scope }) {
+  const matches = rows.filter(row => row?.rcept_no === receipt && row.stock_code === stockCode &&
+    row.bsns_year === year && row.reprt_code === reportCode && row.fs_div === scope)
+  const dates = new Set(matches.flatMap(row => {
+    if (row.sj_div !== 'BS' || typeof row.thstrm_dt !== 'string') return []
     const date = /^\s*(\d{4}[.-]\d{2}[.-]\d{2})(?:\s*현재)?\s*$/.exec(row.thstrm_dt)?.[1].replaceAll('.', '-')
     return isDay(date) ? [date] : []
   }))
-  return dates.size === 1 ? [...dates][0] : null
+  const fiscalEnd = dates.size === 1 ? [...dates][0] : null
+  const bounds = raw => {
+    if (typeof raw !== 'string') return null
+    const matched = /^\s*(\d{4}[.-]\d{2}[.-]\d{2})\s*[~～]\s*(\d{4}[.-]\d{2}[.-]\d{2})\s*$/.exec(raw)
+    if (!matched) return null
+    const [start, end] = matched.slice(1).map(date => date.replaceAll('.', '-'))
+    return isDay(start) && isDay(end) && start <= end ? { start, end } : null
+  }
+  const periods = new Set()
+  for (const row of matches) {
+    if (row.sj_div !== 'IS') continue
+    const current = bounds(row.thstrm_dt)
+    const previous = bounds(row.frmtrm_dt)
+    if (current && previous) periods.add(JSON.stringify({ current, previous }))
+  }
+  return { fiscalEnd, incomePeriod: periods.size === 1 ? JSON.parse([...periods][0]) : null }
 }
