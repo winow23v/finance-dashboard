@@ -7,6 +7,7 @@ import test from 'node:test'
 import { buildApp } from './server.mjs'
 
 const origin = 'https://winow.duckdns.org'
+const rejectedOrigins = ['https://wrong.example', 'null', null]
 const username = 'pickle-monitor'
 const password = 'local-test-fixture-password'
 const salt = Buffer.alloc(16, 7)
@@ -29,8 +30,9 @@ async function fixture(t, overrides = {}) {
   const call = (url, options = {}) => app.inject({ ...options, url, headers: {
     'x-forwarded-proto': 'https', ...options.headers,
   } })
-  const form = (url, data, jar, extra = {}) => call(url, { method: 'POST',
-    headers: { origin, cookie: jar, 'content-type': 'application/x-www-form-urlencoded', ...extra },
+  const form = (url, data, jar, requestOrigin = origin) => call(url, { method: 'POST',
+    headers: { ...(requestOrigin === null ? {} : { origin: requestOrigin }), cookie: jar,
+      'sec-fetch-site': 'same-origin', 'content-type': 'application/x-www-form-urlencoded' },
     payload: new URLSearchParams(data).toString(),
   })
   const login = async () => {
@@ -56,11 +58,13 @@ function snapshot(ageMinutes) {
 test('standard login, isolated session, stale status and logout', async t => {
   const { call, form, login, filename } = await fixture(t)
   const unauth = await call('/monitor/status')
+  assert.equal(unauth.statusCode, 303)
   assert.equal(unauth.headers.location, '/monitor/login')
   const page = await call('/monitor/login')
   assert.match(page.body, /autocomplete="username".*required/)
   assert.match(page.body, /type="password" autocomplete="current-password"/)
   assert.equal(page.headers['cache-control'], 'no-store')
+  assert.equal(page.headers['referrer-policy'], 'same-origin')
   assert.match(page.headers['content-security-policy'], /frame-ancestors 'none'/)
   assert.equal((await call('/monitor/login', { headers: { 'x-forwarded-proto': 'http' } })).statusCode, 403)
   const signed = await login()
@@ -75,6 +79,7 @@ test('standard login, isolated session, stale status and logout', async t => {
   await writeFile(filename, JSON.stringify(snapshot(80)), { mode: 0o640 })
   const view = await call('/monitor/status', auth)
   assert.equal(view.statusCode, 200)
+  assert.equal(view.headers['referrer-policy'], 'same-origin')
   assert.match(view.body, /stale/)
   assert.match(view.body, /0 MiB/)
   assert.match(view.body, /1.00 GiB/)
@@ -82,9 +87,13 @@ test('standard login, isolated session, stale status and logout', async t => {
   assert.doesNotMatch(view.body, /script|secret-topic|secret-code/)
   assert.equal((await call('/api/v1/watchlist', auth)).statusCode, 401)
   assert.notEqual((await call('/api/v1/monitor/oci/status', auth)).statusCode, 200)
-  assert.equal((await form('/monitor/logout', { csrf: csrf(view.body) }, jar, { origin: 'https://wrong.example' })).statusCode, 403)
+  for (const invalid of rejectedOrigins) {
+    assert.equal((await form('/monitor/logout', { csrf: csrf(view.body) }, jar, invalid)).statusCode, 403)
+  }
   assert.equal((await form('/monitor/logout', { csrf: 'a'.repeat(64) }, jar)).statusCode, 403)
-  assert.equal((await form('/monitor/logout', { csrf: csrf(view.body) }, jar)).headers.location, '/monitor/login')
+  const logout = await form('/monitor/logout', { csrf: csrf(view.body) }, jar)
+  assert.equal(logout.statusCode, 303)
+  assert.equal(logout.headers.location, '/monitor/login')
   assert.equal((await call('/monitor/status', auth)).headers.location, '/monitor/login')
 })
 
@@ -93,7 +102,9 @@ test('login rejects origins, challenge mismatches and excessive failures', async
   const page = await call('/monitor/login')
   const jar = cookie(page, 'csrf')
   const correct = { username, password, csrf: csrf(page.body) }
-  assert.equal((await form('/monitor/login', correct, jar, { origin: 'https://wrong.example' })).statusCode, 403)
+  for (const invalid of rejectedOrigins) {
+    assert.equal((await form('/monitor/login', correct, jar, invalid)).statusCode, 403)
+  }
   assert.equal((await form('/monitor/login', { ...correct, csrf: 'a'.repeat(64) }, jar)).statusCode, 403)
   const wrong = { ...correct, password: 'wrong' }
   for (let i = 0; i < 5; i++) assert.equal((await form('/monitor/login', wrong, jar)).statusCode, 401)
