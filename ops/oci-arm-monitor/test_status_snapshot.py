@@ -1,17 +1,22 @@
 import json
 import sqlite3
+import subprocess
+import sys
 import stat
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from threading import Event
 from unittest.mock import patch
 
-from heartbeat import queue_report, report_key
+from heartbeat import kst_time, memory, queue_report, report_key
+from monitor_events import capture_events, deliver_events, event_store_path
 from prepare_operational_hooks import prepare
 from status_snapshot import (
     PROVISION_STATES, atomic_json, read_notification_status, record_oci_result, record_operational_oci_result,
-    write_operational_snapshot, write_snapshot,
+    retry_snapshot_events, timer_schedule, write_operational_snapshot, write_snapshot,
 )
 
 NOW = datetime(2026, 11, 27, 0, tzinfo=timezone.utc)
@@ -93,7 +98,7 @@ class StatusTests(unittest.TestCase):
         rows = connection.execute("SELECT event_key, message FROM notifications ORDER BY event_key").fetchall()
         self.assertEqual([key for key, _ in rows], ["HEARTBEAT_20261127_AM", "HEARTBEAT_20261127_PM"])
         self.assertEqual(report_key(before_am), report_key(pm))
-        self.assertTrue(rows[0][1].startswith("OCI ARM 상태 보고\n"))
+        self.assertTrue(rows[0][1].startswith("[OCI ARM 정기 상태 보고]\n"))
         self.assertIn("최근 조회", rows[0][1])
         self.assertIn("심각한 지연", rows[1][1])
         self.assertNotIn(SECRET, str(rows))
@@ -183,7 +188,7 @@ class StatusTests(unittest.TestCase):
         def enqueue(event_key, message, root=root):
             self.assertEqual(event_key, "HEARTBEAT_20261128_AM")
             self.assertIn("심각한 지연", message)
-            self.assertIn("인스턴스 마지막 관측: RUNNING (2026-11-27", message)
+            self.assertIn("인스턴스 마지막 관측: 실행 중 (2026-11-27", message)
             self.assertIn("기존 VPS 수집 시각: 2026-11-28", message)
             self.assertIn("기존 VPS CPU: 42%", message)
             self.assertNotIn(SECRET, message)
@@ -258,6 +263,184 @@ class StatusTests(unittest.TestCase):
         record_oci_result(failed=True, path=self.result, now=started + timedelta(seconds=90),
                           unless_checked_since=started)
         self.assertEqual(self.result.read_bytes(), before_timeout)
+
+
+    def test_timer_selects_first_deadline_and_marks_monotonic_projection(self):
+        wall = NOW.timestamp()
+        real, source = timer_schedule(wall + 500, 700, wall=wall, running_clock=500)
+        self.assertEqual(datetime.fromisoformat(real), NOW + timedelta(seconds=200))
+        self.assertEqual(source, "monotonic_estimate")
+        real, source = timer_schedule(wall + 500, 700, wall=wall, running_clock=500, waking=True)
+        self.assertEqual(datetime.fromisoformat(real), NOW + timedelta(seconds=500))
+        self.assertEqual(source, "calendar")
+        self.assertEqual(timer_schedule(0, 400, wall=wall, running_clock=500), (None, None))
+        self.assertEqual(timer_schedule(0, 0, wall=wall, running_clock=500), (None, None))
+
+    def test_kst_and_binary_memory_format_keep_zero_and_unknown_distinct(self):
+        self.assertEqual(kst_time("2026-11-26T23:00:00Z"), "2026-11-27 08:00:00 KST")
+        self.assertEqual(memory(0), "0.0 MiB")
+        self.assertEqual(memory(None), "미확인")
+        self.assertEqual(memory(2 ** 30), "1.00 GiB")
+
+    def test_event_transitions_reuse_sqlite_unique_key(self):
+        before = {
+            "arm": {"shape_available": False, "meets_target": False, "free_eligibility_verified": False},
+            "provisioning": {"status": "WAITING_ELIGIBILITY"},
+            "monitor": {"last_check_failed": False},
+            "notification": {"pending_count": 1},
+        }
+        after = {
+            "arm": {"shape_available": True, "meets_target": True, "free_eligibility_verified": False},
+            "provisioning": {"status": "CAPACITY_WAIT"},
+            "monitor": {"last_check_failed": True},
+            "notification": {"pending_count": 15},
+        }
+        with sqlite3.connect(":memory:") as db:
+            db.execute("CREATE TABLE queue(event_key TEXT UNIQUE NOT NULL, message TEXT NOT NULL)")
+
+            def enqueue(key, message):
+                db.execute("INSERT OR IGNORE INTO queue VALUES(?,?)", (key, message))
+
+            capture_events(self.path, before, after)
+            capture_events(self.path, before, after)
+            deliver_events(self.path, enqueue)
+            rows = db.execute("SELECT message FROM queue").fetchall()
+            self.assertEqual(len(rows), 5)
+            self.assertTrue(any(title.startswith("[중요] OCI 조회 실패") for title, in rows))
+            self.assertFalse(any("Out of host capacity" in title for title, in rows))
+            capture_events(self.path, after, before)
+            deliver_events(self.path, enqueue)
+            self.assertTrue(db.execute("SELECT 1 FROM queue WHERE message LIKE '%OCI 조회 복구%'").fetchone())
+
+
+    def test_queue_failure_does_not_drop_intermediate_transitions_after_restart(self):
+        root, quota = self.operational_files()
+        record_operational_oci_result(quota, failed=False, root=root, path=self.result, now=NOW)
+        self.operational_snapshot(root)
+        queue = root / "notifications.db"
+        with sqlite3.connect(queue) as db:
+            db.execute("CREATE TABLE notifications(event_key TEXT UNIQUE NOT NULL, message TEXT NOT NULL)")
+        mock_queue = type("Queue", (), {})()
+
+        def enqueue(*args, **kwargs):
+            with sqlite3.connect(queue, timeout=0) as db:
+                db.execute("INSERT OR IGNORE INTO notifications VALUES(?,?)", args)
+
+        mock_queue.enqueue = enqueue
+        with sqlite3.connect(queue) as blocker, patch.dict(sys.modules, {"notification_queue": mock_queue}):
+            blocker.execute("BEGIN EXCLUSIVE")
+            record_operational_oci_result(failed=True, root=root, path=self.result, now=NOW + timedelta(minutes=1))
+            self.assertTrue(self.operational_snapshot(root)["monitor"]["last_check_failed"])
+            quota.update(ad_cpu=1, arm_shape=True)
+            record_operational_oci_result(quota, failed=False, root=root, path=self.result,
+                                          now=NOW + timedelta(minutes=2))
+            self.assertFalse(self.operational_snapshot(root)["monitor"]["last_check_failed"])
+            blocker.rollback()
+        with sqlite3.connect(event_store_path(self.path)) as db:
+            pending = db.execute("SELECT event_key FROM pending ORDER BY id").fetchall()
+        codes = ("OCI_QUERY_FAILED", "QUOTA_CHANGED", "SHAPE_CHANGED", "OCI_QUERY_RECOVERED")
+        self.assertEqual(len(pending), len(codes))
+        self.assertTrue(all(key.startswith("MONITOR_" + code + "_")
+                            for (key,), code in zip(pending, codes)))
+
+        # A fresh interpreter retries from disk even if no new observation is available.
+        subprocess.run([sys.executable, "-B", "-c", """
+import sqlite3
+import sys
+from pathlib import Path
+from threading import Event
+from monitor_events import deliver_events
+path, database = sys.argv[1:]
+def enqueue(key, message):
+    with sqlite3.connect(database) as db:
+        db.execute('INSERT OR IGNORE INTO notifications VALUES(?,?)', (key, message))
+deliver_events(Path(path), enqueue)
+""", str(self.path), str(queue)], cwd=Path(__file__).resolve().parent, check=True)
+        with sqlite3.connect(queue) as db:
+            self.assertEqual(db.execute("SELECT event_key FROM notifications ORDER BY rowid").fetchall(), pending)
+        with sqlite3.connect(event_store_path(self.path)) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM pending").fetchone()[0], 0)
+
+    def test_queue_commit_before_ack_and_concurrent_capture_are_idempotent(self):
+        root, quota = self.operational_files()
+        record_operational_oci_result(quota, failed=False, root=root, path=self.result, now=NOW)
+        before = self.operational_snapshot(root)
+        after = json.loads(json.dumps(before))
+        after["monitor"]["last_check_failed"] = True
+        queue = root / "notifications.db"
+        with sqlite3.connect(queue) as db:
+            db.execute("CREATE TABLE notifications(event_key TEXT UNIQUE NOT NULL, message TEXT NOT NULL)")
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            list(pool.map(lambda _: capture_events(self.path, before, after), range(4)))
+
+        def enqueue(key, message):
+            with sqlite3.connect(queue) as db:
+                return bool(db.execute("INSERT OR IGNORE INTO notifications VALUES(?,?)", (key, message)).rowcount)
+
+        def crash_after_commit(key, message):
+            self.assertTrue(enqueue(key, message))
+            raise OSError("simulated process loss after queue commit")
+
+        with self.assertRaises(OSError):
+            deliver_events(self.path, crash_after_commit)
+        attempts = []
+
+        def replay(key, message):
+            attempts.append(key)
+            self.assertFalse(enqueue(key, message))
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(lambda _: deliver_events(self.path, replay), range(2)))
+        self.assertEqual(len(set(attempts)), 1)
+        with sqlite3.connect(queue) as db:
+            self.assertEqual(db.execute("SELECT event_key FROM notifications").fetchall(), [(attempts[0],)])
+        self.assertEqual(stat.S_IMODE(event_store_path(self.path).stat().st_mode), 0o600)
+
+    def test_snapshot_write_failure_does_not_block_event_delivery(self):
+        root, quota = self.operational_files()
+        record_operational_oci_result(quota, failed=False, root=root, path=self.result, now=NOW)
+        self.operational_snapshot(root)
+        previous = self.path.read_bytes()
+        record_operational_oci_result(failed=True, root=root, path=self.result, now=NOW + timedelta(minutes=1))
+        sent = []
+        queue = type("Queue", (), {"enqueue": staticmethod(lambda key, message, **kwargs: sent.append(key))})
+        with patch.dict(sys.modules, {"notification_queue": queue}), \
+                patch("status_snapshot.atomic_json", side_effect=OSError("snapshot write failed")):
+            with self.assertRaises(OSError):
+                self.operational_snapshot(root)
+            retry_snapshot_events(root, path=self.path)
+        self.assertEqual(self.path.read_bytes(), previous)
+        self.assertEqual(len(sent), 1)
+        self.assertTrue(sent[0].startswith("MONITOR_OCI_QUERY_FAILED_"))
+
+
+    def test_blocked_delivery_does_not_block_capture_of_recovery(self):
+        root, quota = self.operational_files()
+        record_operational_oci_result(quota, failed=False, root=root, path=self.result, now=NOW)
+        before = self.operational_snapshot(root)
+        failed = json.loads(json.dumps(before))
+        failed["monitor"]["last_check_failed"] = True
+        capture_events(self.path, before, failed)
+        delivery_started = Event()
+        finish_delivery = Event()
+
+        def slow_enqueue(key, message):
+            delivery_started.set()
+            if not finish_delivery.wait(5):
+                raise TimeoutError("test delivery was not released")
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            delivery = pool.submit(deliver_events, self.path, slow_enqueue)
+            try:
+                self.assertTrue(delivery_started.wait(2))
+                capture_events(self.path, failed, before)
+            finally:
+                finish_delivery.set()
+            delivery.result()
+        with sqlite3.connect(event_store_path(self.path)) as db:
+            remaining = db.execute("SELECT event_key FROM pending").fetchall()
+        self.assertEqual(len(remaining), 1)
+        self.assertTrue(remaining[0][0].startswith("MONITOR_OCI_QUERY_RECOVERED_"))
 
 
 if __name__ == "__main__":

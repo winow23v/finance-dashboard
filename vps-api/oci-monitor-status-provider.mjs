@@ -55,6 +55,9 @@ function publicStatus(snapshot, now) {
     arm: {
       availability_domain: from(arm.availability_domain, ['AD-1', 'AD-2', 'AD-3']),
       shape_available: flag(arm.shape_available),
+      ad_available_ocpus: nonnegative(arm.ad_available_ocpus),
+      ad_available_memory_gb: nonnegative(arm.ad_available_memory_gb),
+      capacity_observation: from(arm.capacity_observation, ['CAPACITY_WAIT']),
       available_ocpus: nonnegative(arm.available_ocpus),
       available_memory_gb: nonnegative(arm.available_memory_gb),
       regional_available_ocpus: nonnegative(arm.regional_available_ocpus),
@@ -71,6 +74,7 @@ function publicStatus(snapshot, now) {
       created: flag(provisioning.created),
       attempts: count(provisioning.attempts),
       auto_create_enabled: flag(provisioning.auto_create_enabled),
+      paid_creation_allowed: flag(provisioning.paid_creation_allowed),
       last_attempt_at: timestamp(provisioning.last_attempt_at),
       completed_at: timestamp(provisioning.completed_at),
       block_reason: from(provisioning.block_reason, blockReasons),
@@ -83,9 +87,11 @@ function publicStatus(snapshot, now) {
       interval_seconds: count(monitor.interval_seconds),
       last_success_at: checkedAt,
       next_run_at: timestamp(monitor.next_run_at),
+      next_run_source: from(monitor.next_run_source, ['calendar', 'monotonic_estimate']),
       timers: Object.fromEntries(timerNames.map(name => [name, {
         state: from(monitor.timers?.[name]?.state, ['active', 'inactive', 'failed', 'activating', 'deactivating']),
         next_run_at: timestamp(monitor.timers?.[name]?.next_run_at),
+        next_run_source: from(monitor.timers?.[name]?.next_run_source, ['calendar', 'monotonic_estimate']),
       }])),
     },
     notification: {
@@ -130,7 +136,16 @@ async function readSnapshot(filename, ownerUid) {
 
 const digest = value => createHash('sha256').update(value).digest()
 
-export function registerOciMonitorStatus(app, { token, filename = '/var/lib/oci-arm-monitor/status.json', ownerUid }) {
+export function isMonitorHttps(request) {
+  return request.raw.socket.encrypted ||
+    (request.raw.socket.remoteAddress === '127.0.0.1' && request.headers['x-forwarded-proto'] === 'https')
+}
+
+export async function loadOciMonitorStatus({ filename = '/var/lib/oci-arm-monitor/status.json', ownerUid }) {
+  return publicStatus(await readSnapshot(filename, ownerUid), Date.now())
+}
+
+export function registerOciMonitorStatus(app, { token, filename, ownerUid }) {
   // A 32-byte random token is configured as 64 lowercase hexadecimal digits.
   const expected = /^[a-f0-9]{64}$/.test(token ?? '') ? digest(`Bearer ${token}`) : null
   if (!expected) return
@@ -144,8 +159,7 @@ export function registerOciMonitorStatus(app, { token, filename = '/var/lib/oci-
     exposeHeadRoute: false,
     config: { ociMonitorStatus: true, rateLimit: false },
     onRequest: async (request, reply) => {
-      const https = request.raw.socket.encrypted ||
-        (request.raw.socket.remoteAddress === '127.0.0.1' && request.headers['x-forwarded-proto'] === 'https')
+      const https = isMonitorHttps(request)
       const authorized = https && timingSafeEqual(digest(request.headers.authorization ?? ''), expected)
       const limit = await (authorized ? limitClient : limitAnonymous)(request)
       if (limit.isExceeded) return reply.header('retry-after', Math.max(1, Math.ceil(limit.ttl / 1000)))
@@ -157,7 +171,7 @@ export function registerOciMonitorStatus(app, { token, filename = '/var/lib/oci-
     },
     handler: async (_request, reply) => {
       try {
-        return publicStatus(await readSnapshot(filename, ownerUid), Date.now())
+        return await loadOciMonitorStatus({ filename, ownerUid })
       } catch {
         return reply.code(503).send({ data_status: 'unavailable', code: 'OCI_MONITOR_STATUS_UNAVAILABLE' })
       }

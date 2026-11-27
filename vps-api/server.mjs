@@ -1,3 +1,4 @@
+import { registerOciMonitorWeb } from './oci-monitor-web-provider.mjs'
 import { registerOciMonitorStatus } from './oci-monitor-status-provider.mjs'
 import { createProviderHealth } from './health-provider.mjs'
 import { pathToFileURL } from 'node:url'
@@ -68,6 +69,7 @@ export async function buildApp({
   cache = createMarketCache(),
   logger = true,
   ociMonitorStatus,
+  ociMonitorWeb,
   getEconomyIndicators,
   privateAccessToken,
   privateOnly = false,
@@ -136,6 +138,8 @@ export async function buildApp({
   })
 
   if (!privateOnly && ociMonitorStatus) registerOciMonitorStatus(app, ociMonitorStatus)
+
+  if (!privateOnly && ociMonitorWeb) app.register(registerOciMonitorWeb, { ...ociMonitorStatus, ...ociMonitorWeb })
 
   if (membership) {
     app.decorateRequest('memberUser', null)
@@ -484,6 +488,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       privateAccessToken: process.env.FINANCE_PRIVATE_API_TOKEN,
     } : {
       membership: createMembership(),
+      ociMonitorWeb: {
+        username: process.env.OCI_MONITOR_WEB_USER,
+        passwordHash: process.env.OCI_MONITOR_WEB_PASSWORD_HASH,
+      },
       ociMonitorStatus: {
         token: process.env.OCI_MONITOR_READ_TOKEN,
         filename: process.env.OCI_MONITOR_STATUS_FILE,

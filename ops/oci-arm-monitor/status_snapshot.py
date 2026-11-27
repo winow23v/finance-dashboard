@@ -102,7 +102,7 @@ def public_quota(quota):
         "availability_domain": choice(quota.get("availability_domain"), ("AD-1", "AD-2", "AD-3")),
         "shape_available": flag(quota.get("shape_available")),
         **{field: number(quota.get(field)) for field in (
-            "available_ocpus", "available_memory_gb", "regional_available_ocpus",
+            "available_ocpus", "available_memory_gb", "ad_available_ocpus", "ad_available_memory_gb", "regional_available_ocpus",
             "regional_available_memory_gb",
         )},
         "meets_target": flag(quota.get("meets_target")),
@@ -163,32 +163,56 @@ def collect_host():
     }
 
 
+def timer_schedule(realtime, monotonic, *, wall, running_clock, waking=False):
+    candidates = []
+    if realtime > wall:
+        candidates.append((realtime, "calendar"))
+    if not waking and monotonic > running_clock:
+        candidates.append((wall + monotonic - running_clock, "monotonic_estimate"))
+    if not candidates:
+        return None, None
+    seconds, source = min(candidates)
+    return timestamp(datetime.fromtimestamp(seconds, timezone.utc)), source
+
+
+def timer_property(name, property_name, signature):
+    escaped = "".join(char if char.isalnum() else f"_{ord(char):02x}" for char in name)
+    result = subprocess.run(
+        ["busctl", "--system", "get-property", "org.freedesktop.systemd1",
+         f"/org/freedesktop/systemd1/unit/{escaped}", "org.freedesktop.systemd1.Timer", property_name],
+        check=True, timeout=1, capture_output=True, text=True,
+    )
+    kind, value = result.stdout.strip().split()
+    if kind != signature:
+        raise ValueError("Unexpected systemd timer property type")
+    return value
+
+
 def collect_timers():
     timers = {}
     for name in TIMER_NAMES:
-        props = {}
+        state = next_run = source = None
         try:
             result = subprocess.run(
-                ["systemctl", "show", "-p", "ActiveState", "-p", "NextElapseUSecRealtime", name],
-                check=True, timeout=3, capture_output=True, text=True,
-                env={**os.environ, "TZ": "UTC", "LC_ALL": "C"},
+                ["systemctl", "show", "-p", "ActiveState", "--value", name],
+                check=True, timeout=1, capture_output=True, text=True,
             )
-            props = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
-            next_at = props.get("NextElapseUSecRealtime", "")
-            date = datetime.strptime(next_at, "%a %Y-%m-%d %H:%M:%S UTC").replace(tzinfo=timezone.utc)
-            next_run_at = timestamp(date)
-        except (OSError, ValueError, subprocess.SubprocessError):
-            next_run_at = None
-        timers[name] = {
-            "state": choice(props.get("ActiveState"), ("active", "inactive", "failed", "activating", "deactivating")),
-            "next_run_at": next_run_at,
-        }
+            state = result.stdout.strip()
+            if state in ("active", "activating"):
+                real = int(timer_property(name, "NextElapseUSecRealtime", "t")) / 1_000_000
+                mono = int(timer_property(name, "NextElapseUSecMonotonic", "t")) / 1_000_000
+                waking = mono > 0 and timer_property(name, "WakeSystem", "b") == "true"
+                next_run, source = timer_schedule(
+                    real, mono, wall=time.time(), running_clock=time.monotonic(), waking=waking,
+                )
+        except (OSError, ValueError, OverflowError, subprocess.SubprocessError):
+            pass
+        timers[name] = {"state": state, "next_run_at": next_run, "next_run_source": source}
     return timers
 
 
-def write_snapshot(*, region, policy, provisioning, notification, interval_seconds,
-                   path=STATUS_PATH, result_path=OCI_RESULT_PATH,
-                   host_reader=collect_host, timer_reader=collect_timers):
+def build_snapshot(*, region, policy, provisioning, notification, interval_seconds,
+                   result_path=OCI_RESULT_PATH, host_reader=collect_host, timer_reader=collect_timers):
     """Use normalized inputs from the calling monitor, never raw operational JSON."""
     if not isinstance(region, str) or not re.fullmatch(r"[a-z]{2}(?:-[a-z]+)+-\d+", region):
         region = None
@@ -226,9 +250,11 @@ def write_snapshot(*, region, policy, provisioning, notification, interval_secon
             "last_check_failed": flag(result.get("last_check_failed")),
             "interval_seconds": count(interval_seconds),
             "next_run_at": timestamp(timers.get(TIMER_NAMES[0], {}).get("next_run_at")),
+            "next_run_source": choice(timers.get(TIMER_NAMES[0], {}).get("next_run_source"), ("calendar", "monotonic_estimate")),
             "timers": {name: {
                 "state": choice(timers.get(name, {}).get("state"), ("active", "inactive", "failed", "activating", "deactivating")),
                 "next_run_at": timestamp(timers.get(name, {}).get("next_run_at")),
+                "next_run_source": choice(timers.get(name, {}).get("next_run_source"), ("calendar", "monotonic_estimate")),
             } for name in TIMER_NAMES},
         },
         "notification": {
@@ -244,6 +270,11 @@ def write_snapshot(*, region, policy, provisioning, notification, interval_secon
             )},
         },
     }
+    return status
+
+
+def write_snapshot(*, path=STATUS_PATH, **inputs):
+    status = build_snapshot(**inputs)
     atomic_json(path, status)
     return status
 
@@ -262,6 +293,8 @@ def normalize_operational_quota(state, policy):
         meets_target = cpu >= target_cpu and ram >= target_ram
     return {
         "availability_domain": choice(state.get("availability_domain"), ("AD-1", "AD-2", "AD-3")),
+        "ad_available_ocpus": ad_cpu,
+        "ad_available_memory_gb": ad_ram,
         "available_ocpus": cpu,
         "available_memory_gb": ram,
         "regional_available_ocpus": regional_cpu,
@@ -342,11 +375,36 @@ def write_operational_snapshot(root, *, notification, interval_seconds, observat
         "instance_lifecycle_state": lifecycle if observed else None,
         "instance_observed_at": observed_at if observed else None,
     }
-    return write_snapshot(
-        region=region, policy=public_policy, provisioning=public_provision,
-        notification=notification, interval_seconds=interval_seconds, path=path,
-        result_path=result_path, host_reader=host_reader, timer_reader=timer_reader,
-    )
+    try:
+        snapshot = build_snapshot(
+            region=region, policy=public_policy, provisioning=public_provision,
+            notification=notification, interval_seconds=interval_seconds,
+            result_path=result_path, host_reader=host_reader, timer_reader=timer_reader,
+        )
+        try:
+            from monitor_events import capture_events
+
+            capture_events(path, read_json(path), snapshot)
+        except Exception:
+            print("STATUS: Could not persist snapshot events", flush=True)
+        atomic_json(path, snapshot)
+        return snapshot
+    finally:
+        retry_snapshot_events(root, path=path)
+
+
+def retry_snapshot_events(root, *, path=STATUS_PATH):
+    try:
+        from monitor_events import deliver_events
+
+        def enqueue_event(key, message):
+            from notification_queue import enqueue
+
+            enqueue(key, message, root=root)
+
+        deliver_events(path, enqueue_event)
+    except Exception:
+        print("STATUS: Snapshot events remain pending", flush=True)
 
 
 def read_notification_status(root):
