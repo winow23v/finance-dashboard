@@ -1,3 +1,4 @@
+import { registerOciMonitorStatus } from './oci-monitor-status-provider.mjs'
 import { createProviderHealth } from './health-provider.mjs'
 import { pathToFileURL } from 'node:url'
 import { STATUS_CODES } from 'node:http'
@@ -42,6 +43,22 @@ const favoriteSchema = {
   ],
 }
 
+// Node parser errors may include the raw HTTP packet, including credentials.
+function handleClientError(error, socket) {
+  if (error.code === 'ECONNRESET' || socket.destroyed) return
+  const [status, message] = error.code === 'ERR_HTTP_REQUEST_TIMEOUT' ? [408, 'Client Timeout']
+    : error.code === 'HPE_HEADER_OVERFLOW' ? [431, 'Exceeded maximum allowed HTTP header size']
+      : [400, 'Client Error']
+  const label = STATUS_CODES[status]
+  const body = JSON.stringify({ error: label, message, statusCode: status })
+  if (socket.writable) {
+    socket.end(`HTTP/1.1 ${status} ${label}\r\nContent-Length: ${Buffer.byteLength(body)}\r\n` +
+      `Content-Type: application/json\r\nConnection: close\r\n\r\n${body}`)
+  } else {
+    socket.destroy()
+  }
+}
+
 export async function buildApp({
   provider,
   localIndexResearch,
@@ -50,6 +67,7 @@ export async function buildApp({
   memberUs,
   cache = createMarketCache(),
   logger = true,
+  ociMonitorStatus,
   getEconomyIndicators,
   privateAccessToken,
   privateOnly = false,
@@ -82,6 +100,7 @@ export async function buildApp({
   const privateAuthorization = getEconomyIndicators ? Buffer.from(`Bearer ${privateAccessToken}`) : null
   const app = Fastify({
     logger,
+    clientErrorHandler: handleClientError,
     logController: new LogController({ disableRequestLogging: true }),
     bodyLimit: 8192,
     ajv: { customOptions: { removeAdditional: false } },
@@ -116,6 +135,8 @@ export async function buildApp({
     }
   })
 
+  if (!privateOnly && ociMonitorStatus) registerOciMonitorStatus(app, ociMonitorStatus)
+
   if (membership) {
     app.decorateRequest('memberUser', null)
     const limitMember = app.createRateLimit({
@@ -123,7 +144,7 @@ export async function buildApp({
     })
     app.addHook('onRequest', async (request, reply) => {
       const access = request.routeOptions.config?.access
-      if (request.routeOptions.config?.healthCheck || access === 'preflight') return
+      if (request.routeOptions.config?.healthCheck || request.routeOptions.config?.ociMonitorStatus || access === 'preflight') return
       const authorization = /^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/i.exec(request.headers.authorization ?? '')
       const user = authorization && await membership.verify(authorization[1])
       if (!user) return reply.header('www-authenticate', 'Bearer').code(401).send({ code: 'AUTH_REQUIRED' })
@@ -463,6 +484,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       privateAccessToken: process.env.FINANCE_PRIVATE_API_TOKEN,
     } : {
       membership: createMembership(),
+      ociMonitorStatus: {
+        token: process.env.OCI_MONITOR_READ_TOKEN,
+        filename: process.env.OCI_MONITOR_STATUS_FILE,
+        ownerUid: /^\d+$/.test(process.env.OCI_MONITOR_STATUS_OWNER_UID ?? '')
+          ? Number(process.env.OCI_MONITOR_STATUS_OWNER_UID) : undefined,
+      },
       providerHealth,
       memberFred: configureMemberFred(),
       localKrx: krx,

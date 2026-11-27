@@ -1,0 +1,11 @@
+[Unit]
+Description=Schedule OCI ARM status reports
+
+[Timer]
+OnCalendar=*-*-* 08:00:00 Asia/Seoul
+OnCalendar=*-*-* 20:00:00 Asia/Seoul
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target
