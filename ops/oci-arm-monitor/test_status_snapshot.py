@@ -242,5 +242,23 @@ class StatusTests(unittest.TestCase):
         self.assertEqual(source.read_text(), "# different operational version\n")
 
 
+    def test_monitor_timeout_only_marks_failure_when_attempt_goes_unrecorded(self):
+        record_oci_result({"available_ocpus": 2}, failed=False, path=self.result, now=NOW)
+        started = NOW + timedelta(hours=1)
+        timeout = started + timedelta(seconds=90)
+        record_oci_result(failed=True, path=self.result, now=timeout, unless_checked_since=started)
+        failed = json.loads(self.result.read_text())
+        self.assertTrue(failed["last_check_failed"])
+        self.assertEqual(datetime.fromisoformat(failed["last_success_at"]), NOW)
+
+        started = NOW + timedelta(hours=2)
+        checked = started + timedelta(seconds=30)
+        record_oci_result({"available_ocpus": 1}, failed=False, path=self.result, now=checked)
+        before_timeout = self.result.read_bytes()
+        record_oci_result(failed=True, path=self.result, now=started + timedelta(seconds=90),
+                          unless_checked_since=started)
+        self.assertEqual(self.result.read_bytes(), before_timeout)
+
+
 if __name__ == "__main__":
     unittest.main()
