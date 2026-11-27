@@ -1,0 +1,8 @@
+[Unit]
+Description=Queue an OCI ARM status report
+
+[Service]
+Type=oneshot
+User=rocky
+WorkingDirectory=/home/rocky/oci-arm-monitor
+ExecStart=/usr/bin/python3 /home/rocky/oci-arm-monitor/heartbeat.py
