@@ -258,6 +258,7 @@ def normalize_operational_quota(state, policy):
     if None not in (cpu, ram, target_cpu, target_ram) and target_cpu > 0 and target_ram > 0:
         meets_target = cpu >= target_cpu and ram >= target_ram
     return {
+        "availability_domain": choice(state.get("availability_domain"), ("AD-1", "AD-2", "AD-3")),
         "available_ocpus": cpu,
         "available_memory_gb": ram,
         "regional_available_ocpus": regional_cpu,
@@ -343,3 +344,23 @@ def write_operational_snapshot(root, *, notification, interval_seconds, observat
         notification=notification, interval_seconds=interval_seconds, path=path,
         result_path=result_path, host_reader=host_reader, timer_reader=timer_reader,
     )
+
+
+def read_notification_status(root):
+    """Read the production queue's metadata without loading messages or modifying the DB."""
+    import sqlite3
+    from contextlib import closing
+
+    uri = (Path(root) / "notifications.db").resolve().as_uri() + "?mode=ro"
+    try:
+        with closing(sqlite3.connect(uri, uri=True, timeout=1)) as db:
+            pending, last_sent = db.execute("""
+                SELECT
+                    (SELECT COUNT(*) FROM notifications WHERE status = 'PENDING'),
+                    (SELECT sent_at FROM notifications
+                        WHERE status = 'SENT' AND julianday(sent_at) IS NOT NULL
+                        ORDER BY julianday(sent_at) DESC LIMIT 1)
+            """).fetchone()
+    except sqlite3.Error:
+        return {}
+    return {"pending_count": pending, "last_success_at": timestamp(last_sent)}
