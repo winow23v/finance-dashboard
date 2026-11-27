@@ -8,8 +8,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 from heartbeat import queue_report, report_key
+from prepare_operational_hooks import prepare
 from status_snapshot import (
-    PROVISION_STATES, atomic_json, record_oci_result, record_operational_oci_result,
+    PROVISION_STATES, atomic_json, read_notification_status, record_oci_result, record_operational_oci_result,
     write_operational_snapshot, write_snapshot,
 )
 
@@ -201,6 +202,44 @@ class StatusTests(unittest.TestCase):
             self.assertIn("기존 VPS 상태: 수집 실패", message)
 
         queue_report(enqueue, path=self.path, now=NOW, host_reader=host_reader)
+
+
+    def test_notification_status_reads_metadata_and_keeps_missing_queue_unknown(self):
+        root = self.path.parent
+        db_path = root / "notifications.db"
+        self.assertEqual(read_notification_status(root), {})
+        self.assertFalse(db_path.exists())
+        with sqlite3.connect(db_path) as db:
+            db.execute("""
+                CREATE TABLE notifications (
+                    id INTEGER PRIMARY KEY, event_key TEXT UNIQUE NOT NULL, message TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'PENDING', created_at TEXT NOT NULL,
+                    sent_at TEXT, attempts INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+            db.executemany(
+                "INSERT INTO notifications(event_key, message, status, created_at, sent_at) VALUES (?, ?, ?, ?, ?)",
+                [(key, SECRET, state, NOW.isoformat(), when) for key, state, when in (
+                    ("pending", "PENDING", None), ("sent1", "SENT", "2026-11-27T10:00:00+09:00"),
+                    ("sent2", "SENT", "2026-11-27T02:00:00Z"), ("send_failed", "FAILED", "2026-11-27T09:00:00Z"),
+                )],
+            )
+        before = db_path.read_bytes()
+        self.assertEqual(read_notification_status(root), {
+            "pending_count": 1, "last_success_at": "2026-11-27T02:00:00.000+00:00",
+        })
+        self.assertEqual(db_path.read_bytes(), before)
+
+
+    def test_hook_staging_rejects_unverified_source_without_writing_files(self):
+        root = self.path.parent
+        source = root / "monitor.py"
+        source.write_text("# different operational version\n")
+        destination = root / "staging"
+        with self.assertRaisesRegex(ValueError, "differs from the verified operational export"):
+            prepare(root, destination)
+        self.assertFalse(destination.exists())
+        self.assertEqual(source.read_text(), "# different operational version\n")
 
 
 if __name__ == "__main__":
