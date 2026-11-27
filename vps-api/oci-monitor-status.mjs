@@ -111,8 +111,8 @@ async function readSnapshot(filename, ownerUid) {
   const file = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
   try {
     const info = await file.stat()
-    // Allow the writer to replace the file and a dedicated group to read it.
-    if (!info.isFile() || info.uid !== ownerUid || info.nlink !== 1 || (info.mode & 0o7137) !== 0 ||
+    // An atomic replacement can unlink the old file while this descriptor still reads it.
+    if (!info.isFile() || info.uid !== ownerUid || info.nlink > 1 || (info.mode & 0o7137) !== 0 ||
         info.size > maxBytes) throw new Error('Invalid snapshot file')
     const buffer = Buffer.alloc(maxBytes + 1)
     let length = 0
