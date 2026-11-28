@@ -50,7 +50,7 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
   }, [market, query, revision, symbol])
 
   const pending = !!(symbol || query) && !current
-  const retained = pending && result?.market === market && result.symbol === symbol && result.query === query ? result : current
+  const retained = pending && result?.data && result.market === market && result.symbol === symbol && result.query === query ? result : current
 
   return <section aria-busy={pending} className="panel watch-panel krx-stock-search" aria-label="국내 종목 시세">
     <div className="panel-heading"><h2><Search size={18} aria-hidden="true" /> 국내 종목 시세</h2></div>

@@ -294,7 +294,7 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
           setQuery('')
           input.current?.focus()
         }}><X size={18} aria-hidden="true" /></button>}
-        <SearchButton pending={domesticSearch && !searchResult} disabled={!term || composingInput} />
+        {live && market !== 'US' && <SearchButton pending={domesticSearch && !searchResult} disabled={!term || composingInput} />}
       </form>
       {domesticSearch && !searchResult && <LoadingSkeleton message="KRX 종목 검색 중입니다." shape="rows" />}
       {searchResult?.failed && <p className="state data-message" data-state="error" role="status">일부 KRX 종목 정보를 확인할 수 없습니다.</p>}
