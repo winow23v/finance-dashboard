@@ -214,9 +214,13 @@ check_dart_directory "$dart_parent" root:root 755 &&
   { echo 'DART cache directory ownership, permissions or type is invalid.' >&2; exit 1; }
 [[ ! -L $dart_dropin_dir && ! -L $dart_dropin ]]
 dart_configured=0
-if [[ ! -e $dart_dropin ]] && ! check_legacy_snapshots; then
-  echo 'Migrate existing DART snapshots into the persistent cache with mode 0600 before release.' >&2
-  exit 1
+legacy_cache_active=0
+if ! grep -zFxq -- "DART_FINANCIAL_CACHE_DIR=$dart_cache" "/proc/$pid/environ"; then
+  legacy_cache_active=1
+  if ! check_legacy_snapshots; then
+    echo 'Migrate existing DART snapshots into the persistent cache with mode 0600 before release.' >&2
+    exit 1
+  fi
 fi
 if [[ -e $dart_dropin ]]; then
   if [[ ! -f $dart_dropin ]] || ! cmp -s -- "$dart_dropin" <(dart_settings); then
@@ -272,6 +276,10 @@ fi
 backup="${api}.backup.$(date -u +%Y%m%dT%H%M%SZ).${release##*.}"
 restart_required=1
 systemctl stop "$service"
+if (( legacy_cache_active )) && ! check_legacy_snapshots; then
+  echo 'Legacy DART snapshots changed during staging. Reconcile the cache before retrying.' >&2
+  exit 1
+fi
 mv -T -- "$api" "$backup"
 echo "Rollback backup: $backup"
 mv -T -- "$release/api" "$api"

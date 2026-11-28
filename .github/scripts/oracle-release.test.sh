@@ -186,26 +186,32 @@ sed -e 's|^api=.*|api=$TEST_SANDBOX/live|' \
   -e 's|-o root -g root|-o "$dart_user" -g "$dart_group"|' \
   -e 's|"\$dart_parent" root:root 755|"$dart_parent" "$dart_user:$dart_group" 755|' \
   "$script" > "$sandbox/receiver"
+cat > "$sandbox/bin/fixture-release" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+export TEST_PID=$$
+{ printf '%s\n' "$1"; cat "$TEST_SANDBOX/incoming.tar"; } | bash "$TEST_SANDBOX/receiver"
+SH
+chmod +x "$sandbox/bin/fixture-release"
 export TEST_SANDBOX="$sandbox"
 DART_FINANCIAL_CACHE_DIR="$sandbox/state/financials" bash -euc '
-  export TEST_PID=$$ PATH="$TEST_SANDBOX/bin:$PATH"
+  export PATH="$TEST_SANDBOX/bin:$PATH"
   sandbox=$TEST_SANDBOX
   cache=$DART_FINANCIAL_CACHE_DIR
+  dropin="$sandbox/dropins/90-dart-financial-cache.conf"
   release() {
-    { printf "%s\\n" "$1"; cat "$sandbox/incoming.tar"; } | bash "$sandbox/receiver"
+    if [[ -e $dropin || $1 == deploy-dart-cache-v1 ]]; then
+      fixture-release "$1"
+    else
+      env -u DART_FINANCIAL_CACHE_DIR fixture-release "$1"
+    fi
   }
   release validate-dart-cache-v1
-  if FINANCE_STORAGE_SYNC=1 bash -euc '"'"'
-    export TEST_PID=$$
-    { echo validate-dart-cache-v1; cat "$TEST_SANDBOX/incoming.tar"; } | bash "$TEST_SANDBOX/receiver"
-  '"'"'; then
+  if FINANCE_STORAGE_SYNC=1 fixture-release validate-dart-cache-v1; then
     echo "Validation accepted enabled storage sync" >&2
     exit 1
   fi
-  if DART_FINANCIAL_CACHE_DIR="$sandbox/alternate" bash -euc '"'"'
-    export TEST_PID=$$
-    { echo validate-dart-cache-v1; cat "$TEST_SANDBOX/incoming.tar"; } | bash "$TEST_SANDBOX/receiver"
-  '"'"'; then
+  if DART_FINANCIAL_CACHE_DIR="$sandbox/alternate" fixture-release validate-dart-cache-v1; then
     echo "Validation accepted a conflicting cache override" >&2
     exit 1
   fi
@@ -215,6 +221,12 @@ DART_FINANCIAL_CACHE_DIR="$sandbox/state/financials" bash -euc '
     echo "Validation accepted an unmigrated legacy snapshot" >&2
     exit 1
   fi
+  printf "[Service]\nEnvironment=DART_FINANCIAL_CACHE_DIR=%s\nReadWritePaths=%s\n" "$cache" "$cache" > "$dropin"
+  if env -u DART_FINANCIAL_CACHE_DIR fixture-release deploy-dart-cache-v1; then
+    echo "Deployment accepted unmigrated snapshots with a staged drop-in" >&2
+    exit 1
+  fi
+  rm -- "$dropin"
   [[ ! -e $cache && ! -e $sandbox/service-actions ]]
   mkdir -m 0755 "$sandbox/state"
   mkdir -m 0700 "$cache"
@@ -222,7 +234,6 @@ DART_FINANCIAL_CACHE_DIR="$sandbox/state/financials" bash -euc '
   release validate-dart-cache-v1
   mv "$sandbox/live/.dart-cache" "$sandbox/legacy-fixture"
   mv "$sandbox/state" "$sandbox/migrated-fixture"
-  dropin="$sandbox/dropins/90-dart-financial-cache.conf"
   if FAIL_DART_CONFIGURATION=1 release deploy-dart-cache-v1; then
     echo "Expected first deployment to roll back" >&2
     exit 1
