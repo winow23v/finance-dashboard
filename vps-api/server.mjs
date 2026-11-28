@@ -514,9 +514,9 @@ export function registerKrxCollector(app, collector, intervalMs = 60_000) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const privateFred = process.env.FRED_PRIVATE_MODE === '1'
-    if (!privateFred && process.env.DART_FINANCIAL_CACHE_DIR) {
+    if (!privateFred && process.env.DART_FINANCIAL_CACHE_VERIFY === '1') {
       // Probe from the live service context before starting collectors or serving health.
-      await verifyDartFinancialCache(process.env.DART_FINANCIAL_CACHE_DIR)
+      await verifyDartFinancialCache(process.env.DART_FINANCIAL_CACHE_DIR || '')
     }
     const research = !privateFred && process.env.FINANCE_LOCAL_INDEX_RESEARCH === '1'
       ? await import('../research/market-data/provider.mjs') : null

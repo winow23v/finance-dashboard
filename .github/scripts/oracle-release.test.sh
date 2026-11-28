@@ -151,6 +151,7 @@ case "$*" in
   'show -p ReadWritePaths --value finance-dashboard-api.service')
     printf '%s\n' "/var/lib/finance-krx /var/lib/finance-us-market $TEST_SANDBOX/state/financials" ;;
   'show -p MainPID --value finance-dashboard-api.service') echo "$TEST_PID" ;;
+  'show -p InvocationID --value finance-dashboard-api.service') printf '%032d\n' 1 ;;
   is-active*) exit 0 ;;
   *)
     printf '%s\n' "$1" >> "$TEST_SANDBOX/service-actions"
@@ -201,7 +202,7 @@ export TEST_PID=$$
 SH
 chmod +x "$sandbox/bin/fixture-release"
 export TEST_SANDBOX="$sandbox"
-DART_FINANCIAL_CACHE_DIR="$sandbox/state/financials" bash -euc '
+DART_FINANCIAL_CACHE_DIR="$sandbox/state/financials" DART_FINANCIAL_CACHE_VERIFY=1 bash -euc '
   export PATH="$TEST_SANDBOX/bin:$PATH"
   sandbox=$TEST_SANDBOX
   cache=$DART_FINANCIAL_CACHE_DIR
@@ -228,7 +229,7 @@ DART_FINANCIAL_CACHE_DIR="$sandbox/state/financials" bash -euc '
     echo "Validation accepted an unmigrated legacy snapshot" >&2
     exit 1
   fi
-  printf "[Service]\nEnvironment=DART_FINANCIAL_CACHE_DIR=%s\nReadWritePaths=%s\n" "$cache" "$cache" > "$dropin"
+  printf "[Service]\nEnvironment=DART_FINANCIAL_CACHE_DIR=%s\nEnvironment=DART_FINANCIAL_CACHE_VERIFY=1\nReadWritePaths=%s\n" "$cache" "$cache" > "$dropin"
   if env -u DART_FINANCIAL_CACHE_DIR fixture-release deploy-dart-cache-v1; then
     echo "Deployment accepted unmigrated snapshots with a staged drop-in" >&2
     exit 1
@@ -253,7 +254,7 @@ DART_FINANCIAL_CACHE_DIR="$sandbox/state/financials" bash -euc '
   [[ ! -e $dropin && -d $cache ]]
   release deploy-dart-cache-v1
   [[ $(stat -c %a "$cache") == 700 ]]
-  diff -u <(printf "[Service]\\nEnvironment=DART_FINANCIAL_CACHE_DIR=%s\\nReadWritePaths=%s\\n" "$cache" "$cache") "$dropin"
+  diff -u <(printf "[Service]\\nEnvironment=DART_FINANCIAL_CACHE_DIR=%s\\nEnvironment=DART_FINANCIAL_CACHE_VERIFY=1\\nReadWritePaths=%s\\n" "$cache" "$cache") "$dropin"
   printf snapshot > "$cache/005930-0.json"
   chmod 0600 "$cache/005930-0.json"
   snapshot=$(stat -c "%i:%a:%u:%g" "$cache/005930-0.json")
@@ -263,13 +264,18 @@ DART_FINANCIAL_CACHE_DIR="$sandbox/state/financials" bash -euc '
   [[ $(cat "$sandbox/service-actions") == "$actions" ]]
   mkdir "$sandbox/next"
   tar -xf "$sandbox/incoming.tar" -C "$sandbox/next"
+  printf "manually staged runtime\n" > "$sandbox/next/server.mjs"
+  tar -cf "$sandbox/incoming.tar" -C "$sandbox/next" .
+  cp -- "$sandbox/next/server.mjs" "$sandbox/live/server.mjs"
+  release deploy-dart-cache-v1
+  [[ $(cat "$sandbox/service-actions") != "$actions" ]]
   printf "replacement runtime\n" > "$sandbox/next/server.mjs"
   tar -cf "$sandbox/incoming.tar" -C "$sandbox/next" .
   if FAIL_DART_CONFIGURATION=1 release deploy-dart-cache-v1; then
     echo "Expected release to roll back after its configuration check failed" >&2
     exit 1
   fi
-  cmp -s "$sandbox/live/server.mjs" <(printf "candidate runtime\\n")
+  cmp -s "$sandbox/live/server.mjs" <(printf "manually staged runtime\\n")
   [[ $(stat -c "%i:%a:%u:%g" "$cache/005930-0.json") == "$snapshot" ]]
   [[ $(cat "$cache/005930-0.json") == snapshot && -f $dropin ]]
   tail -n 1 "$sandbox/service-actions" | grep -Fxq restart
@@ -278,7 +284,7 @@ echo 'Oracle persistent DART cache validation, redeploy and rollback passed'
 
 # The real entry point probes in the API process before starting other providers.
 touch "$sandbox/not-a-directory"
-if env -i DART_FINANCIAL_CACHE_DIR="$sandbox/not-a-directory/cache" FINANCE_LOCAL_INDEX_RESEARCH=1 \
+if env -i DART_FINANCIAL_CACHE_VERIFY=1 DART_FINANCIAL_CACHE_DIR="$sandbox/not-a-directory/cache" FINANCE_LOCAL_INDEX_RESEARCH=1 \
   "$(command -v node)" "$repo/vps-api/server.mjs" 2> "$sandbox/startup.log"; then
   echo 'API started with an unusable DART cache' >&2
   exit 1

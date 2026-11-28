@@ -13,9 +13,10 @@ dart_dropin_dir=/etc/systemd/system/$service.d
 dart_dropin=$dart_dropin_dir/90-dart-financial-cache.conf
 dart_user=rocky
 dart_group=rocky
+release_stamp=${api}.deploy-stamp
 
 dart_settings() {
-  printf '[Service]\nEnvironment=DART_FINANCIAL_CACHE_DIR=%s\nReadWritePaths=%s\n' "$dart_cache" "$dart_cache"
+  printf '[Service]\nEnvironment=DART_FINANCIAL_CACHE_DIR=%s\nEnvironment=DART_FINANCIAL_CACHE_VERIFY=1\nReadWritePaths=%s\n' "$dart_cache" "$dart_cache"
 }
 
 check_dart_directory() {
@@ -78,6 +79,7 @@ check_dart_service() {
   [[ " $writable_paths " == *" $dart_cache "* ]] || return 1
   pid=$(service_pid) || return 1
   grep -zFxq -- "DART_FINANCIAL_CACHE_DIR=$dart_cache" "/proc/$pid/environ" || return 1
+  grep -zFxq -- 'DART_FINANCIAL_CACHE_VERIFY=1' "/proc/$pid/environ" || return 1
   check_storage_disabled "$pid" || return 1
   mounts=$(nsenter -t "$pid" -m -- findmnt -n -o VFS-OPTIONS -T "$dart_cache") || return 1
   [[ ,$mounts, == *,rw,* ]]
@@ -116,6 +118,7 @@ backup=
 restart_required=0
 dart_dropin_added=0
 dart_dropin_stage=
+stamp_stage=
 
 finish() {
   local result=$?
@@ -147,6 +150,9 @@ finish() {
   fi
   if [[ -n $dart_dropin_stage ]]; then
     rm -f -- "$dart_dropin_stage"
+  fi
+  if [[ -n $stamp_stage ]]; then
+    rm -f -- "$stamp_stage"
   fi
   rm -rf -- "$work"
   if [[ -n $release && ! -d $release/failed ]]; then
@@ -243,7 +249,13 @@ if [[ $mode == validate ]]; then
   exit 0
 fi
 
-if (( dart_configured )) && [[ ! -e $api/sec-provider.mjs && ! -L $api/sec-provider.mjs ]] &&
+# Only skip a restart for a release this script successfully started and checked.
+candidate_digest=$(cd -- "$work" && sha256sum -- "${runtime_files[@]##*/}" | sha256sum)
+candidate_digest=${candidate_digest%% *}
+invocation=$(systemctl show -p InvocationID --value "$service")
+if (( dart_configured )) && [[ $invocation =~ ^[0-9a-f]{32}$ && -f $release_stamp && ! -L $release_stamp ]] &&
+  grep -Fxq -- "$invocation $candidate_digest" "$release_stamp" &&
+  [[ ! -e $api/sec-provider.mjs && ! -L $api/sec-provider.mjs ]] &&
   diff -qr --no-dereference -- "$api/node_modules" "$release/api/node_modules" >/dev/null; then
   unchanged=1
   for file in "${runtime_files[@]}"; do
@@ -286,4 +298,13 @@ systemctl start "$service"
 check_health || { echo 'Released API failed the health check.' >&2; exit 1; }
 check_dart_service || { echo 'Released API failed the DART cache configuration check.' >&2; exit 1; }
 restart_required=0
+if invocation=$(systemctl show -p InvocationID --value "$service") &&
+  [[ $invocation =~ ^[0-9a-f]{32}$ ]] &&
+  stamp_stage=$(mktemp "${release_stamp}.XXXXXXXX") &&
+  printf '%s %s\n' "$invocation" "$candidate_digest" > "$stamp_stage" &&
+  mv -T -- "$stamp_stage" "$release_stamp"; then
+  stamp_stage=
+else
+  echo 'Could not record the running release identity. The next deployment will restart the API.' >&2
+fi
 echo 'Oracle API deployed and healthy.'
