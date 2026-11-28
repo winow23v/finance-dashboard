@@ -188,9 +188,6 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
       const failures = results.filter(result => result.status === 'rejected' || result.value.listings.status === 'unavailable')
       const timedOut = failures.some(result => result.status === 'rejected'
         && marketRequestMessage(result.reason, '') === '응답 시간 초과')
-      const message = failures.length === results.length
-        ? timedOut ? '응답 시간 초과' : 'KRX 종목을 조회할 수 없습니다.'
-        : failures.length ? timedOut ? '일부 KRX 시장의 응답 시간 초과' : '일부 KRX 종목 정보를 확인할 수 없습니다.' : undefined
       const freshSymbols = new Set(results.flatMap(result => result.status === 'fulfilled'
         ? result.value.items.map(item => item.symbol) : []))
       setSearch(previous => {
@@ -206,15 +203,13 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
         const items = Object.values(marketItems).flat().filter(item => !filters.symbol || item.symbol === filters.symbol)
         const counts = new Map<string, number>()
         for (const item of items) counts.set(item.symbol, (counts.get(item.symbol) ?? 0) + 1)
-        return {
-          query: term,
-          attempt: searchAttempt,
-          markets: marketItems,
-          rows: items.filter(item => counts.get(item.symbol) === 1).map(item => ({
-            listing: { market: 'KR', exchange: 'XKRX', symbol: item.symbol }, observation: krxObservation(item),
-          })),
-          message,
-        }
+        const rows = items.filter(item => counts.get(item.symbol) === 1).map(item => ({
+          listing: { market: 'KR', exchange: 'XKRX', symbol: item.symbol } as const, observation: krxObservation(item),
+        }))
+        const message = failures.length === results.length && (timedOut || !rows.length)
+          ? timedOut ? '응답 시간 초과' : 'KRX 종목을 조회할 수 없습니다.'
+          : failures.length ? timedOut ? '일부 KRX 시장의 응답 시간 초과' : '일부 KRX 종목 정보를 확인할 수 없습니다.' : undefined
+        return { query: term, attempt: searchAttempt, markets: marketItems, rows, message }
       })
     }
     dispatchSearch.current = searchNow
