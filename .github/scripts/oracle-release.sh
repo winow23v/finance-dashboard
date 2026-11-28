@@ -103,9 +103,11 @@ if [[ $EUID != 0 || $# != 0 ]]; then
   exit 1
 fi
 IFS= read -r mode
+force_restart=0
 case "$mode" in
   validate|deploy) ;;
   validate-dart-cache-v1|deploy-dart-cache-v1) mode=${mode%-dart-cache-v1} ;;
+  redeploy-dart-cache-v1) mode=deploy; force_restart=1 ;;
   *) echo 'Invalid release mode.' >&2; exit 1 ;;
 esac
 
@@ -253,7 +255,7 @@ fi
 candidate_digest=$(cd -- "$work" && sha256sum -- "${runtime_files[@]##*/}" | sha256sum)
 candidate_digest=${candidate_digest%% *}
 invocation=$(systemctl show -p InvocationID --value "$service")
-if (( dart_configured )) && [[ $invocation =~ ^[0-9a-f]{32}$ && -f $release_stamp && ! -L $release_stamp ]] &&
+if (( dart_configured && ! force_restart )) && [[ $invocation =~ ^[0-9a-f]{32}$ && -f $release_stamp && ! -L $release_stamp ]] &&
   grep -Fxq -- "$invocation $candidate_digest" "$release_stamp" &&
   [[ ! -e $api/sec-provider.mjs && ! -L $api/sec-provider.mjs ]] &&
   diff -qr --no-dereference -- "$api/node_modules" "$release/api/node_modules" >/dev/null; then

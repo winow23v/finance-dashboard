@@ -3,12 +3,13 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: Build the collector package, validate the API on Oracle, or deploy the API
+        description: Package the collector, validate Oracle, deploy changes, or restart with the current environment
         type: choice
         options:
           - package
           - validate
           - deploy
+          - redeploy
         default: validate
         required: true
       expected_sha:

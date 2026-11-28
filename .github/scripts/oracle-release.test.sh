@@ -262,6 +262,9 @@ DART_FINANCIAL_CACHE_DIR="$sandbox/state/financials" DART_FINANCIAL_CACHE_VERIFY
   release validate-dart-cache-v1
   release deploy-dart-cache-v1
   [[ $(cat "$sandbox/service-actions") == "$actions" ]]
+  release redeploy-dart-cache-v1
+  [[ $(cat "$sandbox/service-actions") != "$actions" ]]
+  actions=$(cat "$sandbox/service-actions")
   mkdir "$sandbox/next"
   tar -xf "$sandbox/incoming.tar" -C "$sandbox/next"
   printf "manually staged runtime\n" > "$sandbox/next/server.mjs"
@@ -291,3 +294,11 @@ if env -i DART_FINANCIAL_CACHE_VERIFY=1 DART_FINANCIAL_CACHE_DIR="$sandbox/not-a
 fi
 grep -Fqx '{"event":"dart-financial-cache-error","stage":"directory-prepare","osCode":"ENOTDIR"}' "$sandbox/startup.log"
 ! grep -Fq "$sandbox" "$sandbox/startup.log"
+
+if env -i DART_FINANCIAL_CACHE_VERIFY=1 FINANCE_STORAGE_SYNC=1 DART_FINANCIAL_CACHE_DIR="$sandbox/not-a-directory/cache" \
+  "$(command -v node)" "$repo/vps-api/server.mjs" 2> "$sandbox/storage-startup.log"; then
+  echo 'API started with storage sync enabled in verified DART cache mode' >&2
+  exit 1
+fi
+grep -Fq 'Verified DART cache mode requires financial storage sync to be disabled' "$sandbox/storage-startup.log"
+! grep -Fq 'dart-financial-cache-error' "$sandbox/storage-startup.log"

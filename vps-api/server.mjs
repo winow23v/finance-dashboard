@@ -515,6 +515,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     const privateFred = process.env.FRED_PRIVATE_MODE === '1'
     if (!privateFred && process.env.DART_FINANCIAL_CACHE_VERIFY === '1') {
+      if (process.env.FINANCE_STORAGE_SYNC === '1') {
+        console.error('Verified DART cache mode requires financial storage sync to be disabled')
+        throw new Error('Cannot start in verified DART cache mode')
+      }
       // Probe from the live service context before starting collectors or serving health.
       await verifyDartFinancialCache(process.env.DART_FINANCIAL_CACHE_DIR || '')
     }
