@@ -98,7 +98,7 @@ small { display: block; color: var(--muted); font-size: var(--text-caption); }
 .brand-icon { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--accent-bg); color: var(--accent); }
 .brand-copy { display: grid; min-width: 0; }
 .brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.brand-demo { color: var(--accent); font-size: .65rem; font-weight: 600; letter-spacing: 0; white-space: nowrap; }
+.brand-demo { color: var(--accent); font-size: .75rem; font-weight: 600; letter-spacing: 0; white-space: nowrap; }
 .breadcrumb { padding-inline: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .875rem; }
 .breadcrumb span { margin-inline: 4px; }
 .breadcrumb strong { color: var(--text); }
