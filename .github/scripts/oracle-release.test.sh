@@ -153,6 +153,8 @@ case "$*" in
   'show -p Environment --value finance-dashboard-api.service')
     if [[ -f $TEST_SANDBOX/inline-environment ]]; then cat "$TEST_SANDBOX/inline-environment"; fi ;;
   'show -p PassEnvironment -p UnsetEnvironment --value finance-dashboard-api.service') ;;
+  show-environment)
+    if [[ -f $TEST_SANDBOX/manager-environment ]]; then cat "$TEST_SANDBOX/manager-environment"; fi ;;
   'show -p EnvironmentFiles --value finance-dashboard-api.service')
     printf '%s (ignore_errors=no)\n' "$TEST_SANDBOX/api.env" ;;
   'show -p ReadWritePaths --value finance-dashboard-api.service')
@@ -265,6 +267,16 @@ bash -euc '
     exit 1
   fi
   rm -- "$sandbox/inline-environment"
+  printf "FINANCE_STORAGE_SYNC=1\n" > "$sandbox/manager-environment"
+  if release deploy-dart-cache-v1; then
+    echo "Receiver accepted manager-level storage sync" >&2
+    exit 1
+  fi
+  rm -- "$sandbox/manager-environment"
+  printf "FINANCE_STORAGE_SYNC=\0420\042\n" > "$sandbox/api.env"
+  release validate-dart-cache-v1
+  printf "FINANCE_STORAGE_SYNC=\0470\047\n" > "$sandbox/api.env"
+  release validate-dart-cache-v1
   touch "$sandbox/pending-unit"
   if release deploy-dart-cache-v1; then
     echo "Receiver accepted a unit with pending daemon reload" >&2

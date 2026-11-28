@@ -65,14 +65,16 @@ check_cache_override() {
 # EnvironmentFile entries override Environment=. Check current file contents
 # before replacing a healthy process with one that would reject its environment.
 check_next_service_environment() {
-  local files entry file assignments modifiers
+  local files entry file modifiers
   local file_entry='^(/[[:alnum:]_./-]+) [(]ignore_errors=(yes|no)[)]$'
   local managed='(^|[[:space:]"])(DART_FINANCIAL_CACHE_DIR|DART_FINANCIAL_CACHE_VERIFY|FINANCE_STORAGE_SYNC)(=|[[:space:]"]|$)'
   [[ $(systemctl show -p NeedDaemonReload --value "$service") == no ]] || return 1
   modifiers=$(systemctl show -p PassEnvironment -p UnsetEnvironment --value "$service") || return 1
   [[ ! $modifiers =~ $managed ]] || return 1
-  assignments=$(systemctl show -p Environment --value "$service") || return 1
-  awk -v cache="$dart_cache" '
+  {
+    systemctl show -p Environment --value "$service" || return 1
+    systemctl show-environment || return 1
+  } | awk -v cache="$dart_cache" '
     {
       for (i = 1; i <= NF; i++) {
         value = $i
@@ -83,7 +85,7 @@ check_next_service_environment() {
         if (value ~ /^FINANCE_STORAGE_SYNC=/ && value !~ /^FINANCE_STORAGE_SYNC=(0)?$/) exit 1
       }
     }
-  ' <<< "$assignments" || return 1
+  ' || return 1
   files=$(systemctl show -p EnvironmentFiles --value "$service") || return 1
   while IFS= read -r entry; do
     [[ -n $entry ]] || continue
@@ -99,7 +101,7 @@ check_next_service_environment() {
       /^[[:space:]]*FINANCE_STORAGE_SYNC[[:space:]]*=/ {
         sub(/^[^=]*=[[:space:]]*/, "")
         sub(/[[:space:]]*$/, "")
-        if ($0 != "0" && $0 != "") exit 1
+        if ($0 != "0" && $0 != "" && $0 !~ /^"0?"$/ && $0 !~ /^\0470?\047$/) exit 1
       }
     ' "$file" || return 1
   done <<< "$files"
