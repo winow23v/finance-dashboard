@@ -187,7 +187,7 @@ export function createDartFinancialCollector({ root, issueFor, catalog, requestR
     if (verified.some(saved => saved.corpCode !== candidate.corpCode)) return {
       mapping: { ...dartIssueMapping(currentIssue, [], null), reason: 'conflicting-snapshot-issuers' }, years: [],
     }
-    return { mapping: candidate.mapping, years: verified.map(saved => ({ ...saved.statement, issuerCorpCode: saved.corpCode,
+    return { mapping: candidate.mapping, years: verified.map(saved => ({ ...saved.statement, issuerCorpCode: saved.corpCode, sourceVersion: saved.version,
       snapshotStale: clock() - saved.savedAt >= dayMs })) }
   }
   return run

@@ -46,6 +46,14 @@ async function setup(t, options = {}) {
           user_metadata: { role: 'administrator', status: 'approved' },
         })
       }
+      if (url.pathname === '/rest/v1/rpc/finance_stage_fundamentals') {
+        assert.equal(request.headers.apikey, secretKey)
+        assert.equal(request.headers.Authorization, undefined)
+        assert.equal(request.method, 'POST')
+        const { payload } = JSON.parse(request.body)
+        calls.push('storage')
+        return Response.json({ status: 'staged', snapshotId: payload.snapshot.snapshot_id })
+      }
       if (url.pathname === '/rest/v1/rpc/finance_read_watchlist') {
         assert.equal(request.headers.apikey, secretKey)
         assert.equal(request.method, 'POST')
@@ -279,4 +287,39 @@ test('failed watchlist write preserves the last persisted list', async t => {
   const failed = await app.inject({ url: url + '/US/XNAS/AAPL', method: 'DELETE', headers })
   assert.equal(failed.statusCode, 503)
   assert.deepEqual((await app.inject({ url, headers })).json(), { items: [apple] })
+})
+
+test('storage sync is opt-in, cache-only, and restricted to approved administrators', async t => {
+  const symbol = '005930'
+  const issue = { symbol, market: 'KOSPI', isin: 'KR7005930003', shareClass: '보통주', asOf: '2026-01-01' }
+  let reads = 0
+  const dart = Object.assign(() => assert.fail('external DART collection is not permitted during storage sync'), {
+    readCachedFinancials: async () => {
+      reads++
+      return { mapping: { status: 'exact-code', issue, issueAsOf: issue.asOf,
+        issuer: { corpCode: '99900001', name: 'isolated fixture' } }, years: [{
+          status: 'available', scope: 'OFS', period: 'annual', reportCode: '11011', year: '2025',
+          issuerCorpCode: '99900001', sourceVersion: 1, collectedAt: '2026-04-01T00:00:00Z',
+          fiscalEnd: '2025-12-31', receipt: { id: '20260401000001', filedAt: '2026-04-01' },
+          accounts: [{ id: 'revenue', current: { status: 'reported', value: '9007199254740993' } }],
+        }] }
+    },
+  })
+  const memberKrx = { cachedIssue: async () => issue, cachedMarketObservation: async () => null }
+  const options = { dart, memberKrx }
+  const { app: disabled } = await setup(t, options)
+  const request = { method: 'POST', url: '/api/v1/financials/kr/005930/storage-sync' }
+  assert.equal((await disabled.inject({ ...request, headers: auth('administrator') })).statusCode, 404)
+  const { app, rows, calls } = await setup(t, { ...options, financialStorageEnabled: true })
+  assert.equal((await app.inject(request)).statusCode, 401)
+  for (const status of ['pending', 'rejected', 'suspended', 'approved']) {
+    rows.set(applicant, member(applicant, status))
+    assert.equal((await app.inject({ ...request, headers: auth('applicant') })).statusCode, 403)
+  }
+  assert.equal(reads, 0)
+  const response = await app.inject({ ...request, headers: auth('administrator') })
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(Object.keys(response.json()).sort(), ['snapshotId', 'status'])
+  assert.equal(reads, 1)
+  assert.deepEqual(calls, ['storage'])
 })

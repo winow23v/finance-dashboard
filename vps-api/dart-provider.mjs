@@ -92,7 +92,7 @@ function financialsFrom(rows, year, period, company) {
 }
 
 export function createDartProvider({
-  key = process.env.DART_API_KEY, fetchImpl = fetch, clock = Date.now, issueFor,
+  key = process.env.DART_API_KEY, fetchImpl = fetch, clock = Date.now, issueFor, financialCollectionEnabled = true,
   financialRoot = process.env.DART_FINANCIAL_CACHE_DIR || fileURLToPath(new URL('.dart-cache/', import.meta.url)),
 } = {}) {
   // Catalog and JSON requests share one limiter. Only the parsed catalog is cached in memory.
@@ -186,8 +186,12 @@ export function createDartProvider({
       ...(financials.error && { financialsError: financials.error.code }) },
     { usedCache: catalogCached || filingsCached, attempted: !catalogCached || !filingsCached || Boolean(year) })
   }
-  if (issueFor) query.collectFinancials = createDartFinancialCollector({
-    root: financialRoot, issueFor, catalog: readCatalog, requestRows, clock, source,
-  })
+  if (issueFor) {
+    const financials = createDartFinancialCollector({
+      root: financialRoot, issueFor, catalog: readCatalog, requestRows, clock, source,
+    })
+    query.readCachedFinancials = financials.readCached
+    if (financialCollectionEnabled) query.collectFinancials = financials
+  }
   return query
 }

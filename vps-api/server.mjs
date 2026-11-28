@@ -1,3 +1,4 @@
+import { createFinancialStorage } from './financial-storage-provider.mjs'
 import { createFundamentalsProvider } from './fundamentals-provider.mjs'
 import { registerOciMonitorWeb } from './oci-monitor-web-provider.mjs'
 import { registerOciMonitorStatus } from './oci-monitor-status-provider.mjs'
@@ -76,6 +77,7 @@ export async function buildApp({
   privateOnly = false,
   membership,
   memberFred,
+  financialStorageEnabled = false,
   memberRateLimit = 60,
   fx = createFxProvider(),
   ecos = createEcosProvider(),
@@ -328,17 +330,26 @@ export async function buildApp({
     }, request => dart.collectFinancials(request.params.symbol))
   }
 
-  if (membership && dart.collectFinancials?.readCached && memberKrx?.cachedMarketObservation) {
-    const fundamentals = createFundamentalsProvider({
-      readFinancials: dart.collectFinancials.readCached,
-      async readMarket(symbol) {
-        const issue = await memberKrx.cachedIssue(symbol)
-        const observation = issue ? await memberKrx.cachedMarketObservation(issue) : null
-        // Neither the current KRX catalog nor the DART exact-code match proves
-        // the complete issuer issue set. Never certify this single observation.
-        return { currency: 'KRW', coverage: { status: 'unverified' }, issues: observation ? [observation] : [] }
-      },
-    })
+  const readFinancials = dart.readCachedFinancials ?? dart.collectFinancials?.readCached
+  if (membership && readFinancials && memberKrx?.cachedMarketObservation) {
+    async function readMarket(symbol) {
+      const issue = await memberKrx.cachedIssue(symbol)
+      const observation = issue ? await memberKrx.cachedMarketObservation(issue) : null
+      // A single observation does not establish the issuer's complete issue set.
+      return { currency: 'KRW', coverage: { status: 'unverified' }, issues: observation ? [observation] : [] }
+    }
+    const fundamentals = createFundamentalsProvider({ readFinancials, readMarket })
+    if (financialStorageEnabled && membership.stageFundamentals) {
+      const sync = createFinancialStorage({ readFinancials, readMarket,
+        stage: payload => membership.stageFundamentals(payload) })
+      app.post('/api/v1/financials/kr/:symbol/storage-sync', {
+        config: { access: 'admin' },
+        schema: { querystring: noQuery, params: {
+          type: 'object', additionalProperties: false, required: ['symbol'],
+          properties: { symbol: { type: 'string', pattern: '^[0-9A-Z]{6}$' } },
+        } },
+      }, request => sync(request.params.symbol))
+    }
     app.get('/api/v1/financials/kr/:symbol/fundamentals', {
       config: { access: 'admin' },
       schema: {
@@ -521,6 +532,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       privateAccessToken: process.env.FINANCE_PRIVATE_API_TOKEN,
     } : {
       membership: createMembership(),
+      financialStorageEnabled: process.env.FINANCE_STORAGE_SYNC === '1',
       ociMonitorWeb: {
         username: process.env.OCI_MONITOR_WEB_USER,
         passwordHash: process.env.OCI_MONITOR_WEB_PASSWORD_HASH,
@@ -533,8 +545,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       },
       providerHealth,
       memberFred: configureMemberFred(),
-      ...(process.env.DART_FINANCIAL_SAMPLE === '1' && memberKrx && {
-        dart: createDartProvider({ issueFor: symbol => memberKrx.cachedIssue(symbol) }),
+      ...((process.env.DART_FINANCIAL_SAMPLE === '1' || process.env.FINANCE_STORAGE_SYNC === '1') && memberKrx && {
+        dart: createDartProvider({ issueFor: symbol => memberKrx.cachedIssue(symbol),
+          financialCollectionEnabled: process.env.DART_FINANCIAL_SAMPLE === '1' }),
       }),
       localKrx: krx,
       memberKrx,

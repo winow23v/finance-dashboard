@@ -31,7 +31,7 @@ export function createMembership({
     return response.json().catch(() => { throw new ProviderError(503, 'MEMBERSHIP_UNAVAILABLE') })
   }
 
-  function rest(resource, query, { method = 'GET', body, prefer } = {}) {
+  function rest(resource, query, { method = 'GET', body, prefer, failureCode } = {}) {
     return send('/rest/v1/' + resource + '?' + new URLSearchParams(query), {
       method,
       headers: {
@@ -40,6 +40,9 @@ export function createMembership({
         ...(prefer && { Prefer: prefer }),
       },
       ...(body && { body: JSON.stringify(body) }),
+    }).catch(error => {
+      if (failureCode) throw new ProviderError(503, failureCode)
+      throw error
     })
   }
 
@@ -73,6 +76,11 @@ export function createMembership({
 
   return {
     verify,
+    stageFundamentals(payload) {
+      return rest('rpc/finance_stage_fundamentals', {}, {
+        method: 'POST', body: { payload }, failureCode: 'FINANCIAL_STORAGE_UNAVAILABLE',
+      })
+    },
     async watchlist(id) {
       const items = await rest('rpc/finance_read_watchlist', {}, {
         method: 'POST', body: { member_id: id },
