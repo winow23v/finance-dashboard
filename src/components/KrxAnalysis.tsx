@@ -1,3 +1,4 @@
+import { financialNumber } from '../services/financialNumbers'
 import { invalidateStockHistory, readKrxStockHistory } from '../services/stockHistoryCache'
 import { LoadingSkeleton } from "./LoadingSkeleton"
 import { SegmentTabs } from "./SegmentTabs"
@@ -17,8 +18,7 @@ import type { KrxStocks } from '../types/finance'
 
 const StockHistoryChart = lazy(() => import('./StockHistoryChart'))
 
-const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
-const format = (value?: number | null) => value == null ? '자료 부족' : number.format(value)
+const format = financialNumber
 
 const historyStop = {
   'not-collected': '시장 일봉 미수집',
@@ -140,7 +140,7 @@ export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: {
                 {(['sma', 'ema'] as const).flatMap(kind => (kind === 'sma' ? smaWindows : emaWindows)
                   .filter(period => period !== 365 || indicator?.sma[365] != null).map(period => {
                   const value = indicator?.[kind][period]
-                  return <div key={kind + period}><dt>{kind.toUpperCase()} {period}</dt><dd>{format(value)}
+                  return <div key={kind + period}><dt>{kind.toUpperCase()} {period}</dt><dd>{formatAnalysisPrice(value, 'KRW')}
                     {value != null && <small>{relative(value)}</small>}</dd></div>
                 }))}
               </dl>
@@ -148,7 +148,7 @@ export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: {
               { label: '모멘텀 · RSI와 MACD', content: <>
               <p className="heatmap-meta">RSI는 최근 상승과 하락의 상대적 강도입니다. 70 이상과 30 이하는 과매수·과매도의 참고 구간입니다. MACD선은 단기·장기 이동평균의 차이이며, 히스토그램은 MACD선과 시그널선의 차이입니다. 추세와 거래량을 함께 확인하세요.</p>
               <dl className="stock-detail-fields">
-                <div><dt>RSI 14</dt><dd>{format(rsi)}</dd></div>
+                <div><dt>RSI 14</dt><dd>{format(rsi, 1)}</dd></div>
                 <div><dt>MACD 12·26</dt><dd>{format(macd?.line)}</dd></div>
                 <div><dt>시그널 9</dt><dd>{format(macd?.signal)}</dd></div>
                 <div><dt>히스토그램</dt><dd>{format(histogram)}</dd></div>

@@ -1,3 +1,4 @@
+import { financialNumber, shareVolume } from '../services/financialNumbers'
 import { ClientPages } from './ClientPages'
 import { formatWon } from '../services/formatWon'
 import { SearchButton, useSearchComposition } from './SearchButton'
@@ -10,7 +11,6 @@ import type { KrxMarket, KrxReason, KrxStocks as StockResults } from '../types/f
 import { marketSymbolKey, type MarketSymbol } from '../types/marketSymbol'
 import { Change } from './QuoteDisplay'
 
-const number = new Intl.NumberFormat('ko-KR')
 const marketResultLimit = 20
 
 export const krxStateLabels: Record<KrxReason, string> = {
@@ -96,7 +96,7 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
         setMarket('KOSPI')
       }}><X size={16} aria-hidden="true" /> 초기화</button>}
     </form>}
-    {!symbol && !query ? <p className="state">KOSPI 또는 KOSDAQ을 선택하고 종목명이나 코드를 입력하세요.</p> : !retained ? <LoadingSkeleton message="국내 종목을 불러오는 중입니다." shape="rows" /> : retained.data === null
+    {!symbol && !query ? null : !retained ? <LoadingSkeleton message="국내 종목을 불러오는 중입니다." shape="rows" /> : retained.data === null
       ? <p className="state" role="status">{retained.message}</p>
       : <>
         {!pending && retained.message && <p className="state" role="status">{retained.message}</p>}
@@ -129,11 +129,11 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
                 </div>
                 <div className="terminal-metrics">
                   {quote ? <>
-                    <strong>{number.format(quote.price)}원</strong>
+                    <strong>{financialNumber(quote.price, 0)}원</strong>
                     {quote.change !== null && quote.changePercent !== null &&
                       <Change market="KR" quote={{ change: quote.change, percent: quote.changePercent }} />}
                     <small className="watch-trading-date"><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가</small>
-                    <small>거래량 {quote.volume === null ? '미확인' : number.format(quote.volume)}</small>
+                    <small>거래량 {quote.volume === null ? '미확인' : shareVolume(quote.volume)}</small>
                     {quote.turnover != null && <small>거래대금 {formatWon(quote.turnover)}</small>}
                     {quote.marketCap != null && <small>시가총액 {formatWon(quote.marketCap)}</small>}
                   </> : <small>유효한 시세 없음</small>}

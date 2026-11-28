@@ -1,3 +1,4 @@
+import { financialNumber } from '../services/financialNumbers'
 import { invalidateStockHistory, readUsStockHistory } from '../services/stockHistoryCache'
 import { LoadingSkeleton } from "./LoadingSkeleton"
 import { SegmentTabs } from "./SegmentTabs"
@@ -11,8 +12,7 @@ import { formatAnalysisPrice, formatPercent, formatVolume } from '../services/an
 
 const StockHistoryChart = lazy(() => import('./StockHistoryChart'))
 
-const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
-const format = (value?: number | null) => value == null ? '자료 부족' : number.format(value)
+const format = financialNumber
 const messages = {
   'provider-not-configured': '미국시장 데이터 공급자 미연결',
   'not-published': '수집된 거래일 데이터가 없습니다.',
@@ -119,17 +119,17 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0, onRefreshResul
               <dl className="stock-detail-fields">
                 {(['sma', 'ema'] as const).flatMap(kind => (kind === 'sma' ? smaWindows : emaWindows)
                   .filter(period => period !== 365 || indicators.sma[365] !== null).map(period =>
-                  <div key={kind + period}><dt>{kind.toUpperCase()} {period}</dt><dd>{format(indicators[kind][period])}</dd></div>))}
+                  <div key={kind + period}><dt>{kind.toUpperCase()} {period}</dt><dd>{formatAnalysisPrice(indicators[kind][period], unit)}</dd></div>))}
               </dl>
               </> },
               { label: '모멘텀 분석', content: <>
               <p className="heatmap-meta">RSI는 상승·하락의 상대적 강도입니다. 70 이상과 30 이하는 과매수·과매도의 참고 구간입니다. MACD선은 단기·장기 이동평균의 차이입니다. 시그널선과의 간격을 나타내는 히스토그램을 추세·거래량과 함께 보세요.</p>
               <dl className="stock-detail-fields">
-                <div><dt>RSI 14</dt><dd>{format(indicators.rsi14)}</dd></div>
+                <div><dt>RSI 14</dt><dd>{format(indicators.rsi14, 1)}</dd></div>
                 <div><dt>MACD 12·26</dt><dd>{format(indicators.macd.line)}</dd></div>
                 <div><dt>시그널 9</dt><dd>{format(indicators.macd.signal)}</dd></div>
                 <div><dt>히스토그램</dt><dd>{format(indicators.macd.histogram)}</dd></div>
-                <div><dt>20일 평균 거래량</dt><dd>{indexId && indicators.volumeSma20 === 0 ? '미제공' : format(indicators.volumeSma20)}</dd></div>
+                <div><dt>20일 평균 거래량</dt><dd>{indexId && indicators.volumeSma20 === 0 ? '미제공' : formatVolume(indicators.volumeSma20)}</dd></div>
               </dl>
               </> },
               { label: '기간별 성과', content: <>

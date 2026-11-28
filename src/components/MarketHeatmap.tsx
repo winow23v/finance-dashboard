@@ -1,3 +1,4 @@
+import { financialNumber, financialPercent } from '../services/financialNumbers'
 import { formatWon } from '../services/formatWon'
 import { useId, useMemo, useState, type CSSProperties } from 'react'
 import { stockHref } from '../services/marketListings'
@@ -5,11 +6,9 @@ import { favoriteKey } from '../services/watchlist'
 import { heatmapColor, heatmapTextColor, layoutHeatmap, parseMarketHeatmap, type HeatmapListing, type HeatmapRect } from '../services/marketHeatmap'
 import { marketSymbolKey, type EquityMarket, type MarketSymbol } from '../types/marketSymbol'
 
-const price = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 4 })
-const change = new Intl.NumberFormat('ko-KR', { maximumSignificantDigits: 15, signDisplay: 'exceptZero' })
 const timestamp = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', dateStyle: 'short', timeStyle: 'short' })
 const atKst = (at: string) => timestamp.format(new Date(at))
-const rate = (item: HeatmapListing) => change.format(item.quote.percentChange) + '%'
+const rate = (item: HeatmapListing) => financialPercent(item.quote.percentChange, true)
 const rectStyle = (rect: HeatmapRect): CSSProperties => ({
   left: rect.x + '%', top: rect.y + '%', width: rect.width + '%', height: rect.height + '%',
 })
@@ -52,7 +51,7 @@ export function MarketHeatmap({ market, favorites, data, summary = false }: {
     <div className="section-heading">
       <div className="heatmap-legend" aria-label="등락률 색상 범위">
         {[-3, 0, 3].map((percent, index) => <span key={percent}>
-          <i aria-hidden="true" style={{ background: heatmapColor(market, percent) }} />{['하락', '보합', '상승'][index]} {change.format(percent)}%
+          <i aria-hidden="true" style={{ background: heatmapColor(market, percent) }} />{['하락', '보합', '상승'][index]} {financialPercent(percent, true)}
         </span>)}
       </div>
     </div>
@@ -78,7 +77,7 @@ export function MarketHeatmap({ market, favorites, data, summary = false }: {
               const key = marketSymbolKey(item.listing)
               const background = heatmapColor(market, item.quote.percentChange)
               return <a key={key} className="heatmap-tile" href={stockHref(item.listing)}
-                aria-label={`${item.listing.symbol} ${rate(item)} ${price.format(item.quote.value)} ${item.quote.currency}, ${item.name}`}
+                aria-label={`${item.listing.symbol} ${rate(item)} ${financialNumber(item.quote.value, item.quote.currency === 'KRW' ? 0 : item.quote.value < 1 ? 4 : 2)} ${item.quote.currency}, ${item.name}`}
                 aria-describedby={active === key ? tooltipId : undefined}
                 onMouseEnter={() => setActive(key)} onMouseLeave={() => setActive(undefined)}
                 onFocus={() => setActive(key)} onBlur={() => setActive(undefined)}
@@ -86,7 +85,7 @@ export function MarketHeatmap({ market, favorites, data, summary = false }: {
                 style={{ ...rectStyle(rect), background, color: heatmapTextColor(background) }}>
                 <span className="heatmap-ticker">{item.listing.symbol}</span>
                 <span className="heatmap-rate">{rate(item)}</span>
-                <span className="heatmap-price">{price.format(item.quote.value)} {item.quote.currency}</span>
+                <span className="heatmap-price">{financialNumber(item.quote.value, item.quote.currency === 'KRW' ? 0 : item.quote.value < 1 ? 4 : 2)} {item.quote.currency}</span>
               </a>
             })}
             <div aria-hidden="true" className="heatmap-sector" style={rectStyle(rect)}>
@@ -95,8 +94,8 @@ export function MarketHeatmap({ market, favorites, data, summary = false }: {
           </div>)}
           {activeItem && <div className="panel heatmap-tooltip" id={tooltipId} role="tooltip">
             <strong>{activeItem.name} · {activeItem.listing.symbol}</strong>
-            <small>{activeItem.sector} · {price.format(activeItem.quote.value)} {activeItem.quote.currency} · {rate(activeItem)}</small>
-            <small>시가총액 {activeItem.marketCapCurrency === 'KRW' ? formatWon(activeItem.marketCap) : price.format(activeItem.marketCap) + ' ' + activeItem.marketCapCurrency}</small>
+            <small>{activeItem.sector} · {financialNumber(activeItem.quote.value, activeItem.quote.currency === 'KRW' ? 0 : activeItem.quote.value < 1 ? 4 : 2)} {activeItem.quote.currency} · {rate(activeItem)}</small>
+            <small>시가총액 {activeItem.marketCapCurrency === 'KRW' ? formatWon(activeItem.marketCap) : financialNumber(activeItem.marketCap) + ' ' + activeItem.marketCapCurrency}</small>
             <small>관측 {activeItem.quote.observation.kind === 'instant'
               ? atKst(activeItem.quote.observation.at) + ' (KST)' : activeItem.quote.observation.date}</small>
           </div>}

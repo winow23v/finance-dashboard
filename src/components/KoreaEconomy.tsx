@@ -1,3 +1,4 @@
+import { financialNumber, financialPercent } from '../services/financialNumbers'
 import { LoadingSkeleton } from "./LoadingSkeleton"
 import { lazy, Suspense, useEffect, useId, useState } from 'react'
 import { isNumber, isRecord } from '../services/apiFinanceService'
@@ -13,8 +14,6 @@ const indicators = [
   { id: 'cpi', name: '소비자물가지수' },
   { id: 'unemployment', name: '실업률 (원계열)' },
 ]
-const twoDecimals = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const oneDecimal = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 
 function validHistory(value: unknown, daily: boolean): EcosPoint[] {
   if (!Array.isArray(value) || value.length > (daily ? 90 : 24)) return []
@@ -77,14 +76,15 @@ export function KoreaEconomy({ revision, visible, onRefreshReady, onRefreshResul
           <div className="quote-label"><h3>{name}</h3></div>
           <strong className="economic-value" data-state={row?.value !== undefined ? undefined : data === undefined ? 'loading'
             : (rateLimited || row?.code === 'PROVIDER_RATE_LIMITED') ? 'rate-limited' : data === null || row?.code ? 'error' : 'unpublished'}>{row?.value !== undefined
-            ? `${(id === 'unemployment' ? oneDecimal : twoDecimals).format(row.value)}${id === 'cpi' ? '' : ' ' + row.unit}`
+            ? `${financialNumber(row.value)}${id === 'cpi' ? '' : ' ' + row.unit}`
             : data === undefined ? <LoadingSkeleton message="한국 경제지표를 불러오는 중입니다." shape="value" /> : (rateLimited || row?.code === 'PROVIDER_RATE_LIMITED') ? '요청 한도 초과' : data === null || row?.code ? '조회 불가' : '공표 관측값 없음'}</strong>
           {id === 'cpi' && row?.value !== undefined && <small>기준연도 {row.unit}{!row.yearOverYear && ' / 전년 동월 대비 계산 불가'}</small>}
-          {row?.yearOverYear && <small>전년 동월 대비 {twoDecimals.format(row.yearOverYear.value)}% · 비교월 <time dateTime={row.yearOverYear.period}>{row.yearOverYear.period}</time></small>}
+          {row?.yearOverYear && <small>전년 동월 대비 {financialPercent(row.yearOverYear.value)}</small>}
           {row?.collectedAt && <>
-            <small><time dateTime={row.observationDate ?? row.observationPeriod}>{row.observationDate ?? row.observationPeriod}</time> 관측 기준</small>
             <details className="indicator-observation"><summary>관측 정보</summary>
               <dl className="observation-dates">
+                <div><dt>관측일</dt><dd><time dateTime={row.observationDate ?? row.observationPeriod}>{row.observationDate ?? row.observationPeriod}</time></dd></div>
+                {row.yearOverYear && <div><dt>전년 동월 비교월</dt><dd><time dateTime={row.yearOverYear.period}>{row.yearOverYear.period}</time></dd></div>}
                 {row.releaseDate && <div><dt>공표일</dt><dd><time dateTime={row.releaseDate}>{row.releaseDate}</time></dd></div>}
                 <div><dt>출처</dt><dd>한국은행 ECOS</dd></div>
               </dl>

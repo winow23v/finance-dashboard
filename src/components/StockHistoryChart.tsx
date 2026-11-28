@@ -1,3 +1,5 @@
+import { FinancialTooltip } from './FinancialTooltip'
+import { financialAxis, financialNumber, shareVolumeAxis } from '../services/financialNumbers'
 import { ChartNoAxesCombined } from 'lucide-react'
 import { useId, useMemo, useState } from 'react'
 import { Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
@@ -32,9 +34,7 @@ function Candle({ x = 0, y = 0, width = 0, height = 0, payload, domestic }: Cand
     <rect x={x} y={top} width={width} height={Math.max(bottom - top, 1)} stroke="none" />
   </g>
 }
-const axisNumber = new Intl.NumberFormat('ko-KR', { notation: 'compact', maximumFractionDigits: 1 })
 const axisTick = { fill: 'var(--muted)', fontSize: 11 }
-const tooltip = { background: 'var(--panel)', color: 'var(--text)', borderColor: 'var(--line)', borderRadius: 8 }
 const grid = { stroke: 'var(--line)', strokeDasharray: '4 5', vertical: false }
 const margin = { top: 6, right: 10, left: 4, bottom: 0 }
 
@@ -58,7 +58,7 @@ export default function StockHistoryChart({ history }: { history: MarketDailyHis
   const momentumAvailable = points.some(point => momentum === 'rsi' ? point.rsi !== null : point.histogram !== null)
   const dateAxis = <XAxis dataKey="tradingDate" tickFormatter={value => String(value).slice(5)} minTickGap={24}
     interval="preserveStartEnd" tick={axisTick} tickMargin={7} tickLine={false} axisLine={false} />
-  const axis = { orientation: 'right' as const, width: 52, tickFormatter: (value: number) => axisNumber.format(value),
+  const axis = { orientation: 'right' as const, width: 52, tickFormatter: (value: number) => financialAxis(value, currency === 'KRW' ? 0 : 2),
     tick: axisTick, tickLine: false, axisLine: false }
 
   return <section className="stock-history" aria-labelledby={id}>
@@ -106,10 +106,10 @@ export default function StockHistoryChart({ history }: { history: MarketDailyHis
             <CartesianGrid {...grid} />
             {dateAxis}
             <YAxis {...axis} domain={['auto', 'auto']} />
-            <Tooltip trigger={tooltipTrigger} isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }} contentStyle={tooltip} itemStyle={{ color: 'var(--text)' }}
-              formatter={value => typeof value === 'number' ? formatAnalysisPrice(value, currency) :
-                Array.isArray(value) ? value.map(price => formatAnalysisPrice(Number(price), currency)).join(' ~ ') : '자료 부족'} />
-            {priceView === 'candle' ? <Bar dataKey="candleRange" name={weekly ? '주간 범위' : '일중 범위'} maxBarSize={12}
+            <Tooltip trigger={tooltipTrigger} isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }} content={props => <FinancialTooltip {...props} formatValue={value => Array.isArray(value)
+                ? value.map(price => formatAnalysisPrice(typeof price === 'number' ? price : null, currency)).join(' ~ ')
+                : formatAnalysisPrice(typeof value === 'number' ? value : null, currency)} />} />
+            {priceView === 'candle' ? <Bar dataKey="candleRange" name={weekly ? '주간 범위' : '일중 범위'} maxBarSize={12} fill="var(--muted)"
               shape={<Candle domestic={currency === 'KRW'} />} isAnimationActive={false} /> :
               <Line dataKey="close" name={basis} stroke="var(--accent)" strokeWidth={2} dot={points.length === 1}
                 isAnimationActive={false} />}
@@ -124,9 +124,8 @@ export default function StockHistoryChart({ history }: { history: MarketDailyHis
           <ComposedChart data={points} margin={margin} title="거래량 차트" accessibilityLayer syncId={id}>
             <CartesianGrid {...grid} />
             {dateAxis}
-            <YAxis {...axis} />
-            <Tooltip trigger={tooltipTrigger} isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }} contentStyle={tooltip} itemStyle={{ color: 'var(--text)' }}
-              formatter={value => typeof value === 'number' ? formatVolume(value) : '자료 부족'} />
+            <YAxis {...axis} tickFormatter={shareVolumeAxis} />
+            <Tooltip trigger={tooltipTrigger} isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }} content={props => <FinancialTooltip {...props} formatValue={value => formatVolume(typeof value === 'number' ? value : null)} />} />
             <Bar dataKey="volume" name="거래량" fill="var(--blue)" isAnimationActive={false} />
             {!weekly && <><Line dataKey="volume20" name="거래량 평균 20" stroke="var(--favorite)" dot={false} isAnimationActive={false} />
             <Line dataKey="volume50" name="거래량 평균 50" stroke="var(--green)" dot={false} isAnimationActive={false} /></>}
@@ -157,8 +156,9 @@ export default function StockHistoryChart({ history }: { history: MarketDailyHis
       {!weekly && momentum !== 'off' && (momentumAvailable ? <div className="stock-volume-plot">
         <ResponsiveContainer width="100%" height="100%" minWidth={0}>
           <ComposedChart data={points} margin={margin} title={momentum === 'rsi' ? 'RSI 14' : 'MACD'} accessibilityLayer syncId={id}>
-            <CartesianGrid {...grid} />{dateAxis}<YAxis {...axis} domain={momentum === 'rsi' ? [0, 100] : ['auto', 'auto']} />
-            <Tooltip trigger={tooltipTrigger} isAnimationActive={false} contentStyle={tooltip} />
+            <CartesianGrid {...grid} />{dateAxis}<YAxis {...axis} tickFormatter={value => financialAxis(value, momentum === 'rsi' ? 1 : 2)} domain={momentum === 'rsi' ? [0, 100] : ['auto', 'auto']} />
+            <Tooltip trigger={tooltipTrigger} isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }}
+              content={props => <FinancialTooltip {...props} formatValue={value => financialNumber(typeof value === 'number' ? value : null, momentum === 'rsi' ? 1 : 2)} />} />
             {momentum === 'rsi' ? <>
               <ReferenceLine y={30} stroke="var(--muted)" strokeDasharray="4 4" />
               <ReferenceLine y={70} stroke="var(--muted)" strokeDasharray="4 4" />

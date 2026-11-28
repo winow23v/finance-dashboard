@@ -1,10 +1,11 @@
+import { FinancialTooltip } from './FinancialTooltip'
+import { financialAxis, financialNumber } from '../services/financialNumbers'
 import { LoadingSkeleton } from "./LoadingSkeleton"
 import { useEffect, useState } from 'react'
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { defaultHistoryPeriod, historyPeriods, marketHistory } from '../services/marketHistory'
 import type { Period, SeriesPoint } from '../types/finance'
 
-const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
 const date = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric' })
 const time = new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 export default function HistoryChart({ items, simulated, revision }: {
@@ -76,8 +77,9 @@ export default function HistoryChart({ items, simulated, revision }: {
           <AreaChart data={points} margin={{ top: 10, right: 12, left: 0, bottom: 0 }}>
             <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="4 5" />
             <XAxis dataKey="at" tickFormatter={tick} tick={{ fill: 'var(--muted)', fontSize: 12 }} minTickGap={30} axisLine={false} tickLine={false} tickMargin={10} />
-            <YAxis orientation="right" width={63} tickFormatter={value => number.format(value)} domain={[0, 100]} tick={{ fill: 'var(--muted)', fontSize: 12 }} axisLine={false} tickLine={false} />
-            <Tooltip labelFormatter={label => tick(String(label))} formatter={value => number.format(Number(value))} contentStyle={{ background: 'var(--panel)', borderColor: 'var(--line)', borderRadius: 8 }} />
+            <YAxis orientation="right" width={63} tickFormatter={value => financialAxis(value)} domain={[0, 100]} tick={{ fill: 'var(--muted)', fontSize: 12 }} axisLine={false} tickLine={false} />
+            <Tooltip isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }}
+              content={props => <FinancialTooltip {...props} formatValue={value => financialNumber(typeof value === 'number' ? value : null)} />} />
             <Area name={primaryName} dataKey="value" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.09} strokeWidth={2} isAnimationActive={false} />
             {compareId && <Area name={comparisonName} dataKey="comparison" stroke="var(--blue)" fill="none" strokeDasharray="5 4" strokeWidth={2} isAnimationActive={false} />}
           </AreaChart>

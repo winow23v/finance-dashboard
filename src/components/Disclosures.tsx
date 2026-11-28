@@ -188,7 +188,7 @@ export function Disclosures({ revision, visible = true, onRefreshReady, onRefres
     requestAnimationFrame(() => companyHeading.current?.focus())
   }
 
-  return <div className="company-grid" data-detail={showDetail}>
+  return <div className="company-grid" data-detail={showDetail} data-selected={!!selected}>
     <section className="panel disclosures-panel company-search">
     <div className="section-heading"><h2>국내 기업 검색</h2>
       </div>
@@ -214,10 +214,9 @@ export function Disclosures({ revision, visible = true, onRefreshReady, onRefres
       <small>최근 조회</small>
       {recent.map(item => <button type="button" className="button" key={item.id} onClick={() => openCompany(item)}>{item.name}</button>)}
     </div>}
-    {search && <div>
+    {search && searchEnabled && <div>
       <div id={resultsId} aria-live="polite" aria-busy={!!searchPath && searchResult === undefined}>
-        {!searchEnabled ? <p className="state">검색을 선택해 마지막 검색 결과를 불러올 수 있습니다.</p>
-          : searchResult === undefined ? <LoadingSkeleton message="기업을 검색하는 중입니다." shape="rows" />
+        {searchResult === undefined ? <LoadingSkeleton message="기업을 검색하는 중입니다." shape="rows" />
           : !visibleCompanies?.length ? <p className="state">{searchResult.data === null
             ? searchResult.errorCode === 'PROVIDER_TIMEOUT' ? '응답 시간 초과' : '조회 불가' : '검색 결과 없음'}</p>
           : <ul className="disclosure-list company-results">
@@ -229,8 +228,7 @@ export function Disclosures({ revision, visible = true, onRefreshReady, onRefres
       <Pager label="기업 검색 페이지" page={searchPage} totalPages={searchPages} controls={resultsId} onChange={setSearchPage} />
     </div>}
     </section>
-    <section className="panel disclosures-panel company-detail" aria-label="기업 상세정보">
-    {selected ? <>
+    {selected && <section className="panel disclosures-panel company-detail" aria-label="기업 상세정보">
       <button className="button company-back" onClick={() => {
         setShowDetail(false)
         requestAnimationFrame(() => input.current?.focus())
@@ -280,7 +278,6 @@ export function Disclosures({ revision, visible = true, onRefreshReady, onRefres
         {(detail.filingsError || detail.financialsError) && <button type="button" className="button"
           onClick={() => setDetailAttempt(value => value + 1)}>공시·재무 다시 시도</button>}
       </>}
-    </> : <p className="state">검색 결과에서 기업을 선택하면 공시와 재무정보를 볼 수 있습니다.</p>}
-    </section>
+    </section>}
   </div>
 }

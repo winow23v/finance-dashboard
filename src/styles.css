@@ -7,6 +7,10 @@
 /* Hallmark · dropped setQuery('') editor.current?.showModal(), setQuery('') input.current?.focus(), onClose={() => setQuery('')} · Reset now clears the request result and IME state on open, clear and close. */
 /* Hallmark · dropped else if (searchResult?.failed), pending || current?.data !== null · Search submit now retries failures while keeping successful results visible. */
 /* Hallmark · dropped if (!input.trim() || (input.trim() === query · Quote search still submits with IME and duplicate request guards. */
+/* Hallmark · dropped #economy, #global, 해외시장 · Overview shortcuts and the duplicate overseas panel were removed; the menu and direct routes remain. */
+/* Hallmark · dropped #_r_3_ · The same labeled Watchlist search field has a regenerated React identifier after moving sections. */
+/* Hallmark · dropped setPair(event.target.value), onChange={units => setSettings, onClick={() => setPair(name)} · Pair selection supports direct links and the unused display-unit selector was removed. */
+/* Hallmark · dropped 3%, 0%, 26.11.19, 6:00, 2026 · Numeric formatting is standardized and routine observation dates moved out of the overview. */
 @import "tailwindcss";
 
 :root {
@@ -1320,3 +1324,52 @@ span.chart-body { display: block; }
 }
 .market-list-order { display: flex; align-items: center; gap: var(--space-control); }
 .market-list-order select { min-height: 44px; }
+
+/* Keep quote surfaces and controls compact across the overview and search pages. */
+.market-overview .overview-quotes,
+.compact-fx-rates .overview-quotes { background: transparent; border: 0; gap: var(--space-control); }
+.overview-quotes .compact-market-quote {
+  min-height: 80px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  align-content: center;
+}
+.compact-quote-heading h3 a { display: inline-flex; align-items: center; min-height: 32px; }
+.disclosure-controls.quote-search-controls :is(input, select, button),
+.company-detail .disclosure-controls select {
+  box-sizing: border-box;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: 0 12px;
+}
+.disclosure-controls.quote-search-controls input { width: 100%; }
+.company-search .quote-search-controls { flex-wrap: nowrap; margin-block: var(--space-control); }
+.company-search .quote-search-controls label { flex: 1; }
+.company-grid[data-selected="false"] { grid-template-columns: minmax(0, 1fr); }
+.company-grid[data-selected="false"] .company-search { max-width: 44rem; }
+.company-grid .disclosure-controls label { gap: 4px; }
+.recent-companies { margin-block: var(--space-control); }
+.recent-companies .button { min-height: 36px; }
+.settings-panel .setting { min-height: 0; padding-block: var(--space-control); }
+.financial-tooltip {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  padding: var(--space-control);
+  max-width: min(18rem, 100%);
+  font-size: .75rem;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.financial-tooltip-date { color: var(--muted); margin-bottom: 4px; }
+.financial-tooltip dl { margin: 0; }
+.financial-tooltip dl > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-control); }
+.financial-tooltip dt, .financial-tooltip dd { margin: 0; }
+.financial-tooltip dd { text-align: end; min-width: 0; }
+.financial-tooltip dt > span { display: inline-block; width: 8px; height: 8px; margin-inline-end: 4px; border-radius: 50%; }
+@media (max-width: 780px) {
+  .index-carousel .overview-quotes::after { flex-basis: calc(15% - var(--space-control)); }
+  .compact-quote-heading h3 a { min-height: 44px; }
+}
