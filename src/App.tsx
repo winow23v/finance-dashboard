@@ -346,9 +346,12 @@ export function App({ member, signOut, accountBusy, accountError }: {
       document.getElementById('main-content')?.focus()
     }}>본문으로 이동</a>
     <header className="topbar">
-      <a className="brand" href="#overview" aria-label="Finance Dashboard">
+      <a className="brand" href="#overview" aria-label={isApi ? "Finance Dashboard" : "Finance Dashboard (DEMO 모드)"}>
         <img className="brand-icon" src={import.meta.env.BASE_URL + 'favicon.svg?v=19k'} alt="" width={30} height={30} />
-        <span className="brand-name">Finance Dashboard{!isApi && <small>DEMO 모드</small>}</span>
+        <span className="brand-copy">
+          <span className="brand-name">Finance Dashboard</span>
+          {!isApi && <small className="brand-demo">DEMO 모드</small>}
+        </span>
       </a>
       <span className="breadcrumb">{stock ? (stock.market === 'KR' ? '국내시장' : '해외시장')
         : <>워크스페이스 <span aria-hidden="true">/</span> <strong>{pageLabel}</strong></>}</span>

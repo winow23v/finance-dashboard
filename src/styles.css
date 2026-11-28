@@ -96,8 +96,9 @@ small { display: block; color: var(--muted); font-size: var(--text-caption); }
 .brand, .top-actions, .connection-status { display: flex; align-items: center; gap: var(--space-control); min-width: 0; }
 .brand { padding-left: 24px; min-height: 44px; font-weight: 750; letter-spacing: -.035em; }
 .brand-icon { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--accent-bg); color: var(--accent); }
+.brand-copy { display: grid; min-width: 0; }
 .brand-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.brand-name small { display: none; }
+.brand-demo { color: var(--accent); font-size: .65rem; font-weight: 600; letter-spacing: 0; white-space: nowrap; }
 .breadcrumb { padding-inline: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .875rem; }
 .breadcrumb span { margin-inline: 4px; }
 .breadcrumb strong { color: var(--text); }
@@ -427,12 +428,12 @@ dialog::backdrop { background: var(--scrim); }
 @media (min-width: 781px) {
   .rail-collapsed .brand { padding-left: 21px; }
   .rail-collapsed .brand-name { display: none; }
+  .rail-collapsed .topbar:has(.brand-demo) { grid-template-columns: 128px minmax(0, 1fr) auto; }
 }
 @media (max-width: 780px) {
   .app { --header-height: 57px; --gutter: 16px; grid-template-columns: minmax(0, 1fr); }
   .topbar { grid-template-columns: minmax(0, 1fr) auto; gap: 4px; padding-inline: 12px; }
   .brand { padding: 0; gap: 6px; }
-  .brand-name small { display: block; font-size: .65rem; font-weight: 500; letter-spacing: 0; text-overflow: ellipsis; overflow: hidden; }
   .top-actions { gap: 4px; }
   .sidebar, .breadcrumb, .connection-status { display: none; }
   .workspace { padding-bottom: calc(var(--bottom-height) + 6px + env(safe-area-inset-bottom)); }
@@ -1158,7 +1159,6 @@ span.chart-body { display: block; }
 [data-market].flat { color: var(--muted); }
 
 /* Keep the market overview on shared edges, with a single surface for index quotes. */
-.brand-name small { display: inline; margin-inline-start: 6px; color: var(--accent); }
 .market-overview .page-heading { padding-block-end: var(--space-control); border-block-end: 1px solid var(--line); }
 .market-overview .market-index-section .section-heading { margin-block-end: 12px; }
 .overview-quotes {
@@ -1222,7 +1222,6 @@ span.chart-body { display: block; }
     padding-block: 0;
     scrollbar-color: var(--line) var(--background);
   }
-  .brand-name small { display: block; margin-inline-start: 0; }
 }
 @media (max-width: 380px) {
   .topbar .brand-icon { display: block; }
