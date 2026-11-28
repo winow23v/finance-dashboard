@@ -141,6 +141,7 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
         </div>
         <details className="krx-heatmap-list">
           <summary>{summary ? '시가총액 상위 5종목' : '종가·등락률을 종목 목록으로 보기'}</summary>
+          {!summary && <p className="heatmap-meta">{filter || 'KOSPI·KOSDAQ'} 시가총액 상위 {listRows.length}종목을 정렬합니다.</p>}
           {!summary && <label className="market-list-order">정렬 <select value={order}
             onChange={event => setOrder(event.target.value as typeof order)}>
             <option value="cap">시가총액</option><option value="price">종가</option><option value="change">등락률</option>

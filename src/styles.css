@@ -1300,7 +1300,17 @@ span.chart-body { display: block; }
 .quote-search-controls :is(input, select, button) { min-height: 44px; max-width: 100%; }
 .quote-search-controls.search { align-items: center; }
 @media (max-width: 780px) {
-  .index-carousel .overview-quotes { position: relative; display: flex; width: 100%; min-width: 0; overflow-x: auto; contain: inline-size; }
+  .index-carousel .overview-quotes {
+    position: relative;
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scroll-snap-type: x mandatory;
+    contain: inline-size;
+  }
+  .index-carousel .overview-quotes::after { flex-basis: calc(15% - 1px); }
   .economic-readings.indicator-list, .quote-grid.ecos-indicators { grid-template-columns: minmax(0, 1fr); }
   .index-carousel-dots { flex-wrap: wrap; }
   .quote-search-controls label:has(input) { flex-basis: 100%; }
