@@ -32,7 +32,7 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
   const [input, setInput] = useState('')
   const [query, setQuery] = useState('')
   const [revision, setRevision] = useState(0)
-  const [result, setResult] = useState<{ market: KrxMarket; symbol?: string; query: string; revision: number; data: StockResults[] | null; message?: string }>()
+  const [result, setResult] = useState<{ market: KrxMarket; symbol?: string; query: string; revision: number; data: StockResults[] | null; retainedSymbols: Partial<Record<KrxMarket, string[]>>; message?: string }>()
   const current = result?.market === market && result.symbol === symbol && result.query === query && result.revision === revision ? result : undefined
 
   useEffect(() => {
@@ -50,12 +50,12 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
       setResult(previous => {
         const sameLookup = previous?.market === market && previous.symbol === symbol && previous.query === query
         const previousData = sameLookup ? previous.data ?? [] : []
-        let showsPriorRows = false
+        const retainedSymbols: Partial<Record<KrxMarket, string[]>> = {}
         const visible = outcomes.flatMap((outcome, index) => {
           const prior = previousData.find(dataset => dataset.market === markets[index])
           if (outcome.status === 'rejected') {
             if (!prior?.items.length) return []
-            showsPriorRows = true
+            retainedSymbols[prior.market] = prior.items.map(item => item.symbol)
             return [prior]
           }
           const { items, listings } = outcome.value
@@ -63,12 +63,12 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
           const freshSymbols = new Set(items.map(item => item.symbol))
           const fallback = prior.items.filter(item => !freshSymbols.has(item.symbol)).slice(0, marketResultLimit - items.length)
           if (!fallback.length) return [outcome.value]
-          showsPriorRows = true
-          return [{ ...outcome.value, items: [...items, ...fallback] }]
+          retainedSymbols[outcome.value.market] = fallback.map(item => item.symbol)
+          return items.length ? [{ ...outcome.value, items: [...items, ...fallback] }] : [prior]
         })
         const fallbackNotice = data.some(dataset => dataset.items.length) ? ' 일부는 이전 조회 결과입니다.' : ' 이전 조회 결과를 표시합니다.'
-        const notice = showsPriorRows ? (message ?? '종목 조회 실패') + fallbackNotice : message
-        return { market, symbol, query, revision, data: visible.length ? visible : null, message: notice }
+        const notice = Object.keys(retainedSymbols).length ? (message ?? '종목 조회 실패') + fallbackNotice : message
+        return { market, symbol, query, revision, data: visible.length ? visible : null, retainedSymbols, message: notice }
       })
     })
     return () => controller.abort()
@@ -101,9 +101,10 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
       : <>
         {!pending && retained.message && <p className="state" role="status">{retained.message}</p>}
         {retained.data.map(dataset => {
+        const previousSymbols = retained.retainedSymbols[dataset.market] ?? []
         const details = [...new Set([dataset.listings.reason, dataset.trades.reason].filter(reason => reason !== null && reason !== 'before-collection' && reason !== 'weekend'))]
         return <div key={dataset.market}>
-          <p className="state">{dataset.market}
+          <p className="state">{dataset.market}{previousSymbols.length > 0 && previousSymbols.length < dataset.items.length && ' · 이번 조회 기준'}
             {dataset.listingDate && ' · 종목 기준 ' + dataset.listingDate}
             {dataset.trades.tradingDate && ' · 종가 기준 ' + dataset.trades.tradingDate}
             {(dataset.trades.usingPreviousClose || details.length > 0) && <> <span className="muted-badge">
@@ -119,6 +120,7 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
               return <li className="terminal-stock-row" key={item.symbol}>
                 <div className="terminal-symbol">
                   <a className="stock-detail-link" href={stockHref(listing)} title={item.name}><span className="krx-stock-name">{item.name}</span></a>
+                  {previousSymbols.includes(item.symbol) && <small>이전 조회</small>}
                   <small>{item.symbol} · {item.market}{item.shareClass && ' · ' + item.shareClass}</small>
                 </div>
                 <div className="terminal-metrics">
