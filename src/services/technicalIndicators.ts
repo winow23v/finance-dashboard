@@ -1,18 +1,44 @@
 import type { DailyOhlcvBar, MarketDailyHistory } from '../types/marketDataProvider'
 
+import { regularDivergences, type DivergenceSettings } from './technicalPivots.ts'
+
 export const smaWindows = [5, 20, 50, 60, 100, 120, 200, 365] as const
 export const emaWindows = [20, 50, 100, 200] as const
 const wilderPeriod = 14
 const finite = (value: number) => Number.isFinite(value) ? value : null
 
-function validBars(bars: readonly DailyOhlcvBar[]) {
-  return bars.every(({ tradingDate, open, high, low, close, volume }, index) => {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(tradingDate) || (index && tradingDate <= bars[index - 1].tradingDate)) return false
+export function ohlcvQuality(history: MarketDailyHistory) {
+  const { bars } = history
+  const issues = new Set<string>()
+  if (!bars.length) issues.add('no-observations')
+  if (history.completeness !== 'complete') issues.add('missing-sessions')
+  const seen = new Set<string>()
+  const discontinuities: string[] = []
+  for (const [index, bar] of bars.entries()) {
+    const { tradingDate, open, high, low, close, volume } = bar
     const utc = new Date(tradingDate)
-    return Number.isFinite(+utc) && utc.toISOString().slice(0, 10) === tradingDate
-      && [open, high, low, close, volume].every(value => Number.isFinite(value) && value <= Number.MAX_SAFE_INTEGER)
-      && low > 0 && low <= Math.min(open, close) && high >= Math.max(open, close) && volume >= 0
-  })
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(tradingDate) || !Number.isFinite(+utc)
+      || utc.toISOString().slice(0, 10) !== tradingDate) issues.add('invalid-date')
+    if (seen.has(tradingDate)) issues.add('duplicate-session')
+    seen.add(tradingDate)
+    const previous = bars[index - 1]
+    if (previous && tradingDate < previous.tradingDate) issues.add('unsorted-sessions')
+    if (![open, high, low, close].every(value => Number.isFinite(value) && value <= Number.MAX_SAFE_INTEGER)
+      || !(low > 0 && low <= Math.min(open, close) && high >= Math.max(open, close))) issues.add('invalid-prices')
+    if (volume == null) issues.add('missing-volume')
+    else if (!Number.isSafeInteger(volume) || volume < 0) issues.add('invalid-volume')
+    if (previous && history.adjustment !== 'total-return-adjusted'
+      && (open / previous.close >= 1.3 || open / previous.close <= 0.7
+        || (previous.listedShares && bar.listedShares && previous.listedShares !== bar.listedShares))) {
+      discontinuities.push(tradingDate)
+    }
+  }
+  return { issues: [...issues], discontinuities, adjustment: history.adjustment,
+    timeZone: history.timeZone, observations: bars.length, through: bars.at(-1)?.tradingDate ?? null }
+}
+
+function validBars(history: MarketDailyHistory) {
+  return !ohlcvQuality(history).issues.some(issue => issue !== 'no-observations' && issue !== 'missing-sessions')
 }
 
 function average(values: readonly number[], period: number): number | null {
@@ -84,13 +110,13 @@ function movingAverageCross(bars: readonly DailyOhlcvBar[]) {
     if (previous && previous !== direction) event = { type: direction > 0 ? 'golden' : 'dead', tradingDate }
     previous = direction
   }
-  return { lastEvent: event }
+  return { lastEvent: event, currentEvent: event?.tradingDate === bars.at(-1)?.tradingDate ? event : null }
 }
 
 export function calculatePriceReturns(history: MarketDailyHistory) {
   const { bars } = history
   const last = bars.at(-1)
-  const newestFirst = last && history.completeness === 'complete' && validBars(bars) ? [...bars].reverse() : []
+  const newestFirst = last && history.completeness === 'complete' && validBars(history) ? [...bars].reverse() : []
   return Object.fromEntries([1, 3, 6].map(months => {
     if (!last || !newestFirst.length) return [months, null]
     const cutoff = new Date(last.tradingDate + 'T00:00:00Z')
@@ -106,9 +132,9 @@ export function calculatePriceReturns(history: MarketDailyHistory) {
   }))
 }
 
-export function calculateTechnicalIndicators(history: MarketDailyHistory, options: { volumeSpikeThreshold?: number } = {}) {
+export function calculateTechnicalIndicators(history: MarketDailyHistory, options: { volumeSpikeThreshold?: number; volumeAvailable?: boolean } = {}) {
   const { bars } = history
-  if (history.completeness !== 'complete' || !bars.length || !validBars(bars)) return null
+  if (history.completeness !== 'complete' || !bars.length || !validBars(history)) return null
   const closes = bars.map(bar => bar.close)
   const changes = closes.slice(1).map((close, index) => close - closes[index])
   const rsi = rsiSeries(changes)
@@ -128,6 +154,7 @@ export function calculateTechnicalIndicators(history: MarketDailyHistory, option
     : histogram > 0 && previousHistogram <= 0 ? 'up'
       : histogram < 0 && previousHistogram >= 0 ? 'down' : null
   const last = bars[bars.length - 1]
+  const atr14 = wilder(ranges) ?? null
   const sma = Object.fromEntries(smaWindows.map(period => [period, average(closes, period)]))
   const priorCloses = closes.slice(0, -1)
   const previousSma = Object.fromEntries([20, 50, 200].map(period => [period, average(priorCloses, period)]))
@@ -143,7 +170,7 @@ export function calculateTechnicalIndicators(history: MarketDailyHistory, option
       percentB: width > 0 ? finite((last.close - lower) / width * 100) : null,
       bandwidth: finite(width / middle * 100) }
   })()
-  const volumes = bars.map(bar => bar.volume)
+  const volumes = options.volumeAvailable === false ? [] : bars.map(bar => bar.volume)
   const volumeSma20 = average(volumes, 20)
   const prior20 = average(volumes.slice(0, -1), 20)
   const volumeRatio = prior20 !== null && prior20 > 0 ? finite(last.volume / prior20) : null
@@ -151,6 +178,16 @@ export function calculateTechnicalIndicators(history: MarketDailyHistory, option
   const spikeThreshold = Number.isFinite(supplied) && supplied > 1 ? supplied : 1.5
   return {
     tradingDate: last.tradingDate,
+    smoothing: Object.fromEntries(emaWindows.map(period => {
+      // Residual seed weight of at most 1% is the stability reporting threshold.
+      const updates = closes.length - period
+      const seedWeight = updates < 0 ? null : (1 - 2 / (period + 1)) ** updates
+      return [period, { seedWeight, state: seedWeight === null ? 'uninitialized' : seedWeight > 0.01 ? 'warming-up' : 'stable' }]
+    })),
+    macdDynamics: {
+      histogramDirection: histogram === null || previousHistogram === null ? null : Math.sign(histogram - previousHistogram),
+      zeroCross: crossing(macdSeries.at(-2), line),
+    },
     close: last.close,
     sma,
     ema: Object.fromEntries(emaWindows.map(period => [period, latest(ema(closes, period))])),
@@ -160,14 +197,36 @@ export function calculateTechnicalIndicators(history: MarketDailyHistory, option
     macdCross,
     volumeSma20,
     volumeSma50: average(volumes, 50),
-    volume: { latest: last.volume, direction: volumes.length > 1 ? Math.sign(last.volume - volumes.at(-2)!) : null, sma5: average(volumes, 5), prior20, ratio: volumeRatio,
+    volume: { latest: volumes.at(-1) ?? null, direction: volumes.length > 1 ? Math.sign(last.volume - volumes.at(-2)!) : null, sma5: average(volumes, 5), prior20, ratio: volumeRatio,
       spikeThreshold, spike: volumeRatio === null ? null : volumeRatio >= spikeThreshold },
-    atr14: wilder(ranges) ?? null,
+    atr14,
+    atrPercent: finite((atr14 ?? NaN) / last.close * 100),
     prior: { sma: previousSma, atr14: wilder(ranges.slice(0, -1)) ?? null },
     dmi: directionalMovement(bars, ranges),
     bands,
     cross: movingAverageCross(bars),
   }
+}
+
+function crossing(previous: number | undefined, current: number | null) {
+  if (previous === undefined || current === null) return null
+  return current > 0 && previous <= 0 ? 'up' : current < 0 && previous >= 0 ? 'down' : null
+}
+
+export function technicalDivergences(history: MarketDailyHistory, settings?: DivergenceSettings) {
+  if (history.completeness !== 'complete' || !validBars(history)) return []
+  const { bars } = history
+  const closes = bars.map(bar => bar.close)
+  const rsi = rsiSeries(closes.slice(1).map((close, index) => close - closes[index]))
+  const { line } = macdSeriesFor(closes)
+  return ([['RSI', rsi, 14], ['MACD', line, 25]] as const).flatMap(([indicator, values, offset]) => {
+    const aligned = bars.map((_, index) => values[index - offset] ?? null)
+    return (['low', 'high'] as const).flatMap(kind =>
+      regularDivergences(bars.map(bar => bar[kind]), aligned, kind, settings).map(event => ({
+        ...event, indicator, confirmedDate: bars[event.current.availableIndex].tradingDate,
+        from: bars[event.previous.price.index].tradingDate, to: bars[event.current.price.index].tradingDate,
+      })))
+  }).sort((a, b) => a.confirmedDate.localeCompare(b.confirmedDate))
 }
 
 function rsiSeries(changes: readonly number[]) {
@@ -182,8 +241,8 @@ function macdSeriesFor(closes: readonly number[]) {
   return { line, signal: ema(line, 9) }
 }
 
-export function completedWeeklyBars(history: MarketDailyHistory): DailyOhlcvBar[] {
-  if (history.completeness !== 'complete' || !validBars(history.bars)) return []
+export function weeklyBars(history: MarketDailyHistory) {
+  if (history.completeness !== 'complete' || !validBars(history)) return []
   const weeks = new Map<number, DailyOhlcvBar>()
   for (const bar of history.bars) {
     const day = new Date(bar.tradingDate)
@@ -196,12 +255,20 @@ export function completedWeeklyBars(history: MarketDailyHistory): DailyOhlcvBar[
   }
   // The range may begin midweek. The last observed week has no later session
   // to establish that its collection window has ended.
-  return [...weeks.values()].slice(1, -1).filter(week => Number.isSafeInteger(week.volume))
+  const values = [...weeks.values()]
+  return values.flatMap((bar, index) => Number.isSafeInteger(bar.volume) ? [{
+    bar, status: index === values.length - 1 ? 'completion-unverified' as const
+      : index === 0 ? 'range-start-unverified' as const : 'confirmed' as const,
+  }] : [])
+}
+
+export function completedWeeklyBars(history: MarketDailyHistory): DailyOhlcvBar[] {
+  return weeklyBars(history).filter(week => week.status === 'confirmed').map(week => week.bar)
 }
 
 export function technicalChartSeries(history: MarketDailyHistory, includeIndicators = true) {
   const { bars } = history
-  if (!validBars(bars)) return []
+  if (!validBars(history)) return []
   const valid = includeIndicators && history.completeness === 'complete'
   const closes = bars.map(bar => bar.close)
   const volumes = bars.map(bar => bar.volume)

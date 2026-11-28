@@ -440,3 +440,112 @@ test('weekly OHLCV uses observed sessions only and excludes range-edge weeks', a
   assert.deepEqual(completedWeeklyBars({ ...source, completeness: 'missing-observations' }), [])
   assert.deepEqual(completedWeeklyBars({ ...source, bars: source.bars.slice(0, 14) }), [])
 })
+
+test('OHLCV quality distinguishes malformed prices, duplicate sessions, missing volume and actual zero', async () => {
+  const { ohlcvQuality } = await import('./technicalIndicators.ts')
+  const data = history([...Array(20).fill(100), 160])
+  data.bars.at(-1).volume = 0
+  assert.deepEqual(ohlcvQuality(data).issues, [])
+  assert.deepEqual(ohlcvQuality(data).discontinuities, [data.bars.at(-1).tradingDate])
+  assert.equal(calculateTechnicalIndicators(data).volume.ratio, 0)
+  assert.equal(calculateTechnicalIndicators(data, { volumeAvailable: false }).volume.latest, null)
+  data.bars.at(-1).volume = null
+  assert.deepEqual(ohlcvQuality(data).issues, ['missing-volume'])
+  assert.equal(calculateTechnicalIndicators(data), null)
+  data.bars.at(-1).high = 1
+  data.bars.push(data.bars.at(-1))
+  assert.deepEqual(ohlcvQuality(data).issues, ['invalid-prices', 'missing-volume', 'duplicate-session'])
+})
+
+test('EMA distinguishes unavailable seed, warmup and declining seed dependence', () => {
+  assert.equal(calculateTechnicalIndicators(history(ramp(19))).smoothing[20].state, 'uninitialized')
+  assert.deepEqual(calculateTechnicalIndicators(history(ramp(20))).smoothing[20], { seedWeight: 1, state: 'warming-up' })
+  assert.equal(calculateTechnicalIndicators(history(ramp(67))).smoothing[20].state, 'stable')
+})
+
+test('divergence uses matched price and oscillator pivots only after the matching window closes', async () => {
+  const { regularDivergences } = await import('./technicalPivots.ts')
+  const price = [15, 13, 10, 13, 15, 16, 15, 12, 8, 12, 15, 16, 17, 18]
+  const oscillator = [55, 42, 32, 20, 31, 40, 45, 46, 41, 30, 41, 46, 49, 51]
+  assert.deepEqual(regularDivergences(price.slice(0, 12), oscillator.slice(0, 12), 'low'), [])
+  const [bullish] = regularDivergences(price, oscillator, 'low')
+  assert.equal(bullish.type, 'bullish')
+  assert.deepEqual(bullish.current, {
+    price: { index: 8, confirmedIndex: 10, value: 8 },
+    oscillator: { index: 9, confirmedIndex: 11, value: 30 },
+    availableIndex: 12,
+  })
+  assert.deepEqual(regularDivergences(price.slice(0, 13), oscillator.slice(0, 13), 'low'), [bullish])
+  assert.deepEqual(regularDivergences(price, oscillator, 'low', { tolerance: 0 }), [])
+  assert.deepEqual(regularDivergences(price, oscillator, 'low', { minDistance: 7 }), [])
+  const [bearish] = regularDivergences(price.map(value => 30 - value), oscillator.map(value => 100 - value), 'high')
+  assert.equal(bearish.type, 'bearish')
+  assert.equal(bearish.current.availableIndex, 12)
+})
+
+test('consolidated analysis invalidates for source corrections and settings with the same timestamp', async () => {
+  const { analyzeDailyHistory } = await import('./technicalAnalysis.ts')
+  const data = history(ramp(370))
+  const source = { market: 'US', symbol: 'FIXTURE', collectedAt: '2025-01-05T00:00:00Z',
+    simulated: true, stale: false, aligned: true, volumeAvailable: true }
+  const first = analyzeDailyHistory(data, source)
+  assert.equal(first.intraday.status, 'provider-unavailable')
+  assert.equal(first.movingAverages.value.emaOrder, 'bullish')
+  assert.equal(first.momentum.source.simulated, true)
+  assert.equal(first.strength.basis.tradingDate, data.bars.at(-1).tradingDate)
+  assert.equal(analyzeDailyHistory(structuredClone(data), source), first)
+  assert.notEqual(analyzeDailyHistory(data, { ...source, divergence: { minDistance: 8 } }), first)
+  const corrected = structuredClone(data)
+  corrected.bars.at(-1).close -= 1
+  const next = analyzeDailyHistory(corrected, source)
+  assert.notEqual(next, first)
+  assert.notEqual(next.indicators.close, first.indicators.close)
+  const missing = analyzeDailyHistory(data, { ...source, volumeAvailable: false })
+  assert.equal(missing.volume.unavailable, 'provider-volume-unavailable')
+  assert.ok(missing.momentum.value)
+  assert.equal(analyzeDailyHistory(data, { ...source, aligned: false }).direction.unavailable, 'unaligned-reference')
+})
+
+test('weekly aggregation exposes uncertainty at both range boundaries', async () => {
+  const { weeklyBars } = await import('./technicalIndicators.ts')
+  const data = history(ramp(16))
+  data.bars.splice(8, 1)
+  const [start, complete, end] = weeklyBars(data)
+  assert.equal(start.status, 'range-start-unverified')
+  assert.equal(complete.status, 'confirmed')
+  assert.equal(complete.bar.volume, 662)
+  assert.equal(end.status, 'completion-unverified')
+  assert.equal(weeklyBars(history(ramp(4)))[0].status, 'completion-unverified')
+})
+
+test('MACD line, signal and histogram match independent decimal recurrence on nonlinear prices', () => {
+  const closes = Array.from({ length: 50 }, (_, index) => 100 + (index % 9) ** 2 - Math.floor(index / 4))
+  const cases = [
+    [34, 1.5583066714105016, 0.47330144449747075, 1.085005226913031, 'up', 'up', 1],
+    [37, -0.9197451489638429, 0.8411297330045929, -1.7608748819684357, 'down', 'down', -1],
+    [42, -1.2443129479052208, -1.368435859438242, 0.12412291153302116, 'up', null, 1],
+    [43, 0.9337764038107785, -0.9079934067884379, 1.8417698105992164, null, 'up', 1],
+  ]
+  for (const [index, line, signal, histogram, signalCross, zeroCross, histogramDirection] of cases) {
+    const result = calculateTechnicalIndicators(history(closes.slice(0, index + 1)))
+    assert.ok(Math.abs(result.macd.line - line) < 1e-10)
+    assert.ok(Math.abs(result.macd.signal - signal) < 1e-10)
+    assert.ok(Math.abs(result.macd.histogram - histogram) < 1e-10)
+    assert.equal(result.macdCross, signalCross)
+    assert.deepEqual(result.macdDynamics, { zeroCross, histogramDirection })
+  }
+})
+
+test('index histories preserve reported volume and distinguish all-zero placeholder histories', async () => {
+  const { analyzeDailyHistory, hasAnalysisVolume } = await import('./technicalAnalysis.ts')
+  const reported = history(ramp(21))
+  reported.bars.at(-1).volume = 0
+  const placeholder = { ...reported, bars: reported.bars.map(bar => ({ ...bar, volume: 0 })) }
+  const source = { market: 'US', symbol: 'FIXTURE-INDEX', collectedAt: null,
+    simulated: true, stale: false, aligned: true }
+  const analyze = data => analyzeDailyHistory(data, { ...source, volumeAvailable: hasAnalysisVolume(data, true) })
+  assert.equal(analyze(reported).volume.value.ratio, 0)
+  assert.equal(analyze(reported).volume.value.prior20, 109.5)
+  assert.equal(analyze(placeholder).volume.unavailable, 'provider-volume-unavailable')
+  assert.equal(hasAnalysisVolume(placeholder, false), true)
+})

@@ -1,11 +1,9 @@
 import type { ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
-import { useMemo } from 'react'
-import { assessTechnicalTrend, type PriceZone } from '../services/technicalAssessment'
-import type { TechnicalIndicators } from '../services/technicalIndicators'
+import type { PriceZone } from '../services/technicalAssessment'
+import type { TechnicalAnalysis } from '../services/technicalAnalysis'
 import type { MarketDailyHistory } from '../types/marketDataProvider'
 import { TechnicalScenarios, entryLabels } from './TechnicalScenarios'
-import { buildTechnicalScenarios } from '../services/technicalScenarios'
 import { technicalRisk } from '../services/technicalRisk'
 import { formatAnalysisPrice, formatMetric as format, formatPercent, formatThreshold, formatVolume, formatZone, pricePolicy, type PriceDisplay } from '../services/analysisPrices'
 
@@ -26,6 +24,9 @@ function ZoneList({ zones, label, display, condition }: {
           <summary><span>{i + 1}차 {label}</span><strong>{formatZone(zone, display)}</strong></summary>
           <small>{strengthLabel[zone.strength]} · 확정 피벗 {zone.reactions}회{zone.volumeReactions > 0 && ` · 거래량 급증 ${zone.volumeReactions}회`}</small>
           <small>{zone.evidence.join(' · ')} · 근거일 <time dateTime={zone.date}>{zone.date}</time></small>
+          {zone.pivots.map(pivot => <small key={pivot.date + pivot.confirmedDate}>
+            피벗 {pivot.date} · 확인 {pivot.confirmedDate}
+          </small>)}
           <small>{condition}</small>
         </details>
       </li>)}
@@ -35,15 +36,18 @@ function ZoneList({ zones, label, display, condition }: {
 
 const direction = (value: number) => value > 0 ? '상승' : value < 0 ? '하락' : '보합'
 
-export function TechnicalSummary({ indicators, history, index, tick, stale = false, chart }: {
-  indicators: TechnicalIndicators | null; history: MarketDailyHistory; index?: boolean; tick?: PriceDisplay['tick']; stale?: boolean; chart?: ReactNode
+export function TechnicalSummary({ analysis, history, index, tick, chart }: {
+  analysis: TechnicalAnalysis; history: MarketDailyHistory; index?: boolean; tick?: PriceDisplay['tick']; chart?: ReactNode
 }) {
-  const assessment = useMemo(() => indicators && assessTechnicalTrend(history.bars, indicators), [history, indicators])
-  const plan = useMemo(() => assessment && indicators && buildTechnicalScenarios(assessment, indicators), [assessment, indicators])
-  const risk = technicalRisk(assessment, indicators, stale, !index)
+  const { assessment, indicators, plan, quality, source, divergence } = analysis
+  const { stale, collectedAt } = source
+  const risk = technicalRisk(assessment, indicators, stale, source.volumeAvailable)
   if (!assessment || !indicators || !plan) return <><section className="technical-summary" aria-label="기술적 분석">
     <h2>기술적 분석</h2>
-    <p className="heatmap-meta" role="status">분석 불가 · {risk.status} · 기준일에 맞는 유효한 연속 확정 일봉이 필요합니다.</p>
+    <p className="heatmap-meta" role="status">분석 불가 · {risk.status} · {quality.issues.includes('missing-sessions') ? '거래일 데이터 누락'
+      : quality.issues.includes('duplicate-session') ? '거래일 중복'
+      : quality.issues.includes('missing-volume') ? '거래량 자료 누락'
+      : quality.issues.length ? 'OHLCV 품질 검사 실패' : '기준일에 맞는 유효한 연속 확정 일봉이 필요합니다.'}</p>
   </section>{chart}</>
   const { trend, reasons, zones, invalidation, breakVolumeConfirmed, tradingDate, priceStructure } = assessment
   const { dmi, bands, volume, atr14, cross, sma, sma20Slope, rsi14, rsiDirection, priceDirection, macd, macdCross } = indicators
@@ -56,8 +60,12 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
     <section className="technical-summary" aria-label="종합 기술적 판단">
       <div className="analysis-heading">
         <h2>기술적 분석 요약</h2>
-        <small><time dateTime={tradingDate}>{tradingDate}</time> 확정 일봉 · {basis}</small>
+        <small><time dateTime={tradingDate}>{tradingDate}</time> 확정 일봉 · {basis}{source.simulated && ' · 테스트 자료'}{stale && ' · 갱신 지연'}</small>
       </div>
+      {collectedAt && <p className="heatmap-meta">수집 시각 <time dateTime={collectedAt}>{collectedAt}</time> · {quality.timeZone}</p>}
+      {!!quality.discontinuities.length && <p className="detail-attention">
+        가격 연속성 확인 필요 · {quality.discontinuities.join(', ')} · 이동평균, 모멘텀, 변동성 및 가격 구간에 영향을 줄 수 있습니다.
+      </p>}
       <dl className="technical-status">
         <div><dt>추세</dt><dd>{trendLabel[trend]}</dd></div>
         <div><dt>진입 관점</dt><dd>{entryLabel}</dd></div>
@@ -109,10 +117,16 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
         <summary>추세선 후보 및 산출 근거 <ChevronDown size={16} aria-hidden="true" /></summary>
         {priceStructure.channel && <p>채널 후보 · {formatAnalysisPrice(priceStructure.channel.lower, display.unit)} ~ {formatAnalysisPrice(priceStructure.channel.upper, display.unit)}</p>}
         {([['고점 추세선', priceStructure.upper], ['저점 추세선', priceStructure.lower]] as const).map(([label, line]) => line && line.latest > 0 &&
-          <p key={label}>{label} · {formatAnalysisPrice(line.latest, display.unit)} <small>확정 스윙 {line.from.date} · {line.to.date}</small></p>)}
+          <p key={label}>{label} · {formatAnalysisPrice(line.latest, display.unit)} <small>확정 스윙 {line.from.date} · {line.to.date} · 확인 {line.to.confirmedDate} · 접촉 {line.touches}회 · 봉당 기울기 {format(line.slope)} · 최대 이탈 {format(line.deviation)}</small></p>)}
         <p className="heatmap-meta">좌우 2봉으로 확정된 스윙, 직전 20·60·120거래일 극값과 이동평균을 직전 ATR로 묶습니다. 화면 범위는 하단을 내리고 상단을 올려 표시합니다. 돌파와 이탈 판정에는 이전 봉까지 확정된 원시 계산 구간을 사용합니다.</p>
       </details>
     </section>
+    <details className="technical-risk-checks">
+      <summary>RSI·MACD 다이버전스 <ChevronDown size={16} aria-hidden="true" /></summary>
+      {divergence.value?.length ? <ul>{divergence.value.slice(-5).reverse().map(event =>
+        <li key={event.indicator + event.type + event.to}>{event.indicator} {event.type === 'bullish' ? '상승' : '하락'} 후보 · {event.from} → {event.to} · 확인 {event.confirmedDate}</li>
+      )}</ul> : <p>{divergence.value ? '확정된 후보 없음' : '확정 피벗을 비교할 자료 부족'}</p>}
+    </details>
     {!index && <TechnicalScenarios plan={plan} tradingDate={tradingDate} display={display} stale={stale} />}
     <details className="technical-detail-group"><summary>추세 강도·변동성·거래량 상세</summary>
     <div className="analysis-details">
@@ -137,14 +151,14 @@ export function TechnicalSummary({ indicators, history, index, tick, stale = fal
         <summary>변동성 · 거래량 <ChevronDown size={16} aria-hidden="true" /></summary>
         <p className="heatmap-meta">ATR은 최근 가격이 얼마나 크게 움직였는지 보여 줍니다. 값이 커지면 가격 변동 위험도 커질 수 있으며 위험 관리 후보에 활용합니다. 14개 진폭의 평균으로 시작해 Wilder 방식으로 갱신합니다. 볼린저밴드는 20개 종가의 모표준편차에 2를 곱합니다. 5일·20일 이동평균에는 기준일 봉을 포함합니다. 상대 거래량의 기준 평균은 당일을 제외한 직전 20개 확정 봉입니다.</p>
         <dl className="stock-detail-fields">
-          <div><dt>ATR 14</dt><dd>{format(atr14)}</dd></div>
+          <div><dt>ATR 14</dt><dd>{format(atr14)}<small>종가 대비 {indicators.atrPercent === null ? '자료 부족' : formatPercent(indicators.atrPercent)}</small></dd></div>
           <div><dt>볼린저 상단</dt><dd>{format(bands?.upper)}</dd></div>
           <div><dt>볼린저 중심</dt><dd>{format(bands?.middle)}</dd></div>
           <div><dt>볼린저 하단</dt><dd>{format(bands?.lower)}</dd></div>
           <div><dt>%B</dt><dd>{bands?.percentB == null ? '산출 불가' : formatPercent(bands.percentB)}</dd></div>
           <div><dt>밴드 폭</dt><dd>{bands?.bandwidth == null ? '자료 부족' : formatPercent(bands.bandwidth)}</dd></div>
           {volume.direction !== null && priceDirection !== null && <div><dt>직전 봉 대비</dt><dd>종가 {direction(priceDirection)} · 거래량 {volume.direction > 0 ? '증가' : volume.direction < 0 ? '감소' : '동일'}</dd></div>}
-          <div><dt>거래량 평균 5 / 20 / 50</dt><dd>{index && volume.latest === 0 ? '미제공' : [formatVolume(volume.sma5), formatVolume(indicators.volumeSma20), formatVolume(indicators.volumeSma50)].join(' / ')}</dd></div>
+          <div><dt>거래량 평균 5 / 20 / 50</dt><dd>{!source.volumeAvailable ? '미제공' : [formatVolume(volume.sma5), formatVolume(indicators.volumeSma20), formatVolume(indicators.volumeSma50)].join(' / ')}</dd></div>
           <div><dt>직전 20거래일 대비</dt><dd>{volume.ratio === null ? '비교 불가' : format(volume.ratio) + '배'}<small>급증 기준 {format(volume.spikeThreshold)}배</small></dd></div>
         </dl>
       </details>

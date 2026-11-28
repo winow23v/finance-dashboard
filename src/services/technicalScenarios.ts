@@ -55,6 +55,10 @@ export function buildTechnicalScenarios(assessment: Assessment, indicators: Tech
   const mediumStop = usable ? bufferedStop(mediumLevel ?? mediumReference, atr14) : null
   return {
     entry: { mode, candidate, entryPrice, stop, targetZone, rewardRisk, prices: rewardRisk ? prices : null,
+      includesTradingCosts: false,
+      invalidation: rewardRisk ? { closeAtOrBelow: stop, brokenZoneBelow: candidate?.low } : null,
+      unavailableReason: rewardRisk ? null : !candidate ? 'no-entry-zone' : stop === null ? 'no-valid-stop'
+        : target === null ? 'no-resistance-target' : 'invalid-price-order',
       breakoutZone, support, volumeThreshold: volume.spikeThreshold, breakoutPassed: !!zones.breakUp && volume.spike === true },
     holding: {
       state, brokenSupport, shortLevel, shortStop, shortBreached: shortStop !== null && close <= shortStop,
