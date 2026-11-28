@@ -77,7 +77,7 @@ export function MarketHeatmap({ market, favorites, data, summary = false }: {
               const key = marketSymbolKey(item.listing)
               const background = heatmapColor(market, item.quote.percentChange)
               return <a key={key} className="heatmap-tile" href={stockHref(item.listing)}
-                aria-label={`${item.listing.symbol} ${rate(item)} ${financialNumber(item.quote.value, item.quote.currency === 'KRW' ? 0 : 2)} ${item.quote.currency}, ${item.name}`}
+                aria-label={`${item.listing.symbol} ${rate(item)} ${financialNumber(item.quote.value, item.quote.currency === 'KRW' ? 0 : item.quote.value < 1 ? 4 : 2)} ${item.quote.currency}, ${item.name}`}
                 aria-describedby={active === key ? tooltipId : undefined}
                 onMouseEnter={() => setActive(key)} onMouseLeave={() => setActive(undefined)}
                 onFocus={() => setActive(key)} onBlur={() => setActive(undefined)}
@@ -85,7 +85,7 @@ export function MarketHeatmap({ market, favorites, data, summary = false }: {
                 style={{ ...rectStyle(rect), background, color: heatmapTextColor(background) }}>
                 <span className="heatmap-ticker">{item.listing.symbol}</span>
                 <span className="heatmap-rate">{rate(item)}</span>
-                <span className="heatmap-price">{financialNumber(item.quote.value, item.quote.currency === 'KRW' ? 0 : 2)} {item.quote.currency}</span>
+                <span className="heatmap-price">{financialNumber(item.quote.value, item.quote.currency === 'KRW' ? 0 : item.quote.value < 1 ? 4 : 2)} {item.quote.currency}</span>
               </a>
             })}
             <div aria-hidden="true" className="heatmap-sector" style={rectStyle(rect)}>
@@ -94,7 +94,7 @@ export function MarketHeatmap({ market, favorites, data, summary = false }: {
           </div>)}
           {activeItem && <div className="panel heatmap-tooltip" id={tooltipId} role="tooltip">
             <strong>{activeItem.name} · {activeItem.listing.symbol}</strong>
-            <small>{activeItem.sector} · {financialNumber(activeItem.quote.value, activeItem.quote.currency === 'KRW' ? 0 : 2)} {activeItem.quote.currency} · {rate(activeItem)}</small>
+            <small>{activeItem.sector} · {financialNumber(activeItem.quote.value, activeItem.quote.currency === 'KRW' ? 0 : activeItem.quote.value < 1 ? 4 : 2)} {activeItem.quote.currency} · {rate(activeItem)}</small>
             <small>시가총액 {activeItem.marketCapCurrency === 'KRW' ? formatWon(activeItem.marketCap) : financialNumber(activeItem.marketCap) + ' ' + activeItem.marketCapCurrency}</small>
             <small>관측 {activeItem.quote.observation.kind === 'instant'
               ? atKst(activeItem.quote.observation.at) + ' (KST)' : activeItem.quote.observation.date}</small>

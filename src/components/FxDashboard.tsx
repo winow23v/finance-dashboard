@@ -1,5 +1,5 @@
 import { FinancialTooltip } from './FinancialTooltip'
-import { financialAxis, financialNumber, financialPercent } from '../services/financialNumbers'
+import { financialAxis, financialNumber, financialPercent, financialRate } from '../services/financialNumbers'
 import { memberDataEpoch } from '../services/memberTransport'
 import { CompactMarketQuote } from './CompactMarketQuote'
 import { IndexCarousel } from './IndexCarousel'
@@ -274,10 +274,10 @@ export default function FxDashboard({ revision, detailed, requestedPair, showSet
             <AreaChart accessibilityLayer title="공표 기준환율 추이" data={chart.map(point => ({ ...point, rate: point.rate * chartMultiplier, dateTime: Date.parse(point.observationDate) }))} margin={{ top: 10, right: 12, left: 12, bottom: 8 }}>
               <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="4 5" />
               <XAxis dataKey="dateTime" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={date => new Date(date).toISOString().slice(5, 10)} minTickGap={28} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
-              <YAxis orientation="right" width={65} domain={['auto', 'auto']} tickFormatter={value => financialAxis(value)} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
+              <YAxis orientation="right" width={65} domain={['auto', 'auto']} tickFormatter={value => financialAxis(value, quote === 'KRW' ? 2 : 4)} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
               <Tooltip trigger={tooltipTrigger} isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }} content={props => <FinancialTooltip {...props}
                 formatDate={date => new Date(Number(date)).toISOString().slice(0, 10)}
-                formatValue={value => typeof value === 'number' ? financialNumber(value) + ' ' + (quote === 'KRW' ? '원' : quote) : '자료 부족'} />} />
+                formatValue={value => typeof value === 'number' ? financialRate(value, quote) + ' ' + (quote === 'KRW' ? '원' : quote) : '자료 부족'} />} />
               <Area name={pair} dataKey="rate" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.09} isAnimationActive={false} dot={chart.length === 1} />
             </AreaChart>
           </ResponsiveContainer>}
@@ -290,7 +290,7 @@ export default function FxDashboard({ revision, detailed, requestedPair, showSet
             <thead><tr><th scope="col">관측일</th><th scope="col">기준환율 ({quote === 'KRW' ? '원' : quote})</th></tr></thead>
             <tbody>{chart.map(point => <tr key={point.observationDate}>
               <th scope="row"><time dateTime={point.observationDate}>{point.observationDate}</time></th>
-              <td>{financialNumber(point.rate * chartMultiplier)}</td>
+              <td>{financialRate(point.rate * chartMultiplier, quote)}</td>
             </tr>)}</tbody>
           </table>
         </div>

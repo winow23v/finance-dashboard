@@ -1,5 +1,5 @@
 import { FinancialTooltip } from './FinancialTooltip'
-import { financialAxis, financialNumber, shareVolume } from '../services/financialNumbers'
+import { financialAxis, financialNumber, shareVolumeAxis } from '../services/financialNumbers'
 import { ChartNoAxesCombined } from 'lucide-react'
 import { useId, useMemo, useState } from 'react'
 import { Bar, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
@@ -124,7 +124,7 @@ export default function StockHistoryChart({ history }: { history: MarketDailyHis
           <ComposedChart data={points} margin={margin} title="거래량 차트" accessibilityLayer syncId={id}>
             <CartesianGrid {...grid} />
             {dateAxis}
-            <YAxis {...axis} tickFormatter={value => shareVolume(value, false)} />
+            <YAxis {...axis} tickFormatter={shareVolumeAxis} />
             <Tooltip trigger={tooltipTrigger} isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }} content={props => <FinancialTooltip {...props} formatValue={value => formatVolume(typeof value === 'number' ? value : null)} />} />
             <Bar dataKey="volume" name="거래량" fill="var(--blue)" isAnimationActive={false} />
             {!weekly && <><Line dataKey="volume20" name="거래량 평균 20" stroke="var(--favorite)" dot={false} isAnimationActive={false} />

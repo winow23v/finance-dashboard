@@ -54,7 +54,7 @@ function StockList({ rows, saved, onToggle, label, blocked, showQuoteStatus, ana
       const venue = segment ?? (listing.exchange === 'US' ? '거래소 미확인' : listing.exchange)
       const status = regular?.usingPreviousClose ? '이전 정상 종가 사용' : regular?.reason && !['before-collection', 'weekend'].includes(regular.reason) ? regularQuoteStatus(regular.reason)
         : afterHours?.every(entry => entry.status === 'market-closed') && afterHours.length ? '시간외 휴장' : undefined
-      const price = quote && (currency === 'USD' ? '$' + financialNumber(quote.price)
+      const price = quote && (currency === 'USD' ? '$' + financialNumber(quote.price, quote.price < 1 ? 4 : 2)
         : financialNumber(quote.price, currency === 'KRW' ? 0 : 2) + (currency === 'KRW' ? '원' : ''))
       return <li className="watch-row" key={marketSymbolKey(listing)}>
         <a className="stock-detail-link watch-identity" href={stockHref(listing)} title={name}>

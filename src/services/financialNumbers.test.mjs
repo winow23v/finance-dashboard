@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { financialAxis, financialNumber, financialPercent, shareVolume } from './financialNumbers.ts'
+import { financialAxis, financialNumber, financialPercent, financialRate, shareVolume, shareVolumeAxis } from './financialNumbers.ts'
 import { formatAnalysisPrice } from './analysisPrices.ts'
 import { formatWon } from './formatWon.ts'
 
@@ -38,4 +38,13 @@ test('truncates share volumes without promoting boundaries and preserves won for
   assert.equal(shareVolume(100000000), '1억 주')
   assert.equal(financialAxis(199999), '19.9만')
   assert.equal(formatWon(3769643408955), '3조 7,696억 원')
+})
+
+test('keeps scenario prices, FX observations, and compact volume ticks distinguishable', () => {
+  assert.deepEqual([0.5049, 0.5001, 0.5099].map(value => formatAnalysisPrice(value, 'USD')),
+    ['0.5049 USD', '0.5001 USD', '0.5099 USD'])
+  assert.equal(financialRate(1.08129, 'USD'), '1.0812')
+  assert.equal(financialRate(1.08949, 'USD'), '1.0894')
+  assert.equal(financialRate(1400.0099, 'KRW'), '1,400.00')
+  assert.deepEqual([100_000_000, 125_000_000, 150_000_000].map(shareVolumeAxis), ['1억', '1.25억', '1.5억'])
 })

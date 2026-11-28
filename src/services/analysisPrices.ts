@@ -32,7 +32,7 @@ export const formatVolume = shareVolume
 
 export function formatAnalysisPrice(value: number | null | undefined, unit: AnalysisUnit) {
   if (value == null || !Number.isFinite(value) || value < 0) return '자료 부족'
-  return financialNumber(value, unit === 'KRW' ? 0 : 2) + (unit === 'KRW' ? '원' : ' ' + unit)
+  return financialNumber(value, unit === 'KRW' ? 0 : unit === 'USD' && value < 1 ? 4 : 2) + (unit === 'KRW' ? '원' : ' ' + unit)
 }
 
 function displayPrice(value: number | null, { unit, tick }: PriceDisplay, direction: Direction) {
