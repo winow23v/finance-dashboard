@@ -2,6 +2,7 @@ import { LoadingSkeleton } from './LoadingSkeleton'
 import { SearchButton, useSearchComposition } from './SearchButton'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Plus, Search, Star, X } from 'lucide-react'
+import type { KrxMarket, KrxStock } from '../types/finance'
 import { marketSymbolKey, type EquityMarket, type MarketSymbol } from '../types/marketSymbol'
 import { marketListings, stockHref } from '../services/marketListings'
 import { favoriteKey, isWatchlistSymbol } from '../services/watchlist'
@@ -116,7 +117,7 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
   const [query, setQuery] = useState('')
   const [observations, setObservations] = useState(new Map<string, Observation>())
   const [quoteStatus, setQuoteStatus] = useState<'loading' | 'ready' | 'error'>()
-  const [search, setSearch] = useState<{ query: string; attempt: number; rows: Row[]; message?: string }>()
+  const [search, setSearch] = useState<{ query: string; attempt: number; markets: Partial<Record<KrxMarket, KrxStock[]>>; rows: Row[]; message?: string }>()
   const titleId = useId()
   const inputId = useId()
   const editor = useRef<HTMLDialogElement>(null)
@@ -181,25 +182,35 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
       if (dispatchSearch.current !== searchNow) return
       dispatchSearch.current = undefined
       const filters = /^(?=[0-9A-Z]*[0-9])[0-9A-Z]{6}$/i.test(term) ? { symbol: term.toUpperCase() } : { q: term }
-      const results = await Promise.allSettled((['KOSPI', 'KOSDAQ'] as const).map(segment => getKrxStocks(segment, filters, controller.signal)))
+      const markets = ['KOSPI', 'KOSDAQ'] as const
+      const results = await Promise.allSettled(markets.map(segment => getKrxStocks(segment, filters, controller.signal)))
       if (controller.signal.aborted) return
-      const items = results.flatMap(result => result.status === 'fulfilled' ? result.value.items : [])
-        .filter(item => !filters.symbol || item.symbol === filters.symbol)
-      const counts = new Map<string, number>()
-      for (const item of items) counts.set(item.symbol, (counts.get(item.symbol) ?? 0) + 1)
       const failures = results.filter(result => result.status === 'rejected' || result.value.listings.status === 'unavailable')
       const timedOut = failures.some(result => result.status === 'rejected'
         && marketRequestMessage(result.reason, '') === '응답 시간 초과')
       const message = failures.length === results.length
         ? timedOut ? '응답 시간 초과' : 'KRX 종목을 조회할 수 없습니다.'
         : failures.length ? timedOut ? '일부 KRX 시장의 응답 시간 초과' : '일부 KRX 종목 정보를 확인할 수 없습니다.' : undefined
-      setSearch({
-        query: term,
-        attempt: searchAttempt,
-        rows: items.filter(item => counts.get(item.symbol) === 1).map(item => ({
-          listing: { market: 'KR', exchange: 'XKRX', symbol: item.symbol }, observation: krxObservation(item),
-        })),
-        message,
+      setSearch(previous => {
+        const retained = previous?.query === term ? previous.markets : {}
+        const marketItems: Partial<Record<KrxMarket, KrxStock[]>> = { ...retained }
+        results.forEach((result, index) => {
+          if (result.status === 'fulfilled' && result.value.listings.status !== 'unavailable') {
+            marketItems[markets[index]] = result.value.items
+          }
+        })
+        const items = Object.values(marketItems).flat().filter(item => !filters.symbol || item.symbol === filters.symbol)
+        const counts = new Map<string, number>()
+        for (const item of items) counts.set(item.symbol, (counts.get(item.symbol) ?? 0) + 1)
+        return {
+          query: term,
+          attempt: searchAttempt,
+          markets: marketItems,
+          rows: items.filter(item => counts.get(item.symbol) === 1).map(item => ({
+            listing: { market: 'KR', exchange: 'XKRX', symbol: item.symbol }, observation: krxObservation(item),
+          })),
+          message,
+        }
       })
     }
     dispatchSearch.current = searchNow
