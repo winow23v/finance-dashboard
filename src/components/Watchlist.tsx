@@ -195,8 +195,15 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
         const retained = previous?.query === term ? previous.markets : {}
         const marketItems: Partial<Record<KrxMarket, KrxStock[]>> = { ...retained }
         results.forEach((result, index) => {
-          if (result.status === 'fulfilled' && result.value.listings.status !== 'unavailable') {
-            marketItems[markets[index]] = result.value.items
+          if (result.status !== 'fulfilled') return
+          const { items, listings } = result.value
+          const market = markets[index]
+          if (listings.status !== 'unavailable') {
+            marketItems[market] = items
+          } else if (items.length) {
+            const usable = new Map((marketItems[market] ?? []).map(item => [item.symbol, item]))
+            for (const item of items) usable.set(item.symbol, item)
+            marketItems[market] = [...usable.values()]
           }
         })
         const items = Object.values(marketItems).flat().filter(item => !filters.symbol || item.symbol === filters.symbol)

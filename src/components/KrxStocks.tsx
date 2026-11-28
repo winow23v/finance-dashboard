@@ -103,8 +103,8 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
                       <Change market="KR" quote={{ change: quote.change, percent: quote.changePercent }} />}
                     <small className="watch-trading-date"><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가</small>
                     <small>거래량 {quote.volume === null ? '미확인' : number.format(quote.volume)}</small>
-                    {quote.turnover != null && <small className="financial-amount">거래대금 {formatWon(quote.turnover)}</small>}
-                    {quote.marketCap != null && <small className="financial-amount">시가총액 {formatWon(quote.marketCap)}</small>}
+                    {quote.turnover != null && <small>거래대금 {formatWon(quote.turnover)}</small>}
+                    {quote.marketCap != null && <small>시가총액 {formatWon(quote.marketCap)}</small>}
                   </> : <small>유효한 시세 없음</small>}
                 </div>
                 <button type="button" className="favorite-button" disabled={blocked} aria-pressed={saved} aria-label={item.name + ' 관심종목'}
