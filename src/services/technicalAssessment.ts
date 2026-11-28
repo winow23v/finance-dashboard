@@ -1,30 +1,31 @@
 import type { DailyOhlcvBar } from '../types/marketDataProvider'
 import type { TechnicalIndicators } from './technicalIndicators'
 
-const pivotRadius = 2
+import { confirmedPivots } from './technicalPivots.ts'
 const levelWindows = [20, 60, 120] as const
-type Evidence = { price: number; date: string; index: number; label: string; pivot: boolean; volumeSpike: boolean }
+type Evidence = { price: number; date: string; index: number; label: string; confirmedDate: string | null; pivot: boolean; volumeSpike: boolean }
 export type PriceZone = {
   low: number; high: number; date: string; evidence: string[]
-  reactions: number; volumeReactions: number; strength: 'single' | 'repeated' | 'recent-repeated'
+  pivots: { date: string; confirmedDate: string }[]; reactions: number; volumeReactions: number; strength: 'single' | 'repeated' | 'recent-repeated'
 }
 
 function buildZones(prior: readonly DailyOhlcvBar[], confirmation: readonly DailyOhlcvBar[], atr: number,
   sma: TechnicalIndicators['prior']['sma'], volumeThreshold: number) {
   const evidence: Evidence[] = []
-  function add(index: number, price: number, label: string, pivot = false) {
+  function add(index: number, price: number, label: string, confirmedDate: string | null = null) {
     const bar = prior[index]
-    const earlierVolume = pivot && index >= 20
+    const earlierVolume = confirmedDate && index >= 20
       ? prior.slice(index - 20, index).reduce((sum, row) => sum + row.volume, 0) / 20 : 0
-    evidence.push({ index, price, date: bar.tradingDate, label, pivot,
+    evidence.push({ index, price, date: bar.tradingDate, label, confirmedDate, pivot: confirmedDate !== null,
       volumeSpike: earlierVolume > 0 && bar.volume / earlierVolume >= volumeThreshold })
   }
 
-  for (let i = Math.max(pivotRadius, prior.length - 120); i < confirmation.length - pivotRadius; i++) {
-    const bar = prior[i]
-    const neighbors = [...prior.slice(i - pivotRadius, i), ...confirmation.slice(i + 1, i + 1 + pivotRadius)]
-    if (neighbors.every(neighbor => bar.high > neighbor.high)) add(i, bar.high, '확정 스윙 고점', true)
-    if (neighbors.every(neighbor => bar.low < neighbor.low)) add(i, bar.low, '확정 스윙 저점', true)
+  for (const kind of ['high', 'low'] as const) {
+    for (const pivot of confirmedPivots(confirmation.map(bar => bar[kind]), kind)) {
+      if (pivot.index < prior.length - 120) continue
+      add(pivot.index, pivot.value, kind === 'high' ? '확정 스윙 고점' : '확정 스윙 저점',
+        confirmation[pivot.confirmedIndex].tradingDate)
+    }
   }
   for (const period of levelWindows) {
     const start = prior.length - period
@@ -56,6 +57,7 @@ function buildZones(prior: readonly DailyOhlcvBar[], confirmation: readonly Dail
       low: Math.max(0, group[0].price - atr * 0.15), high: group[group.length - 1].price + atr * 0.15,
       date: group.reduce((latest, point) => point.date > latest ? point.date : latest, group[0].date),
       evidence: [...new Set(group.map(point => point.label))], reactions: pivots.length,
+      pivots: group.flatMap(point => point.confirmedDate ? [{ date: point.date, confirmedDate: point.confirmedDate }] : []),
       volumeReactions: new Set(group.filter(point => point.volumeSpike).map(point => point.index)).size,
       strength: pivots.length >= 2 ? (recent ? 'recent-repeated' : 'repeated') : 'single',
     }
@@ -85,25 +87,36 @@ function structure(bars: readonly DailyOhlcvBar[], indicators: TechnicalIndicato
 }
 
 export function priceStructure(bars: readonly DailyOhlcvBar[]) {
-  const highs: { index: number; price: number; date: string }[] = []
-  const lows: typeof highs = []
-  for (let index = Math.max(pivotRadius, bars.length - 120); index < bars.length - pivotRadius; index++) {
-    const bar = bars[index]
-    const neighbors = [...bars.slice(index - pivotRadius, index), ...bars.slice(index + 1, index + 1 + pivotRadius)]
-    if (neighbors.every(row => row.high < bar.high)) highs.push({ index, price: bar.high, date: bar.tradingDate })
-    if (neighbors.every(row => row.low > bar.low)) lows.push({ index, price: bar.low, date: bar.tradingDate })
+  const window = bars.slice(-120)
+  const line = (kind: 'high' | 'low') => {
+    const pivots = confirmedPivots(window.map(bar => bar[kind]), kind)
+    const [first, second] = pivots.slice(-2)
+    if (!second) return null
+    const slope = (second.value - first.value) / (second.index - first.index)
+    const projected = (index: number) => first.value + slope * (index - first.index)
+    const latest = projected(window.length - 1)
+    if (latest <= 0) return null
+    const tolerance = (first.value + second.value) / 2 * 0.01
+    const deviation = Math.max(0, ...window.slice(first.index).map((bar, offset) =>
+      (bar[kind] - projected(first.index + offset)) * (kind === 'high' ? 1 : -1)))
+    if (deviation > tolerance) return null
+    const anchor = (pivot: typeof first) => ({
+      index: bars.length - window.length + pivot.index,
+      price: pivot.value,
+      date: window[pivot.index].tradingDate,
+      confirmedDate: window[pivot.confirmedIndex].tradingDate,
+    })
+    return { from: anchor(first), to: anchor(second), slope, latest, deviation, tolerance,
+      touches: pivots.filter(pivot => Math.abs(pivot.value - projected(pivot.index)) <= tolerance).length }
   }
-  const line = (anchors: typeof highs) => {
-    const [from, to] = anchors.slice(-2)
-    if (!to) return null
-    const slope = (to.price - from.price) / (to.index - from.index)
-    return { from, to, slope, latest: to.price + slope * (bars.length - 1 - to.index) }
-  }
-  const upper = line(highs)
-  const lower = line(lows)
+  const upper = line('high')
+  const lower = line('low')
   const channel = upper && lower && lower.latest > 0 && upper.latest > lower.latest &&
-    Math.sign(upper.slope) === Math.sign(lower.slope) ? { upper: upper.latest, lower: lower.latest } : null
+    Math.sign(upper.slope) === Math.sign(lower.slope)
+    && Math.abs(upper.slope - lower.slope) * window.length <= (upper.latest - lower.latest) / 2
+    ? { upper: upper.latest, lower: lower.latest, from: window[0].tradingDate, through: window.at(-1)!.tradingDate } : null
   return { upper, lower, channel }
+
 }
 
 type Trend = 'up' | 'down' | 'sideways' | 'turn-up' | 'turn-down' | 'unavailable'
@@ -114,8 +127,8 @@ export function assessTechnicalTrend(bars: readonly DailyOhlcvBar[], indicators:
   const zones = structure(bars, indicators)
   const longUp = sma[50] !== null && sma[200] !== null && sma[50] > sma[200]
   const longDown = sma[50] !== null && sma[200] !== null && sma[50] < sma[200]
-  const emaUp = ema[20] !== null && ema[50] !== null && ema[200] !== null && ema[20] > ema[50] && ema[50] > ema[200]
-  const emaDown = ema[20] !== null && ema[50] !== null && ema[200] !== null && ema[20] < ema[50] && ema[50] < ema[200]
+  const emaUp = ema[20] !== null && ema[50] !== null && ema[200] !== null && ema[20] > ema[50] && ema[100] !== null && ema[50] > ema[100] && ema[100] > ema[200]
+  const emaDown = ema[20] !== null && ema[50] !== null && ema[200] !== null && ema[20] < ema[50] && ema[100] !== null && ema[50] < ema[100] && ema[100] < ema[200]
   const midUp = sma[20] !== null && sma[50] !== null && close > sma[20] && sma[20] > sma[50]
   const midDown = sma[20] !== null && sma[50] !== null && close < sma[20] && sma[20] < sma[50]
   const bullish = dmi.plus !== null && dmi.minus !== null && dmi.plus > dmi.minus

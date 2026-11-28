@@ -3,8 +3,9 @@ import { LoadingSkeleton } from "./LoadingSkeleton"
 import { SegmentTabs } from "./SegmentTabs"
 import { lazy, Suspense, useEffect, useRef, useMemo, useState, type ReactNode } from 'react'
 import { getUsAnalysis, marketRequestMessage } from '../services/apiFinanceService'
-import { calculatePriceReturns, calculateTechnicalIndicators, emaWindows, smaWindows } from '../services/technicalIndicators'
+import { calculatePriceReturns, emaWindows, smaWindows } from '../services/technicalIndicators'
 import { Change } from './QuoteDisplay'
+import { analyzeDailyHistory } from '../services/technicalAnalysis'
 import { TechnicalSummary } from './TechnicalSummary'
 import { formatAnalysisPrice, formatPercent, formatVolume } from '../services/analysisPrices'
 
@@ -53,7 +54,12 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0, onRefreshResul
   const history = data && data.status !== 'unavailable' ? data.history : null
   const unit = indexId ? 'pt' : 'USD'
   const aligned = !!quote && history?.bars.at(-1)?.tradingDate === quote.tradingDate
-  const indicators = useMemo(() => history && aligned ? calculateTechnicalIndicators(history) : null, [history, aligned])
+  const stale = data?.status === 'stale'
+  const collectedAt = data && data.status !== 'unavailable' ? data.collectedAt : null
+  const analysis = useMemo(() => history ? analyzeDailyHistory(history, {
+    market: 'US', symbol: indexId ?? symbol, collectedAt, simulated: false, stale, aligned, volumeAvailable: !indexId,
+  }) : null, [history, symbol, indexId, collectedAt, stale, aligned])
+  const indicators = analysis?.indicators ?? null
   const returns = useMemo(() => history && indicators ? calculatePriceReturns(history) : {}, [history, indicators])
   const priceHistory = data && data.status !== 'unavailable' ? <SegmentTabs label="시세 데이터" items={[
           ...(history ? [{ label: '차트', content: <Suspense fallback={<LoadingSkeleton message="가격 차트를 준비하는 중입니다." shape="chart" />}>
@@ -104,8 +110,7 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0, onRefreshResul
               <button className="button" type="button" onClick={() => setRequestedAt(refresh)}>갱신 요청</button>}
           </>}
         </header>
-        {history ? <TechnicalSummary indicators={indicators} history={history} index={!!indexId}
-          stale={data.status === 'stale'} chart={priceHistory} /> : priceHistory}
+        {history ? <TechnicalSummary analysis={analysis!} history={history} index={!!indexId} chart={priceHistory} /> : priceHistory}
         {indicators && <section className="technical-detail-group technical-tabs" aria-label="기술적 지표 상세">
             <h3>기술적 지표 상세</h3>
             <SegmentTabs label="기술적 지표" items={[

@@ -4,12 +4,13 @@ import { SegmentTabs } from "./SegmentTabs"
 import { Clock } from 'lucide-react'
 import { lazy, Suspense, useEffect, useRef, useMemo, useState, type ReactNode } from 'react'
 import { FinanceApiError, getKrxAnalysis, getKrxStocks, marketRequestMessage } from '../services/apiFinanceService'
-import { calculatePriceReturns, calculateTechnicalIndicators, emaWindows, smaWindows } from '../services/technicalIndicators'
+import { calculatePriceReturns, emaWindows, smaWindows } from '../services/technicalIndicators'
 import type { KrxAnalysis as Analysis } from '../types/finance'
 import { Change } from './QuoteDisplay'
 import { krxStateLabels } from './KrxStocks'
 import { KrxAfterHoursStatus } from './KrxAfterHoursStatus'
 import { StockDisclosures } from './Disclosures'
+import { analyzeDailyHistory } from '../services/technicalAnalysis'
 import { TechnicalSummary } from './TechnicalSummary'
 import { confirmedKrxTick, formatAnalysisPrice, formatPercent } from '../services/analysisPrices'
 import type { KrxStocks } from '../types/finance'
@@ -82,7 +83,13 @@ export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: {
   const quote = data?.quote
   const history = data?.history
   const aligned = history && quote && history.bars.at(-1)?.tradingDate === quote.tradingDate && quote.tradingDate === data?.latestDate
-  const indicator = useMemo(() => aligned && history ? calculateTechnicalIndicators(history) : null, [aligned, history])
+  const stale = data?.usingPreviousClose === true || data?.coverage?.isLatest === false
+    || data?.reason === 'provider-error' || data?.reason === 'provider-not-configured' || data?.reason === 'not-published'
+  const collectedAt = data?.collectedAt ?? null
+  const analysis = useMemo(() => history ? analyzeDailyHistory(history, {
+    market: 'KR', symbol, collectedAt, simulated: false, stale, aligned: !!aligned, volumeAvailable: true,
+  }) : null, [history, symbol, collectedAt, stale, aligned])
+  const indicator = analysis?.indicators ?? null
   const returns = useMemo(() => indicator && history ? calculatePriceReturns(history) : {}, [indicator, history])
   const bars = data?.history.bars ?? []
   const lastClose = bars.at(-1)?.close
@@ -120,8 +127,7 @@ export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: {
             </div>
           </header>
           <KrxAfterHoursStatus details={data.afterHours} />
-          <TechnicalSummary indicators={indicator} history={data.history} tick={tick}
-            stale={data.reason === 'provider-error' || data.reason === 'provider-not-configured' || data.reason === 'not-published'}
+          <TechnicalSummary analysis={analysis!} history={data.history} tick={tick}
             chart={<Suspense fallback={<LoadingSkeleton message="가격 차트를 준비하는 중입니다." shape="chart" />}>
               <StockHistoryChart history={data.history} />
             </Suspense>} />
