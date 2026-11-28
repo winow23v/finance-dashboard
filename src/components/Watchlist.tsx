@@ -112,6 +112,7 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
   const { composing, inputEvents } = useSearchComposition()
   const [composingInput, setComposingInput] = useState(false)
   const dispatchSearch = useRef<() => void>(undefined)
+  const [searchAttempt, setSearchAttempt] = useState(0)
   const [query, setQuery] = useState('')
   const [observations, setObservations] = useState(new Map<string, Observation>())
   const [quoteStatus, setQuoteStatus] = useState<'loading' | 'ready' | 'error'>()
@@ -193,7 +194,7 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
       if (dispatchSearch.current === searchNow) dispatchSearch.current = undefined
       controller.abort()
     }
-  }, [domesticSearch, term])
+  }, [domesticSearch, term, searchAttempt])
 
   const words = term.toLocaleLowerCase('ko-KR').split(/\s+/).filter(Boolean)
   const matches = marketListings.filter(({ listing, name, currency }) => {
@@ -277,7 +278,12 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
       <label className="sr-only" htmlFor={inputId}>기업명 또는 종목 코드</label>
       <form className="search quote-search-controls" aria-busy={domesticSearch && !searchResult} onSubmit={event => {
         event.preventDefault()
-        if (!composing.current) dispatchSearch.current?.()
+        if (composing.current) return
+        if (dispatchSearch.current) dispatchSearch.current()
+        else if (searchResult?.failed) {
+          setSearch(undefined)
+          setSearchAttempt(attempt => attempt + 1)
+        }
       }}>
         <Search size={18} aria-hidden="true" />
         <input id={inputId} ref={input} type="search" value={query} maxLength={64} onChange={event => setQuery(event.target.value)}

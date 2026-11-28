@@ -1,6 +1,5 @@
 import { CompactMarketQuote } from './CompactMarketQuote'
 import { IndexCarousel } from './IndexCarousel'
-import { Change } from './QuoteDisplay'
 import { LoadingSkeleton } from "./LoadingSkeleton"
 import { useEffect, useRef, useId, useState } from 'react'
 import { Info, X } from 'lucide-react'
@@ -31,6 +30,7 @@ function loadPreferences() {
   const defaults: Currency[] = ['USD', 'JPY', 'EUR']
   return { reference, selected: selected.length ? selected : defaults.filter(code => code !== reference), yen100: value.yen100 !== false }
 }
+const fxPercent = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2, signDisplay: 'exceptZero' })
 const periods = { '1W': '7일', '1M': '1개월', '3M': '3개월', '1Y': '1년' }
 const format = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 4 })
 const wonFormat = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -233,7 +233,8 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
             {rate != null ? <>{displayRate(rate * multiplier, reference)} <span>{unit}</span></>
               : latest === undefined ? <LoadingSkeleton message="환율을 불러오는 중입니다." shape="value" /> : latest === null ? '조회 불가' : '공표 관측값 없음'}
           </strong>
-          {rate != null && (previous ? <Change quote={{ change: (rate - previous.rate) * multiplier, percent: (rate / previous.rate - 1) * 100 }} detailed />
+          {rate != null && (previous ? <small className="change">{rate > previous.rate ? '+' : ''}{displayRate((rate - previous.rate) * multiplier, reference)} {unit}
+              {' ('}{fxPercent.format((rate / previous.rate - 1) * 100)}%)</small>
             : <small>등락 비교 불가</small>)}
           {rate != null && row?.observationDate && <small className="index-source"><time dateTime={row.observationDate}>{row.observationDate}</time> 관측</small>}
           {(status || rate != null) && <small className="fx-quote-state"

@@ -83,7 +83,8 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
               {dataset.trades.usingPreviousClose ? '이전 정상 종가 사용' : krxStateLabels[details[0]]}
             </span></>}
           </p>
-          {dataset.items.length ? <ClientPages key={dataset.market + ':' + query} items={dataset.items} label={dataset.market + ' 종목 목록 페이지'}>{visible =>
+          {dataset.items.length === 20 && <small>시장별 최대 20개를 표시합니다. 검색어를 좁혀 보세요.</small>}
+          {dataset.items.length ? <ClientPages key={dataset.market + ':' + query} items={dataset.items} countLabel="조회된 종목" label={dataset.market + ' 종목 목록 페이지'}>{visible =>
             <ul className="stock-list">{visible.map(item => {
               const listing = { market: 'KR', exchange: 'XKRX', symbol: item.symbol } as const
               const saved = selected.some(entry => marketSymbolKey(entry) === marketSymbolKey(listing))

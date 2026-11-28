@@ -1,10 +1,11 @@
 import { useId, useState, type ReactNode } from 'react'
 
-export function ClientPages<T>({ items, label, sizes = [10, 20, 50], pageSize = 10, children }: {
+export function ClientPages<T>({ items, label, sizes = [10, 20, 50], pageSize = 10, countLabel = '전체', children }: {
   items: readonly T[]
   label: string
   sizes?: readonly number[]
   pageSize?: number
+  countLabel?: string
   children: (visible: readonly T[]) => ReactNode
 }) {
   const [size, setSize] = useState(pageSize)
@@ -17,7 +18,7 @@ export function ClientPages<T>({ items, label, sizes = [10, 20, 50], pageSize = 
   return <>
     <div id={id}>{children(items.slice((active - 1) * size, active * size))}</div>
     <nav className="list-pagination client-pages" aria-label={label}>
-      <span role="status">전체 {items.length.toLocaleString('ko-KR')}개 · {active}/{pages} 페이지</span>
+      <span role="status">{countLabel} {items.length.toLocaleString('ko-KR')}개 · {active}/{pages} 페이지</span>
       {sizes.length > 1 && <label>페이지 크기 <select value={size} onChange={event => { setSize(Number(event.target.value)); setPage(1) }}>
         {sizes.map(value => <option key={value} value={value}>{value}개</option>)}
       </select></label>}
