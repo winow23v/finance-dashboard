@@ -235,7 +235,7 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
           </strong>
           {rate != null && (previous ? <small className="change">{rate > previous.rate ? '+' : ''}{displayRate((rate - previous.rate) * multiplier, reference)} {unit}
               {' ('}{fxPercent.format((rate / previous.rate - 1) * 100)}%)</small>
-            : <small>등락 비교 불가</small>)}
+            : <small>{detailed && name === pair ? '등락 비교 불가' : '추이 선택 시 등락 확인'}</small>)}
           {rate != null && row?.observationDate && <small className="index-source"><time dateTime={row.observationDate}>{row.observationDate}</time> 관측</small>}
           {(status || rate != null) && <small className="fx-quote-state"
             data-state={latestResult?.errorCode === 'PROVIDER_RATE_LIMITED' ? 'rate-limited' : status?.startsWith('갱신 실패') ? 'error' : undefined}>

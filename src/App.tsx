@@ -85,7 +85,7 @@ function MarketIndexValue({ quote, message, market }: { quote?: MarketIndex; mes
         : quote.changePercent !== null ? '등락률 ' + indexPrice.format(quote.changePercent) + '%' : '등락 비교 불가'}</small>}
     <small className="index-source"><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가</small>
     {(quote.status === 'stale' || (quote.reason && quote.reason !== 'before-collection' && quote.reason !== 'weekend')) && <small className="muted-badge" data-stale={quote.status === 'stale'}>
-      {quote.reason === 'provider-error' ? '마지막 유효값' : quote.status === 'stale' ? '갱신 지연' : quote.reason ? indexUnavailable[quote.reason] : '갱신 지연'}
+      {quote.reason === 'provider-error' ? '마지막 유효값' : quote.reason && quote.reason !== 'weekend' && quote.reason !== 'before-collection' ? indexUnavailable[quote.reason] : '갱신 지연'}
     </small>}
   </>
 }

@@ -1238,7 +1238,8 @@ span.chart-body { display: block; }
 
 /* Compact quotes keep the observation distinct from the displayed value. */
 .index-carousel { min-width: 0; max-width: 100%; }
-:where(.market-index-section, .compact-fx-rates) .overview-quotes {
+:is(.market-index-section, .compact-fx-rates) .index-carousel .overview-quotes {
+  grid-auto-rows: 1fr;
   grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
 }
 .overview-quotes .compact-market-quote {
@@ -1254,6 +1255,9 @@ span.chart-body { display: block; }
 .compact-quote-heading h3 { min-width: 0; font-size: .8125rem; line-height: 1.3; overflow-wrap: anywhere; }
 .compact-quote-heading h3 small { display: inline; margin-inline-start: 4px; }
 .compact-quote-heading .fx-info-button { margin-inline-start: auto; flex: none; min-width: 44px; min-height: 44px; }
+@media (hover: hover) and (pointer: fine) {
+  .compact-quote-heading .fx-info-button { min-height: 32px; }
+}
 .compact-quote-data { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px var(--space-control); min-width: 0; }
 .overview-quotes .compact-quote-data > strong { font-size: 1.125rem; line-height: 1.25; }
 .compact-quote-data .index-source { flex: 1 0 100%; margin: 0; }
