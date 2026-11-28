@@ -62,6 +62,54 @@ check_cache_override() {
   esac
 }
 
+# EnvironmentFile entries override Environment=. Check current file contents
+# before replacing a healthy process with one that would reject its environment.
+check_next_service_environment() {
+  local files entry file assignments modifiers
+  local file_entry='^(/[[:alnum:]_./-]+) [(]ignore_errors=(yes|no)[)]$'
+  local managed='(^|[[:space:]"])(DART_FINANCIAL_CACHE_DIR|DART_FINANCIAL_CACHE_VERIFY|FINANCE_STORAGE_SYNC)(=|[[:space:]"]|$)'
+  [[ $(systemctl show -p NeedDaemonReload --value "$service") == no ]] || return 1
+  modifiers=$(systemctl show -p PassEnvironment -p UnsetEnvironment --value "$service") || return 1
+  [[ ! $modifiers =~ $managed ]] || return 1
+  assignments=$(systemctl show -p Environment --value "$service") || return 1
+  awk -v cache="$dart_cache" '
+    {
+      for (i = 1; i <= NF; i++) {
+        value = $i
+        sub(/^"/, "", value)
+        sub(/"$/, "", value)
+        if (value ~ /^DART_FINANCIAL_CACHE_DIR=/ && value != "DART_FINANCIAL_CACHE_DIR=" cache) exit 1
+        if (value ~ /^DART_FINANCIAL_CACHE_VERIFY=/ && value != "DART_FINANCIAL_CACHE_VERIFY=1") exit 1
+        if (value ~ /^FINANCE_STORAGE_SYNC=/ && value !~ /^FINANCE_STORAGE_SYNC=(0)?$/) exit 1
+      }
+    }
+  ' <<< "$assignments" || return 1
+  files=$(systemctl show -p EnvironmentFiles --value "$service") || return 1
+  while IFS= read -r entry; do
+    [[ -n $entry ]] || continue
+    # Production uses literal absolute paths. Fail closed on globs or escaped paths.
+    [[ $entry =~ $file_entry ]] || return 1
+    file=${BASH_REMATCH[1]}
+    if [[ ! -e $file && ${BASH_REMATCH[2]} == yes ]]; then
+      continue
+    fi
+    [[ -f $file && -r $file ]] || return 1
+    awk '
+      /^[[:space:]]*DART_FINANCIAL_CACHE_(DIR|VERIFY)[[:space:]]*=/ { exit 1 }
+      /^[[:space:]]*FINANCE_STORAGE_SYNC[[:space:]]*=/ {
+        sub(/^[^=]*=[[:space:]]*/, "")
+        sub(/[[:space:]]*$/, "")
+        if ($0 != "0" && $0 != "") exit 1
+      }
+    ' "$file" || return 1
+  done <<< "$files"
+}
+
+require_next_service_environment() {
+  check_next_service_environment ||
+    { echo 'Reconcile pending systemd settings and managed DART or storage-sync environment variables before release.' >&2; exit 1; }
+}
+
 check_legacy_snapshots() {
   local legacy destination
   for legacy in "$api"/.dart-cache/??????-[012].json; do
@@ -105,7 +153,6 @@ fi
 IFS= read -r mode
 force_restart=0
 case "$mode" in
-  validate|deploy) ;;
   validate-dart-cache-v1|deploy-dart-cache-v1) mode=${mode%-dart-cache-v1} ;;
   redeploy-dart-cache-v1) mode=deploy; force_restart=1 ;;
   *) echo 'Invalid release mode.' >&2; exit 1 ;;
@@ -212,6 +259,7 @@ pid=$(service_pid) && check_storage_disabled "$pid" ||
   { echo 'The running API must have financial storage sync disabled.' >&2; exit 1; }
 check_cache_override "$pid" ||
   { echo 'Reconcile the existing DART_FINANCIAL_CACHE_DIR setting before release.' >&2; exit 1; }
+require_next_service_environment
 [[ $(systemctl show -p User --value "$service") == "$dart_user" ]]
 [[ $(systemctl show -p ProtectSystem --value "$service") == strict ]]
 [[ $(systemctl show -p DynamicUser --value "$service") == no ]]
@@ -286,6 +334,7 @@ fi
 if (( ! dart_configured )); then
   systemctl daemon-reload
 fi
+require_next_service_environment
 backup="${api}.backup.$(date -u +%Y%m%dT%H%M%SZ).${release##*.}"
 restart_required=1
 systemctl stop "$service"

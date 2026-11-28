@@ -148,6 +148,13 @@ case "$*" in
   'show -p Group --value finance-dashboard-api.service') id -gn ;;
   'show -p ProtectSystem --value finance-dashboard-api.service') echo strict ;;
   'show -p DynamicUser --value finance-dashboard-api.service') echo no ;;
+  'show -p NeedDaemonReload --value finance-dashboard-api.service')
+    if [[ -f $TEST_SANDBOX/pending-unit ]]; then echo yes; else echo no; fi ;;
+  'show -p Environment --value finance-dashboard-api.service')
+    if [[ -f $TEST_SANDBOX/inline-environment ]]; then cat "$TEST_SANDBOX/inline-environment"; fi ;;
+  'show -p PassEnvironment -p UnsetEnvironment --value finance-dashboard-api.service') ;;
+  'show -p EnvironmentFiles --value finance-dashboard-api.service')
+    printf '%s (ignore_errors=no)\n' "$TEST_SANDBOX/api.env" ;;
   'show -p ReadWritePaths --value finance-dashboard-api.service')
     printf '%s' '/var/lib/finance-krx /var/lib/finance-us-market'
     if [[ -f $TEST_SANDBOX/loaded-dropin ]]; then
@@ -189,6 +196,7 @@ exec "$@"
 SH
 cat > "$sandbox/bin/npm" <<'SH'
 #!/usr/bin/env bash
+[[ -z ${FAIL_STAGE:-} ]] || exit 1
 mkdir -p node_modules
 SH
 cat > "$sandbox/bin/findmnt" <<'SH'
@@ -224,7 +232,45 @@ bash -euc '
     { printf "%s\n" "$1"; cat "$sandbox/incoming.tar"; } | bash "$sandbox/receiver"
   }
   : > "$sandbox/service-environ"
+  : > "$sandbox/api.env"
   printf "1\n" > "$sandbox/invocation"
+  for legacy_mode in deploy validate; do
+    if printf "%s\n" "$legacy_mode" | bash "$sandbox/receiver" 2> "$sandbox/legacy-mode.log"; then
+      echo "Receiver accepted an unversioned legacy request before cutover" >&2
+      exit 1
+    fi
+    grep -Fxq "Invalid release mode." "$sandbox/legacy-mode.log"
+    [[ ! -e $sandbox/live.deploy.lock ]]
+  done
+  release validate-dart-cache-v1
+  if FAIL_STAGE=1 release deploy-dart-cache-v1; then
+    echo "Receiver accepted a failed dependency installation" >&2
+    exit 1
+  fi
+  [[ ! -e $cache && ! -e $dropin && ! -e $sandbox/service-actions ]]
+  printf "FINANCE_STORAGE_SYNC=1\n" > "$sandbox/api.env"
+  if release validate-dart-cache-v1 || release deploy-dart-cache-v1; then
+    echo "Receiver accepted pending storage sync with a healthy legacy process" >&2
+    exit 1
+  fi
+  printf "DART_FINANCIAL_CACHE_VERIFY=0\n" > "$sandbox/api.env"
+  if release deploy-dart-cache-v1; then
+    echo "Receiver accepted an EnvironmentFile override of managed verification" >&2
+    exit 1
+  fi
+  printf "DART_FINANCIAL_CACHE_DIR=%s\n" "$sandbox/alternate" > "$sandbox/inline-environment"
+  printf "FINANCE_STORAGE_SYNC=0\n" > "$sandbox/api.env"
+  if release validate-dart-cache-v1; then
+    echo "Receiver accepted a loaded systemd cache override" >&2
+    exit 1
+  fi
+  rm -- "$sandbox/inline-environment"
+  touch "$sandbox/pending-unit"
+  if release deploy-dart-cache-v1; then
+    echo "Receiver accepted a unit with pending daemon reload" >&2
+    exit 1
+  fi
+  rm -- "$sandbox/pending-unit"
   release validate-dart-cache-v1
   printf "FINANCE_STORAGE_SYNC=1\0" > "$sandbox/service-environ"
   if release validate-dart-cache-v1; then
@@ -271,6 +317,13 @@ bash -euc '
   [[ $(stat -c %a "$cache") == 700 ]]
   diff -u <(printf "[Service]\\nEnvironment=DART_FINANCIAL_CACHE_DIR=%s\\nEnvironment=DART_FINANCIAL_CACHE_VERIFY=1\\nReadWritePaths=%s\\n" "$cache" "$cache") "$dropin"
   actions=$(cat "$sandbox/service-actions")
+  printf "FINANCE_STORAGE_SYNC=1\n" > "$sandbox/api.env"
+  if release redeploy-dart-cache-v1; then
+    echo "Managed redeploy accepted pending storage sync" >&2
+    exit 1
+  fi
+  [[ $(cat "$sandbox/service-actions") == "$actions" ]]
+  printf "FINANCE_STORAGE_SYNC=0\n" > "$sandbox/api.env"
   release validate-dart-cache-v1
   release deploy-dart-cache-v1
   [[ $(cat "$sandbox/service-actions") == "$actions" ]]
