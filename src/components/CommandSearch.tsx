@@ -55,8 +55,8 @@ export function CommandSearch({ entries }: { entries: SearchEntry[] }) {
     return () => window.removeEventListener('keydown', shortcut)
   }, [])
   return <>
-    <button type="button" className="icon-button command-trigger" aria-label="통합 검색 (⌘K)" aria-haspopup="dialog"
-      aria-keyshortcuts="Meta+K Control+K" onClick={open}><Search size={18} aria-hidden="true" /><kbd aria-hidden="true">⌘K</kbd></button>
+    <button type="button" className="icon-button command-trigger" aria-label="통합 검색" title="통합 검색 (Ctrl+K / ⌘K)" aria-haspopup="dialog"
+      aria-keyshortcuts="Meta+K Control+K" onClick={open}><Search size={18} aria-hidden="true" /><span className="command-trigger-label">통합 검색</span></button>
     <dialog className="panel command-dialog" ref={dialog} aria-label="통합 검색"
       onClose={() => previousFocus.current?.focus({ preventScroll: true })}
       onClick={event => { if (event.target === event.currentTarget) event.currentTarget.close() }}>

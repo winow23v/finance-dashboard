@@ -938,7 +938,6 @@ html { scroll-padding-top: 70px; }
 .index-source + .muted-badge { align-self: start; }
 
 .command-trigger { display: inline-flex; justify-content: center; width: auto; gap: 7px; padding-inline: 10px; }
-.command-trigger kbd { color: var(--muted); font-size: .75rem; }
 .command-dialog { width: min(560px, calc(100% - 24px)); margin: min(12vh, 100px) auto auto; padding: 0; }
 .command-dialog::backdrop, .scenario-drawer::backdrop, .member-information::backdrop { background: var(--subtle-scrim); }
 .command-field { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: var(--space-control) 12px; border-bottom: 1px solid var(--line); }
@@ -981,7 +980,6 @@ html { scroll-padding-top: 70px; }
   }
 }
 @media (max-width: 780px) {
-  .command-trigger kbd { display: none; }
   .market-overview .overview-quotes {
     display: flex;
     overflow-x: auto;
@@ -1229,4 +1227,9 @@ span.chart-body { display: block; }
 @media (max-width: 380px) {
   .topbar .brand-icon { display: block; }
   .topbar .brand-name { font-size: .75rem; }
+}
+
+.command-trigger-label { display: none; font-size: .8125rem; }
+@media (min-width: 1024px) {
+  .command-trigger-label { display: inline; }
 }
