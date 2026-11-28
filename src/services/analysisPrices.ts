@@ -1,3 +1,4 @@
+import { financialNumber, financialPercent, shareVolume } from './financialNumbers.ts'
 import type { KrxMarket, KrxStocks } from '../types/finance'
 
 export type AnalysisUnit = 'KRW' | 'USD' | 'pt'
@@ -25,21 +26,13 @@ export function krxTickSize(price: number) {
   return bands.find(([upper]) => price < upper)?.[1] ?? null
 }
 
-const integers = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 0 })
-const decimals = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
-const rates = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const raw = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 20 })
-const cents = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const subDollar = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 4 })
-
-export const formatMetric = (value?: number | null) => value == null || !Number.isFinite(value) ? '자료 부족' : decimals.format(value)
-export const formatPercent = (value: number) => Number.isFinite(value) ? rates.format(value) + '%' : '자료 부족'
-export const formatVolume = (value?: number | null) => value == null || !Number.isFinite(value) || value < 0 ? '자료 부족' : integers.format(value)
+export const formatMetric = financialNumber
+export const formatPercent = financialPercent
+export const formatVolume = shareVolume
 
 export function formatAnalysisPrice(value: number | null | undefined, unit: AnalysisUnit) {
   if (value == null || !Number.isFinite(value) || value < 0) return '자료 부족'
-  if (unit === 'KRW') return raw.format(value) + '원'
-  return (unit === 'USD' ? (value < 1 ? subDollar : cents) : decimals).format(value) + ' ' + unit
+  return financialNumber(value, unit === 'KRW' ? 0 : 2) + (unit === 'KRW' ? '원' : ' ' + unit)
 }
 
 function displayPrice(value: number | null, { unit, tick }: PriceDisplay, direction: Direction) {

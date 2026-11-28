@@ -1,3 +1,5 @@
+import { FinancialTooltip } from './FinancialTooltip'
+import { financialAxis, financialNumber } from '../services/financialNumbers'
 import { useEffect, useRef } from 'react'
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 
@@ -10,7 +12,6 @@ export default function EcosHistoryChart({ id, name, points, unit, onClose }: {
   const tooltipTrigger = matchMedia('(hover: none)').matches ? 'click' : 'hover'
   useEffect(() => { heading.current?.focus() }, [name])
   const daily = points[0].period.length === 10
-  const format = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
   const data = points.map(point => ({ ...point, at: Date.parse(daily ? point.period : point.period + '-01') }))
   const dateLabel = (value: number) => Number.isFinite(value) ? new Date(value).toISOString().slice(0, daily ? 10 : 7) : ''
   return <section id={id} className="panel chart-panel" aria-labelledby={id + '-title'}>
@@ -25,9 +26,10 @@ export default function EcosHistoryChart({ id, name, points, unit, onClose }: {
           <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="4 5" />
           <XAxis dataKey="at" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={dateLabel}
             minTickGap={24} tick={{ fill: 'var(--muted)', fontSize: 11 }} />
-          <YAxis width={48} domain={['auto', 'auto']} tickFormatter={value => format.format(value)} tick={{ fill: 'var(--muted)', fontSize: 11 }} />
-          <Tooltip trigger={tooltipTrigger} isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }} labelFormatter={value => dateLabel(Number(value))} formatter={value => format.format(Number(value)) + (unit.includes('%') ? '%' : '')}
-            contentStyle={{ background: 'var(--panel)', borderColor: 'var(--line)' }} />
+          <YAxis width={48} domain={['auto', 'auto']} tickFormatter={value => financialAxis(value)} tick={{ fill: 'var(--muted)', fontSize: 11 }} />
+          <Tooltip trigger={tooltipTrigger} isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }}
+            content={props => <FinancialTooltip {...props} formatDate={value => dateLabel(Number(value))}
+              formatValue={value => typeof value === 'number' ? financialNumber(value) + (unit.includes('%') ? '%' : '') : '자료 부족'} />} />
           <Line name={name} dataKey="value" stroke="var(--accent)" strokeWidth={2} dot={points.length <= 24} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
@@ -37,7 +39,7 @@ export default function EcosHistoryChart({ id, name, points, unit, onClose }: {
       <div className="chart-data-scroll" role="region" aria-label={name + ' 관측값 표'} tabIndex={0}><table>
         <caption className="sr-only">{name} 관측값 및 단위</caption>
         <thead><tr><th scope="col">{daily ? '관측일' : '관측월'}</th><th scope="col">값 ({unit})</th></tr></thead>
-        <tbody>{points.map(point => <tr key={point.period}><th scope="row"><time dateTime={point.period}>{point.period}</time></th><td>{format.format(point.value)}</td></tr>)}</tbody>
+        <tbody>{points.map(point => <tr key={point.period}><th scope="row"><time dateTime={point.period}>{point.period}</time></th><td>{financialNumber(point.value)}</td></tr>)}</tbody>
       </table></div>
     </details>
   </section>

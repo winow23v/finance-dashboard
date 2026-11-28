@@ -72,16 +72,16 @@ export function TechnicalSummary({ analysis, history, index, tick, chart }: {
         <div><dt>위험</dt><dd><span className={stale || risk.signals.length ? "technical-risk-attention" : undefined}>{risk.status}</span></dd></div>
       </dl>
       <dl className="technical-key-metrics">
-        {!index && <div><dt>SMA 20</dt><dd>{format(sma[20])}</dd></div>}
-        <div><dt>RSI 14</dt><dd>{format(rsi14)}{rsi14 !== null && <small>{rsi14 >= 70 ? '과매수 구간' : rsi14 <= 30 ? '과매도 구간' : '중립 구간'}</small>}
+        {!index && <div><dt>SMA 20</dt><dd>{formatAnalysisPrice(sma[20], display.unit)}</dd></div>}
+        <div><dt>RSI 14</dt><dd>{format(rsi14, 1)}{rsi14 !== null && <small>{rsi14 >= 70 ? '과매수 구간' : rsi14 <= 30 ? '과매도 구간' : '중립 구간'}</small>}
           {rsiDirection !== null && priceDirection !== null && <small>직전 봉 대비 RSI {direction(rsiDirection)} · 종가 {direction(priceDirection)}</small>}</dd></div>
         <div><dt>MACD 12·26</dt><dd>{format(macd.line)}
           {macd.line !== null && <small>{macd.histogram === null ? '시그널 자료 부족'
             : macd.histogram > 0 ? '시그널 위' : macd.histogram < 0 ? '시그널 아래' : '시그널과 같음'}</small>}
           {macdCross && <small>당일 시그널 {macdCross === 'up' ? '상향' : '하향'} 교차</small>}</dd></div>
-        <div><dt>ADX 14</dt><dd>{format(dmi.adx)}</dd></div>
+        <div><dt>ADX 14</dt><dd>{format(dmi.adx, 1)}</dd></div>
         <div><dt>직전 20봉 대비 거래량</dt><dd>{volume.ratio === null ? '비교 불가' : format(volume.ratio) + '배'}</dd></div>
-        <div><dt>변동성</dt><dd>{stale ? '최신 상태 미확인' : atr14 === null ? '자료 부족' : risk.signals.includes('변동성 확대') ? '확대' : 'ATR ' + format(atr14)}</dd></div>
+        <div><dt>변동성</dt><dd>{stale ? '최신 상태 미확인' : atr14 === null ? '자료 부족' : risk.signals.includes('변동성 확대') ? '확대' : 'ATR ' + formatAnalysisPrice(atr14, display.unit)}</dd></div>
       </dl>
       <details className="technical-risk-checks">
         <summary>확인한 위험 조건 <ChevronDown size={16} aria-hidden="true" /></summary>
@@ -134,9 +134,9 @@ export function TechnicalSummary({ analysis, history, index, tick, chart }: {
         <summary>추세 강도 · 이동평균 교차 <ChevronDown size={16} aria-hidden="true" /></summary>
         <p className="heatmap-meta">ADX는 추세의 강도를 나타냅니다. 방향은 +DI(상승 압력)와 −DI(하락 압력)를 비교합니다. ADX는 14기간 Wilder 방식으로 계산합니다. 장기·중기 추세가 일치하고 ADX가 25 이상이면 추세로, 중기 방향 전환과 모멘텀이 일치하고 ADX가 20 이상이면 전환 후보로 평가합니다.</p>
         <dl className="stock-detail-fields">
-          <div><dt>ADX 14</dt><dd>{format(dmi.adx)}</dd></div>
-          <div><dt>+DI 14</dt><dd>{format(dmi.plus)}</dd></div>
-          <div><dt>−DI 14</dt><dd>{format(dmi.minus)}</dd></div>
+          <div><dt>ADX 14</dt><dd>{format(dmi.adx, 1)}</dd></div>
+          <div><dt>+DI 14</dt><dd>{format(dmi.plus, 1)}</dd></div>
+          <div><dt>−DI 14</dt><dd>{format(dmi.minus, 1)}</dd></div>
           <div><dt>20일 이동평균 변화</dt><dd>{sma20Slope === null ? '자료 부족' : sma20Slope === 0 ? '직전 거래일과 같음'
             : `직전 거래일보다 약 ${display.unit === 'KRW' ? formatAnalysisPrice(Math.round(Math.abs(sma20Slope)), 'KRW')
               : formatAnalysisPrice(Math.abs(sma20Slope), display.unit)} ${sma20Slope > 0 ? '상승' : '하락'}`}
@@ -151,10 +151,10 @@ export function TechnicalSummary({ analysis, history, index, tick, chart }: {
         <summary>변동성 · 거래량 <ChevronDown size={16} aria-hidden="true" /></summary>
         <p className="heatmap-meta">ATR은 최근 가격이 얼마나 크게 움직였는지 보여 줍니다. 값이 커지면 가격 변동 위험도 커질 수 있으며 위험 관리 후보에 활용합니다. 14개 진폭의 평균으로 시작해 Wilder 방식으로 갱신합니다. 볼린저밴드는 20개 종가의 모표준편차에 2를 곱합니다. 5일·20일 이동평균에는 기준일 봉을 포함합니다. 상대 거래량의 기준 평균은 당일을 제외한 직전 20개 확정 봉입니다.</p>
         <dl className="stock-detail-fields">
-          <div><dt>ATR 14</dt><dd>{format(atr14)}<small>종가 대비 {indicators.atrPercent === null ? '자료 부족' : formatPercent(indicators.atrPercent)}</small></dd></div>
-          <div><dt>볼린저 상단</dt><dd>{format(bands?.upper)}</dd></div>
-          <div><dt>볼린저 중심</dt><dd>{format(bands?.middle)}</dd></div>
-          <div><dt>볼린저 하단</dt><dd>{format(bands?.lower)}</dd></div>
+          <div><dt>ATR 14</dt><dd>{formatAnalysisPrice(atr14, display.unit)}<small>종가 대비 {indicators.atrPercent === null ? '자료 부족' : formatPercent(indicators.atrPercent)}</small></dd></div>
+          <div><dt>볼린저 상단</dt><dd>{formatAnalysisPrice(bands?.upper, display.unit)}</dd></div>
+          <div><dt>볼린저 중심</dt><dd>{formatAnalysisPrice(bands?.middle, display.unit)}</dd></div>
+          <div><dt>볼린저 하단</dt><dd>{formatAnalysisPrice(bands?.lower, display.unit)}</dd></div>
           <div><dt>%B</dt><dd>{bands?.percentB == null ? '산출 불가' : formatPercent(bands.percentB)}</dd></div>
           <div><dt>밴드 폭</dt><dd>{bands?.bandwidth == null ? '자료 부족' : formatPercent(bands.bandwidth)}</dd></div>
           {volume.direction !== null && priceDirection !== null && <div><dt>직전 봉 대비</dt><dd>종가 {direction(priceDirection)} · 거래량 {volume.direction > 0 ? '증가' : volume.direction < 0 ? '감소' : '동일'}</dd></div>}

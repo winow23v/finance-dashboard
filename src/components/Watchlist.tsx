@@ -1,3 +1,4 @@
+import { financialNumber, financialPercent } from '../services/financialNumbers'
 import { LoadingSkeleton } from './LoadingSkeleton'
 import { SearchButton, useSearchComposition } from './SearchButton'
 import { useEffect, useId, useRef, useState } from 'react'
@@ -42,9 +43,6 @@ type Props = {
 }
 
 type Row = { listing: MarketSymbol; observation?: Observation }
-const number = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 })
-const usd = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const percent = new Intl.NumberFormat('ko-KR', { signDisplay: 'exceptZero', maximumFractionDigits: 2 })
 
 function StockList({ rows, saved, onToggle, label, blocked, showQuoteStatus, analysisControls }: {
   rows: Row[]; saved: Set<string>; onToggle: Props['onToggle']; label: string; blocked?: boolean; showQuoteStatus?: boolean; analysisControls?: (listing: MarketSymbol) => React.ReactNode
@@ -56,8 +54,8 @@ function StockList({ rows, saved, onToggle, label, blocked, showQuoteStatus, ana
       const venue = segment ?? (listing.exchange === 'US' ? '거래소 미확인' : listing.exchange)
       const status = regular?.usingPreviousClose ? '이전 정상 종가 사용' : regular?.reason && !['before-collection', 'weekend'].includes(regular.reason) ? regularQuoteStatus(regular.reason)
         : afterHours?.every(entry => entry.status === 'market-closed') && afterHours.length ? '시간외 휴장' : undefined
-      const price = quote && (currency === 'USD' ? '$' + usd.format(quote.price)
-        : number.format(quote.price) + (currency === 'KRW' ? '원' : ''))
+      const price = quote && (currency === 'USD' ? '$' + financialNumber(quote.price)
+        : financialNumber(quote.price, currency === 'KRW' ? 0 : 2) + (currency === 'KRW' ? '원' : ''))
       return <li className="watch-row" key={marketSymbolKey(listing)}>
         <a className="stock-detail-link watch-identity" href={stockHref(listing)} title={name}>
           <span className="watch-name">{name ?? (listing.market === 'KR' ? listing.symbol : '종목명 미확인')}</span>
@@ -67,7 +65,7 @@ function StockList({ rows, saved, onToggle, label, blocked, showQuoteStatus, ana
           {quote ? <>
             <strong>{price}</strong>
             {quote.changePercent !== null && <span data-market={listing.market} className={quote.changePercent > 0 ? 'up' : quote.changePercent < 0 ? 'down' : 'flat'}>
-              {percent.format(quote.changePercent)}%
+              {financialPercent(quote.changePercent, true)}
             </span>}
           </> : <small>확인된 종가 없음</small>}
         </div>}

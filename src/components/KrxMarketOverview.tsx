@@ -1,3 +1,4 @@
+import { financialNumber, financialPercent, shareVolume } from '../services/financialNumbers'
 import { ClientPages } from './ClientPages'
 import { formatWon } from '../services/formatWon'
 import { SegmentTabs } from "./SegmentTabs"
@@ -7,10 +8,8 @@ import { stockHref } from '../services/marketListings'
 import type { KrxMarket, KrxMarketRow, KrxOverview } from '../types/finance'
 import { krxStateLabels } from './KrxStocks'
 
-const number = new Intl.NumberFormat('ko-KR')
-const percent = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2, signDisplay: 'exceptZero' })
 const link = (row: KrxMarketRow) => stockHref({ market: 'KR', exchange: 'XKRX', symbol: row.symbol })
-const rate = (row: KrxMarketRow) => row.changePercent === null ? '등락률 미확인' : percent.format(row.changePercent) + '%'
+const rate = (row: KrxMarketRow) => row.changePercent === null ? '등락률 미확인' : financialPercent(row.changePercent, true)
 const state = (data?: KrxOverview | null) => data === undefined ? 'KRX 시장 데이터를 불러오는 중입니다.'
   : data === null ? 'KRX 시장 데이터를 조회하지 못했습니다.'
     : data.reason && data.reason !== 'same-date-data-unavailable' ? krxStateLabels[data.reason]
@@ -30,13 +29,14 @@ function MarketBasis({ data }: { data: KrxOverview }) {
   const { reason } = data
   const status = data.usingPreviousClose ? '이전 정상 종가 사용'
     : reason === 'provider-error' || reason === 'provider-not-configured' || reason === 'not-published' ? krxStateLabels[reason] : null
-  return <p className="heatmap-meta">{data.tradingDate && <time dateTime={data.tradingDate}>{data.tradingDate}</time>}{status && <> <span className="muted-badge">{status}</span></>}</p>
+  return <>{status && <p className="heatmap-meta" role="status">{status}</p>}
+    {data.tradingDate && <details className="heatmap-meta"><summary>시장 데이터 기준</summary><time dateTime={data.tradingDate}>{data.tradingDate}</time> 종가 · {data.source}</details>}</>
 }
 
 const rankings = [
   { key: 'advances', label: '상승률 상위', format: rate },
   { key: 'declines', label: '하락률 상위', format: rate },
-  { key: 'volume', label: '거래량 상위', format: (row: KrxMarketRow) => number.format(row.volume) + '주' },
+  { key: 'volume', label: '거래량 상위', format: (row: KrxMarketRow) => shareVolume(row.volume) },
   { key: 'turnover', label: '거래대금 상위', format: (row: KrxMarketRow) =>
     formatWon(row.turnover) },
 ] as const
@@ -46,7 +46,7 @@ export function KrxMovers({ data, message, summary }: { data?: KrxOverview | nul
   return <section className="panel movers-panel" aria-label="주요 등락 현황">
     <div className="section-heading"><h2>주요 등락 현황</h2>{summary && <a href="#domestic" className="text-link">국내시장 보기</a>}</div>
     {!data || !leaders ? <p className="state" role="status">{message ?? state(data)}</p> : <>
-      <MarketBasis data={data} />
+      {!summary && <MarketBasis data={data} />}
       <SegmentTabs label="시장 랭킹" items={(summary ? rankings.slice(0, 2) : rankings).flatMap(({ key, label, format }) => {
           const rows = leaders[key]
           if (!rows) return []
@@ -103,7 +103,7 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
         }}><option value="">전체</option><option>KOSPI</option><option>KOSDAQ</option></select></label>}
         <div className="heatmap-legend" aria-label="등락률 색상 범례">
           {([[-3, '하락'], [0, '보합'], [3, '상승']] as const).map(([value, label]) => <span key={value}>
-            <i aria-hidden="true" style={{ background: heatmapColor('KR', value) }} />{label} {percent.format(value)}%
+            <i aria-hidden="true" style={{ background: heatmapColor('KR', value) }} />{label} {financialPercent(value, true)}
           </span>)}
         </div>
       </div>
@@ -150,7 +150,7 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
             label="종가·등락률 목록 페이지" sizes={summary ? [10] : undefined}>{visible => <ul className="stock-list">
             {visible.map(row => <li key={key(row)}>
               <a className="stock-detail-link" href={link(row)} title={row.shortName}><span className="krx-stock-name">{row.shortName}</span><small>{row.market} · {row.symbol}</small></a>
-              <span>{!summary && <strong className="heatmap-list-price">{number.format(row.price)}원</strong>}<span className={movementClass(row.changePercent)}>{rate(row)}</span></span>
+              <span>{!summary && <strong className="heatmap-list-price">{financialNumber(row.price, 0)}원</strong>}<span className={movementClass(row.changePercent)}>{rate(row)}</span></span>
             </li>)}
           </ul>}</ClientPages>
         </details>
@@ -171,7 +171,7 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
 function KrxTileInfo({ row }: { row: KrxMarketRow }) {
   return <>
     <strong>{row.shortName} · {row.symbol}</strong>
-    <small>{row.market} · 종가 {number.format(row.price)}원 · {rate(row)}</small>
+    <small>{row.market} · 종가 {financialNumber(row.price, 0)}원 · {rate(row)}</small>
     <small>시가총액 {formatWon(row.marketCap)}</small>
   </>
 }

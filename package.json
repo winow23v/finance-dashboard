@@ -8,7 +8,7 @@
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "bash .github/scripts/oracle-release.test.sh && node --test ops/health/probe.test.mjs src/services/requestCache.test.mjs src/services/ecosRefresh.test.mjs src/services/technicalIndicators.test.mjs src/services/marketHeatmap.test.mjs src/services/formatWon.test.mjs && npm --prefix vps-api test"
+    "test": "bash .github/scripts/oracle-release.test.sh && node --test ops/health/probe.test.mjs src/services/requestCache.test.mjs src/services/ecosRefresh.test.mjs src/services/technicalIndicators.test.mjs src/services/marketHeatmap.test.mjs src/services/formatWon.test.mjs src/services/financialNumbers.test.mjs && npm --prefix vps-api test"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.2",

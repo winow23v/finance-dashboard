@@ -1,3 +1,6 @@
+import { FinancialTooltip } from './FinancialTooltip'
+import { financialAxis, financialNumber, financialPercent } from '../services/financialNumbers'
+import { memberDataEpoch } from '../services/memberTransport'
 import { CompactMarketQuote } from './CompactMarketQuote'
 import { IndexCarousel } from './IndexCarousel'
 import { LoadingSkeleton } from "./LoadingSkeleton"
@@ -30,16 +33,11 @@ function loadPreferences() {
   const defaults: Currency[] = ['USD', 'JPY', 'EUR']
   return { reference, selected: selected.length ? selected : defaults.filter(code => code !== reference), yen100: value.yen100 !== false }
 }
-const fxPercent = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2, signDisplay: 'exceptZero' })
 const periods = { '1W': '7일', '1M': '1개월', '3M': '3개월', '1Y': '1년' }
-const format = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 4 })
-const wonFormat = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const smallRateFormat = new Intl.NumberFormat('ko-KR', { maximumSignificantDigits: 4 })
 const detailFormat = new Intl.NumberFormat('ko-KR', { maximumSignificantDigits: 15 })
-
-function displayRate(value: number, quote: string) {
-  if (value !== 0 && Math.abs(value) < (quote === 'KRW' ? 0.005 : 0.00005)) return smallRateFormat.format(value)
-  return (quote === 'KRW' ? wonFormat : format).format(value)
+const historyPath = (pair: string, period: keyof typeof periods) => {
+  const [base, quote] = pair.split('/')
+  return '/api/v1/fx/history?' + new URLSearchParams({ base, quote, period })
 }
 
 type Point = { observationDate: string; rate: number }
@@ -136,8 +134,8 @@ function basisLabel(code: string, multiplier: number) {
   return code === 'JPY' ? `${multiplier}엔당` : `${multiplier} ${code}당`
 }
 
-export default function FxDashboard({ revision, detailed, showSettings, onRefreshReady, onRefreshResult }: {
-  revision: number; detailed: boolean; showSettings: boolean; onRefreshReady: (ready: boolean) => void; onRefreshResult?: (key: string, failed: boolean) => void
+export default function FxDashboard({ revision, detailed, requestedPair, showSettings, onRefreshReady, onRefreshResult }: {
+  revision: number; detailed: boolean; requestedPair?: string; showSettings: boolean; onRefreshReady: (ready: boolean) => void; onRefreshResult?: (key: string, failed: boolean) => void
 }) {
   const settings = useRef<HTMLDetailsElement>(null)
   useEffect(() => {
@@ -146,15 +144,18 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
   const [preferences, setPreferences] = useState(loadPreferences)
   const { reference, selected, yen100 } = preferences
   const [selection, setPair] = useState(pairs[0])
+  const [requestedBase, requestedQuote] = requestedPair?.split('/') ?? []
+  const directPair = isCurrency(requestedBase) && isCurrency(requestedQuote) && requestedBase !== requestedQuote
+    ? requestedPair : undefined
   const [period, setPeriod] = useState<keyof typeof periods>('1M')
   const latestResult = usePublicData('/api/v1/fx/latest', revision, parseLatest, undefined, true, latestCache)
   const latest = latestResult?.data
   const infoId = useId()
   const tooltipTrigger = matchMedia('(hover: none)').matches ? 'click' : 'hover'
-  const availablePairs = [...new Set([...pairs, selection, ...selected.map(code => `${code}/${reference}`)])]
-  const pair = availablePairs.includes(selection) ? selection : pairs[0]
+  const pair = directPair ?? selection
+  const availablePairs = [...new Set([...pairs, pair, ...selected.map(code => `${code}/${reference}`)])]
   const [base, quote] = pair.split('/')
-  const chartResult = usePublicData(detailed ? '/api/v1/fx/history?' + new URLSearchParams({ base, quote, period }) : undefined, revision, parseHistory, undefined, true, historyCache)
+  const chartResult = usePublicData(detailed ? historyPath(pair, period) : undefined, revision, parseHistory, undefined, true, historyCache)
   const chart = chartResult?.data === null ? null : chartResult?.data?.points
   const ready = latestResult?.revision === revision && (!detailed || chartResult?.revision === revision)
   useEffect(() => { onRefreshReady(ready) }, [onRefreshReady, ready])
@@ -162,11 +163,12 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
     || (detailed && (!chart || !!chartResult?.refreshFailed || !!chartResult?.data?.refreshError))
   useEffect(() => { if (ready) onRefreshResult?.('fx', refreshFailed) }, [ready, refreshFailed, revision, onRefreshResult])
   const chartMultiplier = base === 'JPY' && yen100 ? 100 : 1
+  const chartReference = detailed ? latestRate(latest, base as Currency, quote as Currency) : undefined
 
   useEffect(() => { guestPreferences.save(fxKey, preferences) }, [preferences])
 
   return <section className={detailed ? "market-sections" : "market-sections overview-fx"} aria-label="환율">
-    <div className="section-heading"><h2>환율</h2>{detailed ? <span className="badge">공표 기준환율 · 일별</span> : <a href="#economy" className="text-link">환율·경제지표 보기</a>}</div>
+    {!detailed && <div className="section-heading"><h2>환율</h2></div>}
     <details className="panel fx-settings" ref={settings} hidden={!detailed}>
       <summary>환율 설정</summary>
       <div className="fx-preferences">
@@ -188,11 +190,10 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
           })}</div>
         </fieldset>
         <label><input type="checkbox" checked={yen100} onChange={event => setPreferences({ ...preferences, yen100: event.target.checked })} /> 일본 엔화 100엔 기준</label>
-      <p className="heatmap-meta">설정은 이 브라우저에 자동 저장됩니다. 통화쌍을 바꾸면 해당 이력을 조회하며 별도 갱신은 필요하지 않습니다.</p>
       </div>
     </details>
-    <div className="compact-fx-rates">
-      <IndexCarousel label="환율" slides={(detailed ? selected : selected.slice(0, 3)).map(code => {
+    {!detailed && <div className="compact-fx-rates">
+      <IndexCarousel label="환율" slides={selected.map(code => {
         const name = `${code}/${reference}`
         const row = latestRate(latest, code, reference)
         const multiplier = code === 'JPY' && yen100 ? 100 : 1
@@ -201,18 +202,19 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
         const unit = reference === 'KRW' ? '원' : reference
         const status = latest?.refreshError ? (rate != null ? '갱신 실패 · 이전 공표값' : '갱신 실패 · ' + latest.refreshError)
           : latestResult?.refreshFailed && latestResult.revision === revision ? '갱신 실패 · 이전 값'
-          : rate != null && row?.status === 'previous_publication' ? '이전 공표값' : refreshError(latestResult?.errorCode)
+          : refreshError(latestResult?.errorCode)
         // Compare only the same pair in the existing chart feed, after matching
         // its latest observation and unscaled value to the reference card.
         const observationDate = row?.observationDate
-        const previous = name === pair && rate != null && observationDate && !chartResult?.refreshFailed
-          && !chartResult?.data?.refreshError && chart?.some(point => point.observationDate === observationDate && Math.abs(point.rate / rate - 1) < 1e-8)
-          ? chart.filter(point => point.observationDate < observationDate).sort((a, b) => b.observationDate.localeCompare(a.observationDate))[0] : undefined
-        return { label: name, content: <CompactMarketQuote market="FX" title={<>{name} <small>{basisLabel(code, multiplier)}</small></>}
+        const history = historyCache.read(JSON.stringify([memberDataEpoch(), historyPath(name, period), revision]))
+        const points = history?.points
+        const previous = rate != null && observationDate && !history?.refreshError
+          && points?.some(point => point.observationDate === observationDate && Math.abs(point.rate / rate - 1) < 1e-8)
+          ? points.filter(point => point.observationDate < observationDate).sort((a, b) => b.observationDate.localeCompare(a.observationDate))[0] : undefined
+        return { label: name, content: <CompactMarketQuote market="FX" title={<><a href={'#economy/fx/' + name}>{name}</a>{multiplier === 100 && <small>{basisLabel(code, multiplier)}</small>}</>}
           action={<button type="button" className="fx-info-button" popoverTarget={details} aria-controls={details}
             aria-label={name + ' 환율 정보'}><Info size={17} aria-hidden="true" /></button>}
           footer={<>
-          {detailed && <button className="text-link fx-chart-link" aria-pressed={pair === name} type="button" onClick={() => setPair(name)}>이 통화쌍 추이</button>}
           <div className="panel fx-info-popover" id={details} popover="auto" role="group" aria-labelledby={details + '-title'}>
             <div className="section-heading">
               <h4 id={details + '-title'}>{name} 환율 정보</h4>
@@ -230,27 +232,34 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
           </div>
           </>}>
           <strong className="economic-value">
-            {rate != null ? <>{displayRate(rate * multiplier, reference)} <span>{unit}</span></>
+            {rate != null ? <>{financialNumber(rate * multiplier)} <span>{unit}</span></>
               : latest === undefined ? <LoadingSkeleton message="환율을 불러오는 중입니다." shape="value" /> : latest === null ? '조회 불가' : '공표 관측값 없음'}
           </strong>
-          {rate != null && (previous ? <small className="change">{rate > previous.rate ? '+' : ''}{displayRate((rate - previous.rate) * multiplier, reference)} {unit}
-              {' ('}{fxPercent.format((rate / previous.rate - 1) * 100)}%)</small>
-            : <small>{!detailed ? '상세 화면에서 등락 확인' : name === pair ? '등락 비교 불가' : '추이 선택 시 등락 확인'}</small>)}
-          {rate != null && row?.observationDate && <small className="index-source"><time dateTime={row.observationDate}>{row.observationDate}</time> 관측</small>}
-          {(status || rate != null) && <small className="fx-quote-state"
-            data-state={latestResult?.errorCode === 'PROVIDER_RATE_LIMITED' ? 'rate-limited' : status?.startsWith('갱신 실패') ? 'error' : undefined}>
-            {status ?? '최근 공표값'}{row?.calculated && rate != null ? ' / 교차환율' : ''}
-          </small>}
+          {rate != null && previous && <small className="change">{financialNumber((rate - previous.rate) * multiplier, 2, true)} {unit}
+              {' ('}{financialPercent((rate / previous.rate - 1) * 100, true)})</small>}
+          {status && <small className="fx-quote-state" role="status">{status}</small>}
         </CompactMarketQuote> }
       })} />
-    </div>
+    </div>}
     {detailed && <div className="panel chart-panel">
       <div className="panel-heading">
         <div><h2>환율 추이</h2><p>{pair} · {basisLabel(base, chartMultiplier)} {quote === 'KRW' ? '원' : quote}</p></div>
-        <div className="chart-selects"><select aria-label="통화쌍 선택" value={pair} onChange={event => setPair(event.target.value)}>
+        <div className="chart-selects"><select aria-label="통화쌍 선택" value={pair} onChange={event => {
+          if (directPair) location.hash = 'economy/fx/' + event.target.value
+          else setPair(event.target.value)
+        }}>
           {availablePairs.map(name => <option key={name}>{name}</option>)}
         </select></div>
       </div>
+      <details className="chart-note">
+        <summary>환율 데이터 기준</summary>
+        <dl className="observation-dates">
+          <div><dt>단위</dt><dd>{basisLabel(base, chartMultiplier)} {quote === 'KRW' ? '원' : quote}</dd></div>
+          <div><dt>산출 방식</dt><dd>{chartReference?.calculated ? '같은 관측일의 교차환율' : '공표 기준환율'}</dd></div>
+          <div><dt>출처</dt><dd>Frankfurter · ECB</dd></div>
+          {chartReference?.observationDate && <div><dt>최근 공표 관측일</dt><dd><time dateTime={chartReference.observationDate}>{chartReference.observationDate}</time></dd></div>}
+        </dl>
+      </details>
       <div className="chart-toolbar"><div className="periods" role="group" aria-label="환율 기간">
         {(Object.keys(periods) as (keyof typeof periods)[]).map(value =>
           <button key={value} aria-pressed={value === period} onClick={() => setPeriod(value)}>{periods[value]}</button>)}
@@ -265,10 +274,10 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
             <AreaChart accessibilityLayer title="공표 기준환율 추이" data={chart.map(point => ({ ...point, rate: point.rate * chartMultiplier, dateTime: Date.parse(point.observationDate) }))} margin={{ top: 10, right: 12, left: 12, bottom: 8 }}>
               <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="4 5" />
               <XAxis dataKey="dateTime" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={date => new Date(date).toISOString().slice(5, 10)} minTickGap={28} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
-              <YAxis orientation="right" width={65} domain={['auto', 'auto']} tickFormatter={value => displayRate(value, quote)} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
-              <Tooltip trigger={tooltipTrigger} isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }} labelFormatter={date => new Date(Number(date)).toISOString().slice(0, 10)} formatter={value => [`${displayRate(Number(value), quote)} ${quote === 'KRW' ? '원' : quote}`, basisLabel(base, chartMultiplier)]}
-                labelStyle={{ color: 'var(--text)' }} itemStyle={{ color: 'var(--text)' }}
-                contentStyle={{ background: 'var(--panel)', borderColor: 'var(--line)' }} />
+              <YAxis orientation="right" width={65} domain={['auto', 'auto']} tickFormatter={value => financialAxis(value)} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
+              <Tooltip trigger={tooltipTrigger} isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }} content={props => <FinancialTooltip {...props}
+                formatDate={date => new Date(Number(date)).toISOString().slice(0, 10)}
+                formatValue={value => typeof value === 'number' ? financialNumber(value) + ' ' + (quote === 'KRW' ? '원' : quote) : '자료 부족'} />} />
               <Area name={pair} dataKey="rate" stroke="var(--accent)" fill="var(--accent)" fillOpacity={0.09} isAnimationActive={false} dot={chart.length === 1} />
             </AreaChart>
           </ResponsiveContainer>}
@@ -281,7 +290,7 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
             <thead><tr><th scope="col">관측일</th><th scope="col">기준환율 ({quote === 'KRW' ? '원' : quote})</th></tr></thead>
             <tbody>{chart.map(point => <tr key={point.observationDate}>
               <th scope="row"><time dateTime={point.observationDate}>{point.observationDate}</time></th>
-              <td>{displayRate(point.rate * chartMultiplier, quote)}</td>
+              <td>{financialNumber(point.rate * chartMultiplier)}</td>
             </tr>)}</tbody>
           </table>
         </div>

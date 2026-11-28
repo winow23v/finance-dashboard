@@ -1,3 +1,4 @@
+import { financialNumber, financialPercent } from '../services/financialNumbers'
 import { ClientPages } from './ClientPages'
 import { LoadingSkeleton } from "./LoadingSkeleton"
 import { useEffect, useState } from 'react'
@@ -5,9 +6,6 @@ import { ChartNoAxesCombined } from 'lucide-react'
 import { FinanceApiError, getEconomyIndicators } from '../services/apiFinanceService'
 import type { EconomyIndicators, Indicator } from '../types/finance'
 
-const percent = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-const indexValue = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })
-const pointChange = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 3, signDisplay: 'exceptZero' })
 
 const frequencyLabels = { daily: '일별', 'daily-7-day': '일별 · 주 7일', monthly: '월별' }
 
@@ -67,19 +65,19 @@ export function Economics({ api, demo, detailed, revision, onRefreshReady, onRef
       {visible.map(item => <li key={item.id}>
         <div>
           <h3>{item.name}</h3>
-          <small>{'frequency' in item && item.frequency && <>{frequencyLabels[item.frequency]} · </>}{item.observationDate ? <><time dateTime={item.observationDate}>{item.observationDate}</time> 관측 기준</> : '관측일 미확인'}
+          <small>{'frequency' in item && item.frequency && frequencyLabels[item.frequency]}
             {'stale' in item && item.stale && ' · 오래된 관측값'}
           </small>
         </div>
         <strong className="economic-value" data-state={item.value === null ? 'unpublished' : 'stale' in item && item.stale ? 'stale' : undefined}>{item.value === null
           ? (item.id === 'CPIAUCSL_YOY' && (!('missingReason' in item) || item.missingReason !== 'CURRENT_MISSING')
             ? '전년 동월 관측값 없음' : '미발표 / 관측값 없음') : item.unit === 'index'
-          ? `${indexValue.format(item.value)} (1982–84=100)` : `${percent.format(item.value)}%`}</strong>
+          ? financialNumber(item.value) + ' (1982–84=100)' : financialPercent(item.value)}</strong>
 
         <dl className="economic-change">
           {'change' in item && item.change != null && item.previousObservationDate && <div>
             <dt>{item.frequency === 'monthly' ? '전월 대비' : '직전 관측 대비'}</dt>
-            <dd>{pointChange.format(item.change)}{item.unit === '%' ? '%p' : 'pt'} ({item.previousObservationDate})</dd>
+            <dd>{financialNumber(item.change, 2, true)}{item.unit === '%' ? '%p' : 'pt'}</dd>
           </div>}
           {'comparisonPeriod' in item && item.comparisonPeriod && <div><dt>전년 동월 기준</dt>
             <dd><time dateTime={item.comparisonPeriod}>{item.comparisonPeriod.slice(0, 7)}</time></dd></div>}
@@ -88,6 +86,7 @@ export function Economics({ api, demo, detailed, revision, onRefreshReady, onRef
           <summary>관측 정보</summary>
           <dl>
             <div><dt>관측일</dt><dd>{item.observationDate ?? '미확인'}</dd></div>
+            {'previousObservationDate' in item && item.previousObservationDate && <div><dt>비교 관측일</dt><dd>{item.previousObservationDate}</dd></div>}
             {item.releaseDate && <div><dt>발표일</dt><dd>{item.releaseDate}</dd></div>}
             {'source' in item && item.source && <div><dt>출처</dt><dd><a className="text-link" href={item.source.url}>{item.source.name}</a></dd></div>}
           </dl>

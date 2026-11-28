@@ -357,10 +357,10 @@ test('display zones round outward, use verified ticks only, and leave raw values
   assert.deepEqual(displayZone({ low: 0.99501, high: 1.001 }, { unit: 'USD' }), { low: 0.995, high: 1.01 })
   assert.deepEqual(raw, { low: 34556.0162, high: 35843.9838 })
   assert.equal(displayZone({ low: 1.2, high: 1.1 }, { unit: 'USD' }), null)
-  assert.equal(formatAnalysisPrice(34556.0162, 'KRW'), '34,556.0162원')
+  assert.equal(formatAnalysisPrice(34556.0162, 'KRW'), '34,556원')
   assert.equal(formatAnalysisPrice(95.4, 'USD'), '95.40 USD')
   assert.equal(formatPercent(1.2), '1.20%')
-  assert.equal(formatVolume(1234567), '1,234,567')
+  assert.equal(formatVolume(1234567), '123만 주')
 })
 
 test('displayed price candidates drive reward/risk and ordering is checked after rounding', () => {
