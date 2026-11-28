@@ -149,17 +149,28 @@ case "$*" in
   'show -p ProtectSystem --value finance-dashboard-api.service') echo strict ;;
   'show -p DynamicUser --value finance-dashboard-api.service') echo no ;;
   'show -p ReadWritePaths --value finance-dashboard-api.service')
-    printf '%s\n' "/var/lib/finance-krx /var/lib/finance-us-market $TEST_SANDBOX/state/financials" ;;
+    printf '%s' '/var/lib/finance-krx /var/lib/finance-us-market'
+    if [[ -f $TEST_SANDBOX/loaded-dropin ]]; then
+      printf ' %s' "$TEST_SANDBOX/state/financials"
+    fi
+    printf '\n' ;;
   'show -p MainPID --value finance-dashboard-api.service') echo 1 ;;
   'show -p InvocationID --value finance-dashboard-api.service')
     printf '%032d\n' "$(cat "$TEST_SANDBOX/invocation")" ;;
   is-active*) exit 0 ;;
   *)
     printf '%s\n' "$1" >> "$TEST_SANDBOX/service-actions"
+    if [[ $1 == daemon-reload ]]; then
+      if [[ -f $TEST_SANDBOX/dropins/90-dart-financial-cache.conf ]]; then
+        touch "$TEST_SANDBOX/loaded-dropin"
+      else
+        rm -f "$TEST_SANDBOX/loaded-dropin"
+      fi
+    fi
     if [[ $1 == start || $1 == restart ]]; then
       wc -l < "$TEST_SANDBOX/service-actions" > "$TEST_SANDBOX/invocation"
       : > "$TEST_SANDBOX/service-environ"
-      if [[ -f $TEST_SANDBOX/dropins/90-dart-financial-cache.conf ]]; then
+      if [[ -f $TEST_SANDBOX/loaded-dropin ]]; then
         printf '%s\0' "DART_FINANCIAL_CACHE_DIR=$TEST_SANDBOX/state/financials" DART_FINANCIAL_CACHE_VERIFY=1 \
           > "$TEST_SANDBOX/service-environ"
       fi
