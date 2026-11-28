@@ -31,7 +31,7 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
   const [input, setInput] = useState('')
   const [query, setQuery] = useState('')
   const [revision, setRevision] = useState(0)
-  const [result, setResult] = useState<{ market: KrxMarket; symbol?: string; query: string; revision: number; data: StockResults[] | null; message: string }>()
+  const [result, setResult] = useState<{ market: KrxMarket; symbol?: string; query: string; revision: number; data: StockResults[] | null; message?: string }>()
   const current = result?.market === market && result.symbol === symbol && result.query === query && result.revision === revision ? result : undefined
 
   useEffect(() => {
@@ -44,7 +44,7 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
       const data = outcomes.flatMap(outcome => outcome.status === 'fulfilled' ? [outcome.value] : [])
       const failure = outcomes.find(outcome => outcome.status === 'rejected')
       setResult({ market, symbol, query, revision, data: data.length ? data : null,
-        message: marketRequestMessage(failure?.reason, '국내 종목 조회 실패') })
+        message: failure ? marketRequestMessage(failure.reason, data.length ? '일부 시장의 종목 조회 실패' : '국내 종목 조회 실패') : undefined })
     })
     return () => controller.abort()
   }, [market, query, revision, symbol])
@@ -56,7 +56,7 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
     <div className="panel-heading"><h2><Search size={18} aria-hidden="true" /> 국내 종목 시세</h2></div>
     {!symbol && <form className="disclosure-controls terminal-filters krx-search-controls quote-search-controls" onSubmit={event => {
       event.preventDefault()
-      if (composing.current || !input.trim() || (input.trim() === query && (pending || current?.data !== null))) return
+      if (composing.current || !input.trim() || (input.trim() === query && (pending || !current?.message && current?.data !== null))) return
       setQuery(input.trim())
       setRevision(value => value + 1)
     }}>
@@ -73,7 +73,9 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
     </form>}
     {!symbol && !query ? <p className="state">KOSPI 또는 KOSDAQ을 선택하고 종목명이나 코드를 입력하세요.</p> : !retained ? <LoadingSkeleton message="국내 종목을 불러오는 중입니다." shape="rows" /> : retained.data === null
       ? <p className="state" role="status">{retained.message}</p>
-      : retained.data.map(dataset => {
+      : <>
+        {!pending && retained.message && <p className="state" role="status">{retained.message}</p>}
+        {retained.data.map(dataset => {
         const details = [...new Set([dataset.listings.reason, dataset.trades.reason].filter(reason => reason !== null && reason !== 'before-collection' && reason !== 'weekend'))]
         return <div key={dataset.market}>
           <p className="state">{dataset.market}
@@ -101,8 +103,8 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
                       <Change market="KR" quote={{ change: quote.change, percent: quote.changePercent }} />}
                     <small className="watch-trading-date"><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가</small>
                     <small>거래량 {quote.volume === null ? '미확인' : number.format(quote.volume)}</small>
-                    {quote.turnover != null && <small>거래대금 {formatWon(quote.turnover)}</small>}
-                    {quote.marketCap != null && <small>시가총액 {formatWon(quote.marketCap)}</small>}
+                    {quote.turnover != null && <small className="financial-amount">거래대금 {formatWon(quote.turnover)}</small>}
+                    {quote.marketCap != null && <small className="financial-amount">시가총액 {formatWon(quote.marketCap)}</small>}
                   </> : <small>유효한 시세 없음</small>}
                 </div>
                 <button type="button" className="favorite-button" disabled={blocked} aria-pressed={saved} aria-label={item.name + ' 관심종목'}
@@ -111,6 +113,6 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
             })}
           </ul>}</ClientPages> : <p className="state">{dataset.listings.status === 'unavailable' ? '종목 목록 미확인' : '검색 결과 없음'}</p>}
         </div>
-      })}
+      })}</>}
   </section>
 }
