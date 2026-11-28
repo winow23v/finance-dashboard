@@ -535,3 +535,17 @@ test('MACD line, signal and histogram match independent decimal recurrence on no
     assert.deepEqual(result.macdDynamics, { zeroCross, histogramDirection })
   }
 })
+
+test('index histories preserve reported volume and distinguish all-zero placeholder histories', async () => {
+  const { analyzeDailyHistory, hasAnalysisVolume } = await import('./technicalAnalysis.ts')
+  const reported = history(ramp(21))
+  reported.bars.at(-1).volume = 0
+  const placeholder = { ...reported, bars: reported.bars.map(bar => ({ ...bar, volume: 0 })) }
+  const source = { market: 'US', symbol: 'FIXTURE-INDEX', collectedAt: null,
+    simulated: true, stale: false, aligned: true }
+  const analyze = data => analyzeDailyHistory(data, { ...source, volumeAvailable: hasAnalysisVolume(data, true) })
+  assert.equal(analyze(reported).volume.value.ratio, 0)
+  assert.equal(analyze(reported).volume.value.prior20, 109.5)
+  assert.equal(analyze(placeholder).volume.unavailable, 'provider-volume-unavailable')
+  assert.equal(hasAnalysisVolume(placeholder, false), true)
+})

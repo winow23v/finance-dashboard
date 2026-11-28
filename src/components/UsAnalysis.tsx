@@ -5,7 +5,7 @@ import { lazy, Suspense, useEffect, useRef, useMemo, useState, type ReactNode } 
 import { getUsAnalysis, marketRequestMessage } from '../services/apiFinanceService'
 import { calculatePriceReturns, emaWindows, smaWindows } from '../services/technicalIndicators'
 import { Change } from './QuoteDisplay'
-import { analyzeDailyHistory } from '../services/technicalAnalysis'
+import { analyzeDailyHistory, hasAnalysisVolume } from '../services/technicalAnalysis'
 import { TechnicalSummary } from './TechnicalSummary'
 import { formatAnalysisPrice, formatPercent, formatVolume } from '../services/analysisPrices'
 
@@ -57,7 +57,7 @@ export function UsAnalysis({ symbol, indexId, stock, refresh = 0, onRefreshResul
   const stale = data?.status === 'stale'
   const collectedAt = data && data.status !== 'unavailable' ? data.collectedAt : null
   const analysis = useMemo(() => history ? analyzeDailyHistory(history, {
-    market: 'US', symbol: indexId ?? symbol, collectedAt, simulated: false, stale, aligned, volumeAvailable: !indexId,
+    market: 'US', symbol: indexId ?? symbol, collectedAt, simulated: false, stale, aligned, volumeAvailable: hasAnalysisVolume(history, !!indexId),
   }) : null, [history, symbol, indexId, collectedAt, stale, aligned])
   const indicators = analysis?.indicators ?? null
   const returns = useMemo(() => history && indicators ? calculatePriceReturns(history) : {}, [history, indicators])

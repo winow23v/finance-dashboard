@@ -7,6 +7,11 @@ import { buildTechnicalScenarios } from './technicalScenarios.ts'
 export const technicalFormulaVersion = 1
 const maxEntries = 12
 
+// Some index feeds use zero throughout the history as a placeholder.
+export function hasAnalysisVolume(history: MarketDailyHistory, index: boolean) {
+  return !index || history.bars.some(bar => bar.volume > 0)
+}
+
 type AnalysisSource = {
   market: 'KR' | 'US'
   symbol: string

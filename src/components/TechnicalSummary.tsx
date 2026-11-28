@@ -41,7 +41,7 @@ export function TechnicalSummary({ analysis, history, index, tick, chart }: {
 }) {
   const { assessment, indicators, plan, quality, source, divergence } = analysis
   const { stale, collectedAt } = source
-  const risk = technicalRisk(assessment, indicators, stale, !index)
+  const risk = technicalRisk(assessment, indicators, stale, source.volumeAvailable)
   if (!assessment || !indicators || !plan) return <><section className="technical-summary" aria-label="기술적 분석">
     <h2>기술적 분석</h2>
     <p className="heatmap-meta" role="status">분석 불가 · {risk.status} · {quality.issues.includes('missing-sessions') ? '거래일 데이터 누락'
@@ -158,7 +158,7 @@ export function TechnicalSummary({ analysis, history, index, tick, chart }: {
           <div><dt>%B</dt><dd>{bands?.percentB == null ? '산출 불가' : formatPercent(bands.percentB)}</dd></div>
           <div><dt>밴드 폭</dt><dd>{bands?.bandwidth == null ? '자료 부족' : formatPercent(bands.bandwidth)}</dd></div>
           {volume.direction !== null && priceDirection !== null && <div><dt>직전 봉 대비</dt><dd>종가 {direction(priceDirection)} · 거래량 {volume.direction > 0 ? '증가' : volume.direction < 0 ? '감소' : '동일'}</dd></div>}
-          <div><dt>거래량 평균 5 / 20 / 50</dt><dd>{index && volume.latest === 0 ? '미제공' : [formatVolume(volume.sma5), formatVolume(indicators.volumeSma20), formatVolume(indicators.volumeSma50)].join(' / ')}</dd></div>
+          <div><dt>거래량 평균 5 / 20 / 50</dt><dd>{!source.volumeAvailable ? '미제공' : [formatVolume(volume.sma5), formatVolume(indicators.volumeSma20), formatVolume(indicators.volumeSma50)].join(' / ')}</dd></div>
           <div><dt>직전 20거래일 대비</dt><dd>{volume.ratio === null ? '비교 불가' : format(volume.ratio) + '배'}<small>급증 기준 {format(volume.spikeThreshold)}배</small></dd></div>
         </dl>
       </details>
