@@ -38,16 +38,26 @@ prepare_dart_directory() {
   fi
 }
 
+service_pid() {
+  local pid
+  pid=$(systemctl show -p MainPID --value "$service") || return 1
+  [[ $pid =~ ^[1-9][0-9]*$ ]] || return 1
+  printf '%s\n' "$pid"
+}
+
+check_storage_disabled() {
+  local pid=$1 result=0
+  grep -zFxq -- 'FINANCE_STORAGE_SYNC=1' "/proc/$pid/environ" || result=$?
+  [[ $result == 1 ]]
+}
+
 check_dart_service() {
   local pid mounts writable_paths
   writable_paths=$(systemctl show -p ReadWritePaths --value "$service") || return 1
   [[ " $writable_paths " == *" $dart_cache "* ]] || return 1
-  pid=$(systemctl show -p MainPID --value "$service")
-  [[ $pid =~ ^[1-9][0-9]*$ ]] || return 1
+  pid=$(service_pid) || return 1
   grep -zFxq -- "DART_FINANCIAL_CACHE_DIR=$dart_cache" "/proc/$pid/environ" || return 1
-  if grep -zFxq -- 'FINANCE_STORAGE_SYNC=1' "/proc/$pid/environ"; then
-    return 1
-  fi
+  check_storage_disabled "$pid" || return 1
   mounts=$(nsenter -t "$pid" -m -- findmnt -n -o VFS-OPTIONS -T "$dart_cache") || return 1
   [[ ,$mounts, == *,rw,* ]]
 }
@@ -169,6 +179,8 @@ for file in "${runtime_files[@]}"; do
 done
 
 check_health || { echo 'Current production API is unhealthy.' >&2; exit 1; }
+pid=$(service_pid) && check_storage_disabled "$pid" ||
+  { echo 'The running API must have financial storage sync disabled.' >&2; exit 1; }
 [[ $(systemctl show -p User --value "$service") == "$dart_user" ]]
 [[ $(systemctl show -p ProtectSystem --value "$service") == strict ]]
 [[ $(systemctl show -p DynamicUser --value "$service") == no ]]

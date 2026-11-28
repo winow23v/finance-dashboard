@@ -150,8 +150,7 @@ case "$*" in
   'show -p DynamicUser --value finance-dashboard-api.service') echo no ;;
   'show -p ReadWritePaths --value finance-dashboard-api.service')
     printf '%s\n' "/var/lib/finance-krx /var/lib/finance-us-market $TEST_SANDBOX/state/financials" ;;
-  'show -p MainPID --value finance-dashboard-api.service')
-    if [[ -n ${FAIL_DART_CONFIGURATION:-} ]]; then echo 0; else echo "$TEST_PID"; fi ;;
+  'show -p MainPID --value finance-dashboard-api.service') echo "$TEST_PID" ;;
   is-active*) exit 0 ;;
   *) printf '%s\n' "$1" >> "$TEST_SANDBOX/service-actions" ;;
 esac
@@ -167,7 +166,7 @@ mkdir -p node_modules
 SH
 cat > "$sandbox/bin/findmnt" <<'SH'
 #!/usr/bin/env bash
-echo rw,nosuid,nodev
+if [[ -n ${FAIL_DART_CONFIGURATION:-} ]]; then echo ro,nosuid,nodev; else echo rw,nosuid,nodev; fi
 SH
 cat > "$sandbox/bin/nsenter" <<'SH'
 #!/usr/bin/env bash
@@ -196,6 +195,13 @@ DART_FINANCIAL_CACHE_DIR="$sandbox/state/financials" bash -euc '
     { printf "%s\\n" "$1"; cat "$sandbox/incoming.tar"; } | bash "$sandbox/receiver"
   }
   release validate-dart-cache-v1
+  if FINANCE_STORAGE_SYNC=1 bash -euc '"'"'
+    export TEST_PID=$$
+    { echo validate-dart-cache-v1; cat "$TEST_SANDBOX/incoming.tar"; } | bash "$TEST_SANDBOX/receiver"
+  '"'"'; then
+    echo "Validation accepted enabled storage sync" >&2
+    exit 1
+  fi
   [[ ! -e $cache && ! -e $sandbox/service-actions ]]
   dropin="$sandbox/dropins/90-dart-financial-cache.conf"
   if FAIL_DART_CONFIGURATION=1 release deploy-dart-cache-v1; then
@@ -227,3 +233,13 @@ DART_FINANCIAL_CACHE_DIR="$sandbox/state/financials" bash -euc '
   tail -n 1 "$sandbox/service-actions" | grep -Fxq restart
 '
 echo 'Oracle persistent DART cache validation, redeploy and rollback passed'
+
+# The real entry point probes in the API process before starting other providers.
+touch "$sandbox/not-a-directory"
+if env -i DART_FINANCIAL_CACHE_DIR="$sandbox/not-a-directory/cache" FINANCE_LOCAL_INDEX_RESEARCH=1 \
+  "$(command -v node)" "$repo/vps-api/server.mjs" 2> "$sandbox/startup.log"; then
+  echo 'API started with an unusable DART cache' >&2
+  exit 1
+fi
+grep -Fqx '{"event":"dart-financial-cache-error","stage":"directory-prepare","osCode":"ENOTDIR"}' "$sandbox/startup.log"
+! grep -Fq "$sandbox" "$sandbox/startup.log"

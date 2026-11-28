@@ -58,10 +58,8 @@ async function readSnapshot(path, year, openFile) {
   }
 }
 
-export function createDartFinancialCollector({ root, issueFor, catalog, requestRows, clock, source,
-  cacheFs = { mkdir, open, rename, unlink },
-  logCacheError = entry => console.warn(JSON.stringify(entry)),
-}) {
+function financialCache(root, cacheFs = { mkdir, open, rename, unlink },
+  logCacheError = entry => console.warn(JSON.stringify(entry))) {
   async function cacheOperation(stage, operation) {
     try {
       return await operation()
@@ -106,8 +104,19 @@ export function createDartFinancialCollector({ root, issueFor, catalog, requestR
     await writeTemporary(path + '.' + randomUUID() + '.tmp', bytes, path)
   }
 
-  const read = (path, year) => cacheOperation('read', () => readSnapshot(path, year, cacheFs.open))
+  async function prepare() {
+    await cacheOperation('directory-prepare', () => cacheFs.mkdir(root, { recursive: true, mode: 0o700 }))
+    await writeTemporary(join(root, '.probe-' + randomUUID() + '.tmp'), '1')
+  }
 
+  const read = (path, year) => cacheOperation('read', () => readSnapshot(path, year, cacheFs.open))
+  return { prepare, read, saveSnapshot }
+}
+
+export const verifyDartFinancialCache = root => financialCache(root).prepare()
+
+export function createDartFinancialCollector({ root, issueFor, catalog, requestRows, clock, source, cacheFs, logCacheError }) {
+  const { prepare, read, saveSnapshot } = financialCache(root, cacheFs, logCacheError)
   let running
   const requests = []
   async function request(path, params) {
@@ -158,8 +167,7 @@ export function createDartFinancialCollector({ root, issueFor, catalog, requestR
   async function collect(symbol, years) {
     const cached = new Map()
     if (sample.has(symbol)) {
-      await cacheOperation('directory-prepare', () => cacheFs.mkdir(root, { recursive: true, mode: 0o700 }))
-      await writeTemporary(join(root, '.probe-' + randomUUID() + '.tmp'), '1')
+      await prepare()
       for (const year of years) {
         const path = join(root, symbol + '-' + (Number(year) % 3) + '.json')
         cached.set(year, await read(path, year))
