@@ -40,8 +40,8 @@ export function shareVolumeAxis(value: number) {
   return financialNumber(value, 0)
 }
 
-export function financialRate(value: number, quote: string) {
-  return financialNumber(value, quote === 'KRW' ? 2 : 4)
+export function financialRate(value: number, quote: string, signed = false) {
+  return financialNumber(value, quote === 'KRW' ? 2 : 4, signed)
 }
 
 export function financialAxis(value: number, digits: Precision = 2) {

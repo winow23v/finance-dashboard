@@ -1,3 +1,4 @@
+import { useMarketEntry } from './services/useMarketEntry'
 import { CompactMarketQuote } from './components/CompactMarketQuote'
 import { LoadingSkeleton } from "./components/LoadingSkeleton"
 import { CommandSearch } from "./components/CommandSearch"
@@ -5,7 +6,7 @@ import { IndexCarousel } from "./components/IndexCarousel"
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowLeftRight, BarChart3, ChevronDown, FileSearch, LayoutDashboard, Menu, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, Settings, ShieldCheck, Star, Sun, TrendingUp, UserRound, X } from 'lucide-react'
 import { dataMode } from './services/financeService'
-import { getKrxOverview, getMarketIndices, marketRequestMessage } from './services/apiFinanceService'
+import { getKrxOverview, getMarketIndices } from './services/apiFinanceService'
 import { mockFinanceService } from './mocks/mockFinance'
 import type { MemberSession } from './services/membership'
 import { MemberAdmin } from './components/MemberAdmin'
@@ -72,6 +73,20 @@ const indexUnavailable = {
   'before-collection': '종가 미확인',
 }
 
+function assessIndices(quotes: MarketIndex[]) {
+  return {
+    usable: quotes.some(quote => quote.status !== 'unavailable'),
+    failed: !quotes.length || quotes.some(quote => quote.status === 'unavailable'
+      || quote.reason === 'provider-error' || quote.reason === 'rate-limited' || quote.reason === 'not-published'),
+  }
+}
+
+function assessKrx(data: KrxOverview) {
+  return { usable: !!data.tradingDate, failed: !data.tradingDate
+    || data.reason === 'provider-error' || data.reason === 'provider-not-configured'
+    || data.reason === 'not-published' || data.reason === 'same-date-data-unavailable' }
+}
+
 function MarketIndexValue({ quote, message, market }: { quote?: MarketIndex; message?: string; market: 'KR' | 'US' }) {
   if (message) return <small role="status">{message}</small>
   if (!quote) return <LoadingSkeleton message="지수 시세를 불러오는 중입니다." shape="value" />
@@ -117,8 +132,6 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const { selected: watchlist, toggle, localError, blocked, sync } = useWatchlist(member?.userId)
   const [settingsFailure, setSettingsFailure] = useState(false)
   const [snapshot, setSnapshot] = useState<FinanceSnapshot>()
-  const [indexResult, setIndexResult] = useState<{ request: number; quotes: MarketIndex[] | null; message?: string }>()
-  const [krxResult, setKrxResult] = useState<{ request: number; data: KrxOverview | null; message?: string }>()
   const [revision, setRevision] = useState(0)
   const [request, setRequest] = useState(0)
   const [dartRevision, setDartRevision] = useState(0)
@@ -196,13 +209,17 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const companyPage = tab === 'companies'
   const market = tab === 'domestic' ? 'KR' : tab === 'global' ? 'US' : undefined
   const isMarket = tab === 'overview' || market !== undefined
-  const marketResult = indexResult?.request === request ? indexResult : undefined
-  const quoteProps = (index: typeof marketIndices[number]) => ({
-    index, quote: marketResult?.quotes?.find(quote => quote.id === index.id), message: marketResult?.message,
-    missing: !!marketResult?.quotes && !marketResult.quotes.some(quote => quote.id === index.id),
-  })
   const showKrxOverview = isMarket && market !== 'US'
-  const krxOverview = krxResult?.request === request ? krxResult : undefined
+  const indices = useMarketEntry(isApi && overview ? tab : undefined, request,
+    getMarketIndices, assessIndices, '시장지수 조회 실패', 'indices', onRefreshResult)
+  const krx = useMarketEntry(isApi && showKrxOverview ? tab : undefined, request,
+    getKrxOverview, assessKrx, 'KRX 시장 데이터 조회 실패', 'krx', onRefreshResult)
+  const marketQuotes = indices.entry?.data
+  const krxOverview = krx.entry
+  const quoteProps = (index: typeof marketIndices[number]) => ({
+    index, message: marketQuotes === null ? '지수 응답 없음' : undefined, quote: marketQuotes?.find(quote => quote.id === index.id),
+    missing: !!marketQuotes && !marketQuotes.some(quote => quote.id === index.id),
+  })
   const section = market ? 'market' : economyPage ? 'economy' : tab
 
   useEffect(() => {
@@ -264,32 +281,9 @@ export function App({ member, signOut, accountBusy, accountError }: {
     })
     return () => { active = false }
   }, [request])
-  useEffect(() => {
-    if (!isApi || !overview || indexResult?.request === request) return
-    const controller = new AbortController()
-    const finish = (quotes: MarketIndex[] | null, message?: string) => {
-      if (controller.signal.aborted) return
-      setIndexResult({ request, quotes, message })
-      onRefreshResult("indices", !quotes?.length || quotes.some(quote => quote.status === "unavailable" || quote.reason === "provider-error"))
-    }
-    void getMarketIndices(controller.signal).then(finish, error => finish(null, marketRequestMessage(error, '시장지수 API 조회 실패')))
-    return () => controller.abort()
-  }, [overview, request, indexResult?.request])
-  useEffect(() => {
-    if (!isApi || !showKrxOverview || krxResult?.request === request) return
-    const controller = new AbortController()
-    const finish = (data: KrxOverview | null, message?: string) => {
-      if (controller.signal.aborted) return
-      setKrxResult({ request, data, message })
-      onRefreshResult("krx", !data?.tradingDate || data.reason === "provider-error")
-    }
-    void getKrxOverview(controller.signal).then(finish, error => finish(null, marketRequestMessage(error, 'KRX 시장 데이터 조회 실패')))
-    return () => controller.abort()
-  }, [showKrxOverview, request, krxResult?.request])
-
   const stock = parseStockPage(tab)
   const canRefresh = isApi ? !!stock || overview || showKrxOverview || economyPage || companyPage : showFx || tab === 'trends'
-  const loading = pending || (isApi && ((overview && !marketResult) || (showKrxOverview && !krxOverview) || (showFx && !fxReady) || (economyPage && !(ecosReady && fredReady))))
+  const loading = pending || (isApi && (indices.loading || krx.loading || (showFx && !fxReady) || (economyPage && !(ecosReady && fredReady))))
   const refreshing = canRefresh && (loading || refreshingPage === tab)
   const refreshDisabled = !canRefresh || refreshing || !!refreshUntil || (tab === 'companies' && !dartReady)
   const refresh = () => {
@@ -398,7 +392,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
         {information ? <>
           <SiteInformation page={information} />
           {information === 'sources' && <section className="panel provider-status-panel" aria-label="공급자별 데이터 상태">
-            <DataStatus api={isApi} indices={indexResult?.quotes} krx={krxResult?.data} />
+            <DataStatus api={isApi} indices={marketQuotes} krx={krxOverview?.data} />
           </section>}
         </> : stock ?
           <StockDetail revision={request} onRefreshResult={onRefreshResult} refreshing={refreshing} refreshLabel={refreshLabel} onRefresh={refresh} refreshDisabled={refreshDisabled} favoriteDisabled={blocked || !!member && !isWatchlistSymbol(stock)} listing={stock} saved={watchlist.some(item => favoriteKey(item) === favoriteKey(stock))}
@@ -421,12 +415,13 @@ export function App({ member, signOut, accountBusy, accountError }: {
         <Suspense fallback={<LoadingSkeleton message="차트를 준비하는 중입니다." shape="chart" />}>
         {overview && <section className="market-index-section" aria-label="핵심 시장지수">
             <div className="section-heading"><h2>핵심 시장지수</h2></div>
+            {indices.entry?.message && <p className="heatmap-meta" role="status">{indices.entry.message}</p>}
             <IndexCarousel slides={marketIndices.map(index => ({
               label: index.name, content: <MarketQuote {...quoteProps(index)} />,
             }))} />
-            {!!marketResult?.quotes?.some(quote => quote.status !== 'unavailable') && <details className="heatmap-meta">
+            {!!marketQuotes?.some(quote => quote.status !== 'unavailable') && <details className="heatmap-meta">
               <summary>지수 데이터 기준</summary>
-              <ul>{marketResult.quotes.map(quote => quote.status !== 'unavailable' && <li key={quote.id}>
+              <ul>{marketQuotes.map(quote => quote.status !== 'unavailable' && <li key={quote.id}>
                 {quote.name} · <time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가 · {quote.source}
               </li>)}</ul>
             </details>}
@@ -443,6 +438,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
             <FxDashboard revision={economyRevision} detailed={economyPage} requestedPair={fxPair} onRefreshReady={setFxReady} onRefreshResult={onRefreshResult} showSettings={tab === 'economy/fx-settings'} />
           </Suspense>
         </div>}
+        {showKrxOverview && krxOverview?.data && krxOverview.message && <p className="heatmap-meta" role="status">{krxOverview.message}</p>}
         {isMarket && <>
           {overview ? <>
             {!isApi && error && <p role="alert">데이터 갱신에 실패했습니다.</p>}

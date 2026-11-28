@@ -48,3 +48,14 @@ test('keeps scenario prices, FX observations, and compact volume ticks distingui
   assert.equal(financialRate(1400.0099, 'KRW'), '1,400.00')
   assert.deepEqual([100_000_000, 125_000_000, 150_000_000].map(shareVolumeAxis), ['1억', '1.25억', '1.5억'])
 })
+
+test('applies quote precision consistently to prices and signed FX changes', () => {
+  assert.equal(financialRate(1399.1299, 'KRW'), '1,399.12')
+  assert.equal(financialRate(9.321234 * 100, 'KRW'), '932.12')
+  assert.equal(financialRate(1514.2299, 'KRW'), '1,514.22')
+  assert.equal(financialRate(0.92129, 'EUR'), '0.9212')
+  assert.equal(financialRate(1.08129, 'USD'), '1.0812')
+  assert.equal(financialRate(1.08949, 'USD'), '1.0894')
+  assert.equal(financialRate(-0.012999, 'USD', true), '-0.0129')
+  assert.equal(financialRate(0.00001234, 'USD', true), '+0.00001234')
+})

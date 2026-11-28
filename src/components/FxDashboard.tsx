@@ -1,5 +1,5 @@
 import { FinancialTooltip } from './FinancialTooltip'
-import { financialAxis, financialNumber, financialPercent, financialRate } from '../services/financialNumbers'
+import { financialPercent, financialRate } from '../services/financialNumbers'
 import { memberDataEpoch } from '../services/memberTransport'
 import { CompactMarketQuote } from './CompactMarketQuote'
 import { IndexCarousel } from './IndexCarousel'
@@ -109,7 +109,17 @@ function parseLatest(data: unknown) {
 }
 function parseHistory(data: unknown) {
   if (!isRecord(data) || !Array.isArray(data.points) || !data.points.every(isPoint)) throw new Error('Invalid rate history')
-  return { points: data.points, refreshError: refreshError(data.refreshError) }
+  const source = isRecord(data.source) && typeof data.source.agency === 'string' && typeof data.source.name === 'string'
+    ? data.source.name + ' · ' + data.source.agency : undefined
+  return {
+    points: data.points,
+    refreshError: refreshError(data.refreshError),
+    calculated: data.kind === 'reference' && typeof data.calculated === 'boolean' ? data.calculated : undefined,
+    base: typeof data.base === 'string' ? data.base : undefined,
+    quote: typeof data.quote === 'string' ? data.quote : undefined,
+    period: typeof data.period === 'string' ? data.period : undefined,
+    source,
+  }
 }
 
 const latestCache = createRequestCache<ReturnType<typeof parseLatest>>(3, 15 * 60_000)
@@ -156,14 +166,18 @@ export default function FxDashboard({ revision, detailed, requestedPair, showSet
   const availablePairs = [...new Set([...pairs, pair, ...selected.map(code => `${code}/${reference}`)])]
   const [base, quote] = pair.split('/')
   const chartResult = usePublicData(detailed ? historyPath(pair, period) : undefined, revision, parseHistory, undefined, true, historyCache)
-  const chart = chartResult?.data === null ? null : chartResult?.data?.points
+  const history = chartResult?.data
+  const mismatchedHistory = !!history && ((history.base !== undefined && history.base !== base)
+    || (history.quote !== undefined && history.quote !== quote)
+    || (history.period !== undefined && history.period !== period))
+  const chart = history === null || mismatchedHistory ? null : history?.points
+  const lastChartDate = chart?.reduce((last, point) => point.observationDate > last ? point.observationDate : last, '')
   const ready = latestResult?.revision === revision && (!detailed || chartResult?.revision === revision)
   useEffect(() => { onRefreshReady(ready) }, [onRefreshReady, ready])
   const refreshFailed = !latest || !!latest.refreshError || !!latestResult?.refreshFailed
     || (detailed && (!chart || !!chartResult?.refreshFailed || !!chartResult?.data?.refreshError))
   useEffect(() => { if (ready) onRefreshResult?.('fx', refreshFailed) }, [ready, refreshFailed, revision, onRefreshResult])
   const chartMultiplier = base === 'JPY' && yen100 ? 100 : 1
-  const chartReference = detailed ? latestRate(latest, base as Currency, quote as Currency) : undefined
 
   useEffect(() => { guestPreferences.save(fxKey, preferences) }, [preferences])
 
@@ -209,6 +223,9 @@ export default function FxDashboard({ revision, detailed, requestedPair, showSet
         const history = historyCache.read(JSON.stringify([memberDataEpoch(), historyPath(name, period), revision]))
         const points = history?.points
         const previous = rate != null && observationDate && !history?.refreshError
+          && (history?.base === undefined || history.base === code)
+          && (history?.quote === undefined || history.quote === reference)
+          && (history?.period === undefined || history.period === period)
           && points?.some(point => point.observationDate === observationDate && Math.abs(point.rate / rate - 1) < 1e-8)
           ? points.filter(point => point.observationDate < observationDate).sort((a, b) => b.observationDate.localeCompare(a.observationDate))[0] : undefined
         return { label: name, content: <CompactMarketQuote market="FX" title={<><a href={'#economy/fx/' + name}>{name}</a>{multiplier === 100 && <small>{basisLabel(code, multiplier)}</small>}</>}
@@ -232,10 +249,10 @@ export default function FxDashboard({ revision, detailed, requestedPair, showSet
           </div>
           </>}>
           <strong className="economic-value">
-            {rate != null ? <>{financialNumber(rate * multiplier)} <span>{unit}</span></>
+            {rate != null ? <>{financialRate(rate * multiplier, reference)} <span>{unit}</span></>
               : latest === undefined ? <LoadingSkeleton message="환율을 불러오는 중입니다." shape="value" /> : latest === null ? '조회 불가' : '공표 관측값 없음'}
           </strong>
-          {rate != null && previous && <small className="change">{financialNumber((rate - previous.rate) * multiplier, 2, true)} {unit}
+          {rate != null && previous && <small className="change">{financialRate((rate - previous.rate) * multiplier, reference, true)} {unit}
               {' ('}{financialPercent((rate / previous.rate - 1) * 100, true)})</small>}
           {status && <small className="fx-quote-state" role="status">{status}</small>}
         </CompactMarketQuote> }
@@ -255,9 +272,10 @@ export default function FxDashboard({ revision, detailed, requestedPair, showSet
         <summary>환율 데이터 기준</summary>
         <dl className="observation-dates">
           <div><dt>단위</dt><dd>{basisLabel(base, chartMultiplier)} {quote === 'KRW' ? '원' : quote}</dd></div>
-          <div><dt>산출 방식</dt><dd>{chartReference?.calculated ? '같은 관측일의 교차환율' : '공표 기준환율'}</dd></div>
-          <div><dt>출처</dt><dd>Frankfurter · ECB</dd></div>
-          {chartReference?.observationDate && <div><dt>최근 공표 관측일</dt><dd><time dateTime={chartReference.observationDate}>{chartReference.observationDate}</time></dd></div>}
+          <div><dt>산출 방식</dt><dd>{!lastChartDate || history?.calculated === undefined ? '미확인'
+            : history.calculated ? '같은 관측일의 교차환율' : '공표 기준환율'}</dd></div>
+          {lastChartDate && history?.source && <div><dt>출처</dt><dd>{history.source}</dd></div>}
+          {lastChartDate && <div><dt>이력 마지막 관측일</dt><dd><time dateTime={lastChartDate}>{lastChartDate}</time></dd></div>}
         </dl>
       </details>
       <div className="chart-toolbar"><div className="periods" role="group" aria-label="환율 기간">
@@ -274,7 +292,7 @@ export default function FxDashboard({ revision, detailed, requestedPair, showSet
             <AreaChart accessibilityLayer title="공표 기준환율 추이" data={chart.map(point => ({ ...point, rate: point.rate * chartMultiplier, dateTime: Date.parse(point.observationDate) }))} margin={{ top: 10, right: 12, left: 12, bottom: 8 }}>
               <CartesianGrid vertical={false} stroke="var(--line)" strokeDasharray="4 5" />
               <XAxis dataKey="dateTime" type="number" scale="time" domain={['dataMin', 'dataMax']} tickFormatter={date => new Date(date).toISOString().slice(5, 10)} minTickGap={28} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
-              <YAxis orientation="right" width={65} domain={['auto', 'auto']} tickFormatter={value => financialAxis(value, quote === 'KRW' ? 2 : 4)} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
+              <YAxis orientation="right" width={65} domain={['auto', 'auto']} tickFormatter={value => financialRate(value, quote)} tick={{ fill: 'var(--muted)', fontSize: 12 }} />
               <Tooltip trigger={tooltipTrigger} isAnimationActive={false} wrapperClassName="terminal-chart-tooltip" allowEscapeViewBox={{ x: false, y: false }} content={props => <FinancialTooltip {...props}
                 formatDate={date => new Date(Number(date)).toISOString().slice(0, 10)}
                 formatValue={value => typeof value === 'number' ? financialRate(value, quote) + ' ' + (quote === 'KRW' ? '원' : quote) : '자료 부족'} />} />
