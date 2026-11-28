@@ -2,6 +2,9 @@
 /* Hallmark critique · index prices lead, source dates stay adjacent, and access states get a single clear action. */
 /* Hallmark · waive 24b · .terminal-metrics · Existing dense quote and control spacing is kept where rounding would change wrapping or hit-area fit. */
 /* Hallmark · waive 49b · Dow Jones Industrial Average · The official index name wraps on narrow cards so keyboard and visual readers can see the full name. */
+/* Hallmark · dropped setFullAmounts · The raw amount toggle was removed at the user’s request. */
+/* Hallmark · dropped const query = term.trim() if (!query · Company search still submits with IME and duplicate request guards. */
+/* Hallmark · dropped if (!input.trim() || (input.trim() === query · Quote search still submits with IME and duplicate request guards. */
 @import "tailwindcss";
 
 :root {
@@ -1232,3 +1235,71 @@ span.chart-body { display: block; }
 @media (min-width: 1024px) {
   .command-trigger-label { display: inline; }
 }
+
+/* Compact quotes keep the observation distinct from the displayed value. */
+.index-carousel { min-width: 0; max-width: 100%; }
+:where(.market-index-section, .compact-fx-rates) .overview-quotes {
+  grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr));
+}
+.overview-quotes .compact-market-quote {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-height: 96px;
+  padding: var(--space-control) 12px;
+  font-variant-numeric: tabular-nums;
+}
+.compact-quote-heading { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.compact-quote-heading > svg { flex: none; color: var(--muted); }
+.compact-quote-heading h3 { min-width: 0; font-size: .8125rem; line-height: 1.3; overflow-wrap: anywhere; }
+.compact-quote-heading h3 small { display: inline; margin-inline-start: 4px; }
+.compact-quote-heading .fx-info-button { margin-inline-start: auto; flex: none; min-width: 44px; min-height: 44px; }
+.compact-quote-data { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px var(--space-control); min-width: 0; }
+.overview-quotes .compact-quote-data > strong { font-size: 1.125rem; line-height: 1.25; }
+.compact-quote-data .index-source { flex: 1 0 100%; margin: 0; }
+.compact-quote-data .change { white-space: nowrap; }
+.compact-quote-data :is(small, strong) { overflow-wrap: anywhere; }
+.compact-fx-rates .change { color: var(--muted); }
+.compact-fx-rates .fx-chart-link { justify-self: start; min-height: 44px; }
+.compact-market-quote :is(a, button):focus-visible { outline-offset: 2px; }
+.compact-quote-data [data-state="error"] { color: var(--red); }
+.compact-quote-data [data-state="rate-limited"] { color: var(--favorite); }
+
+.economic-readings.indicator-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-control);
+  padding: var(--space-control);
+}
+.economic-readings.indicator-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto 1fr auto;
+  align-items: start;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  overflow-wrap: anywhere;
+}
+.economic-readings .economic-value { max-width: 18ch; font-variant-numeric: tabular-nums; }
+.economic-readings .economic-change, .economic-readings .indicator-observation { grid-column: 1 / -1; }
+.indicator-observation summary { cursor: pointer; min-height: 44px; align-content: center; color: var(--accent); }
+.client-pages { justify-content: space-between; flex-wrap: wrap; padding: var(--space-control); }
+.client-pages label, .page-buttons { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.client-pages select, .page-buttons button { min-height: 44px; }
+.page-buttons button { min-width: 44px; }
+.page-buttons [aria-current="page"] { background: var(--accent-bg); color: var(--accent); }
+.financial-amount { text-align: end; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.quote-search-controls { align-items: end; }
+.quote-search-controls label { min-width: 0; }
+.quote-search-controls :is(input, select, button) { min-height: 44px; max-width: 100%; }
+.quote-search-controls.search { align-items: center; }
+@media (max-width: 780px) {
+  .index-carousel .overview-quotes { display: flex; overflow-x: auto; }
+  .economic-readings.indicator-list, .quote-grid.ecos-indicators { grid-template-columns: minmax(0, 1fr); }
+  .index-carousel-dots { flex-wrap: wrap; }
+  .quote-search-controls label:has(input) { flex-basis: 100%; }
+}
+.market-list-order { display: flex; align-items: center; gap: var(--space-control); }
+.market-list-order select { min-height: 44px; }

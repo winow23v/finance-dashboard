@@ -1,3 +1,5 @@
+import { LoadingSkeleton } from './LoadingSkeleton'
+import { SearchButton, useSearchComposition } from './SearchButton'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Plus, Search, Star, X } from 'lucide-react'
 import { marketSymbolKey, type EquityMarket, type MarketSymbol } from '../types/marketSymbol'
@@ -107,6 +109,9 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
         () => setAnalysisFailed(true))
       .finally(() => setAnalysisBusy(false))
   }
+  const { composing, inputEvents } = useSearchComposition()
+  const [composingInput, setComposingInput] = useState(false)
+  const dispatchSearch = useRef<() => void>(undefined)
   const [query, setQuery] = useState('')
   const [observations, setObservations] = useState(new Map<string, Observation>())
   const [quoteStatus, setQuoteStatus] = useState<'loading' | 'ready' | 'error'>()
@@ -134,7 +139,7 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
       })
     : marketRows
   const term = query.trim().slice(0, 64)
-  const domesticSearch = live && market !== 'US' && term.length > 0
+  const domesticSearch = !composingInput && !!live && market !== 'US' && term.length > 0
   const searchResult = domesticSearch && search?.query === term ? search : undefined
 
   useEffect(() => {
@@ -163,7 +168,9 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
   useEffect(() => {
     if (!domesticSearch) return
     const controller = new AbortController()
-    const timer = window.setTimeout(async () => {
+    const searchNow = async () => {
+      if (dispatchSearch.current !== searchNow) return
+      dispatchSearch.current = undefined
       const filters = /^(?=[0-9A-Z]*[0-9])[0-9A-Z]{6}$/i.test(term) ? { symbol: term.toUpperCase() } : { q: term }
       const results = await Promise.allSettled((['KOSPI', 'KOSDAQ'] as const).map(segment => getKrxStocks(segment, filters, controller.signal)))
       if (controller.signal.aborted) return
@@ -178,8 +185,14 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
         })),
         failed: results.some(result => result.status === 'rejected' || result.value.listings.status === 'unavailable'),
       })
-    }, 350)
-    return () => { window.clearTimeout(timer); controller.abort() }
+    }
+    dispatchSearch.current = searchNow
+    const timer = window.setTimeout(searchNow, 350)
+    return () => {
+      window.clearTimeout(timer)
+      if (dispatchSearch.current === searchNow) dispatchSearch.current = undefined
+      controller.abort()
+    }
   }, [domesticSearch, term])
 
   const words = term.toLocaleLowerCase('ko-KR').split(/\s+/).filter(Boolean)
@@ -262,16 +275,22 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
       <div className="panel-heading"><h2 id={titleId}>종목 검색</h2><button type="button" className="icon-button" aria-label="닫기"
         onClick={() => editor.current?.close()}><X size={20} /></button></div>
       <label className="sr-only" htmlFor={inputId}>기업명 또는 종목 코드</label>
-      <div className="search">
+      <form className="search quote-search-controls" aria-busy={domesticSearch && !searchResult} onSubmit={event => {
+        event.preventDefault()
+        if (!composing.current) dispatchSearch.current?.()
+      }}>
         <Search size={18} aria-hidden="true" />
         <input id={inputId} ref={input} type="search" value={query} maxLength={64} onChange={event => setQuery(event.target.value)}
+          onCompositionStart={() => { inputEvents.onCompositionStart(); setComposingInput(true) }}
+          onCompositionEnd={() => { inputEvents.onCompositionEnd(); setComposingInput(false) }}
           placeholder={market === 'US' ? '예: Apple 또는 AAPL' : '기업명 또는 종목 코드'} />
         {query && <button type="button" className="icon-button search-clear" aria-label="검색어 초기화" onClick={() => {
           setQuery('')
           input.current?.focus()
         }}><X size={18} aria-hidden="true" /></button>}
-      </div>
-      {domesticSearch && !searchResult && <p className="state data-message" data-state="loading" role="status">KRX 종목 검색 중입니다.</p>}
+        <SearchButton pending={domesticSearch && !searchResult} disabled={!term || composingInput} />
+      </form>
+      {domesticSearch && !searchResult && <LoadingSkeleton message="KRX 종목 검색 중입니다." shape="rows" />}
       {searchResult?.failed && <p className="state data-message" data-state="error" role="status">일부 KRX 종목 정보를 확인할 수 없습니다.</p>}
       {results.size > 0 ? <StockList rows={[...results.values()]} saved={saved} onToggle={onToggle} label="종목 검색 결과" blocked={blocked} />
         : (!domesticSearch || searchResult) && <p className="state" role="status">검색 결과가 없습니다.</p>}

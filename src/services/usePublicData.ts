@@ -23,7 +23,7 @@ export function usePublicData<T>(path: string | undefined, revision: number, par
       ? cache.load(cacheKey, () => getJson(path, false, undefined, timeoutMs).then(parse))
       : getJson(path, false, controller.signal, timeoutMs).then(parse)
     request.then(data => finish(data),
-      error => finish(null, error instanceof FinanceApiError ? error.code : undefined))
+      error => finish(null, error instanceof FinanceApiError ? error.code : error instanceof DOMException && error.name === 'TimeoutError' ? 'PROVIDER_TIMEOUT' : undefined))
     return () => controller.abort()
   }, [path, revision, parse, timeoutMs, retainData, cache, cacheKey])
   const cached = path && cache ? cache.read(cacheKey) : undefined

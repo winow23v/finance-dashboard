@@ -1,3 +1,4 @@
+import { formatWon } from '../services/formatWon'
 import { useId, useMemo, useState, type CSSProperties } from 'react'
 import { stockHref } from '../services/marketListings'
 import { favoriteKey } from '../services/watchlist'
@@ -95,7 +96,7 @@ export function MarketHeatmap({ market, favorites, data, summary = false }: {
           {activeItem && <div className="panel heatmap-tooltip" id={tooltipId} role="tooltip">
             <strong>{activeItem.name} · {activeItem.listing.symbol}</strong>
             <small>{activeItem.sector} · {price.format(activeItem.quote.value)} {activeItem.quote.currency} · {rate(activeItem)}</small>
-            <small>시가총액 {price.format(activeItem.marketCap)} {activeItem.quote.currency}</small>
+            <small>시가총액 {activeItem.marketCapCurrency === 'KRW' ? formatWon(activeItem.marketCap) : price.format(activeItem.marketCap) + ' ' + activeItem.marketCapCurrency}</small>
             <small>관측 {activeItem.quote.observation.kind === 'instant'
               ? atKst(activeItem.quote.observation.at) + ' (KST)' : activeItem.quote.observation.date}</small>
           </div>}

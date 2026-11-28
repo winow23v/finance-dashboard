@@ -1,3 +1,6 @@
+import { ClientPages } from './ClientPages'
+import { formatWon } from '../services/formatWon'
+import { SearchButton, useSearchComposition } from './SearchButton'
 import { LoadingSkeleton } from "./LoadingSkeleton"
 import { useEffect, useState } from 'react'
 import { Search, SlidersHorizontal, Star, X } from 'lucide-react'
@@ -23,12 +26,13 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
   onToggle: (listing: MarketSymbol) => void
   symbol?: string
 }) {
+  const { composing, inputEvents } = useSearchComposition()
   const [market, setMarket] = useState<KrxMarket>('KOSPI')
   const [input, setInput] = useState('')
   const [query, setQuery] = useState('')
   const [revision, setRevision] = useState(0)
-  const [result, setResult] = useState<{ market: KrxMarket; query: string; revision: number; data: StockResults[] | null; message: string }>()
-  const current = result?.market === market && result.query === query && result.revision === revision ? result : undefined
+  const [result, setResult] = useState<{ market: KrxMarket; symbol?: string; query: string; revision: number; data: StockResults[] | null; message: string }>()
+  const current = result?.market === market && result.symbol === symbol && result.query === query && result.revision === revision ? result : undefined
 
   useEffect(() => {
     if (!symbol && !query) return
@@ -39,34 +43,37 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
       if (controller.signal.aborted) return
       const data = outcomes.flatMap(outcome => outcome.status === 'fulfilled' ? [outcome.value] : [])
       const failure = outcomes.find(outcome => outcome.status === 'rejected')
-      setResult({ market, query, revision, data: data.length ? data : null,
+      setResult({ market, symbol, query, revision, data: data.length ? data : null,
         message: marketRequestMessage(failure?.reason, '국내 종목 조회 실패') })
     })
     return () => controller.abort()
   }, [market, query, revision, symbol])
 
-  return <section className="panel watch-panel krx-stock-search" aria-label="국내 종목 시세">
+  const pending = !!(symbol || query) && !current
+  const retained = pending && result?.market === market && result.symbol === symbol && result.query === query ? result : current
+
+  return <section aria-busy={pending} className="panel watch-panel krx-stock-search" aria-label="국내 종목 시세">
     <div className="panel-heading"><h2><Search size={18} aria-hidden="true" /> 국내 종목 시세</h2></div>
-    {!symbol && <form className="disclosure-controls terminal-filters krx-search-controls" onSubmit={event => {
+    {!symbol && <form className="disclosure-controls terminal-filters krx-search-controls quote-search-controls" onSubmit={event => {
       event.preventDefault()
-      if (!input.trim() || (input.trim() === query && current?.data !== null)) return
+      if (composing.current || !input.trim() || (input.trim() === query && (pending || current?.data !== null))) return
       setQuery(input.trim())
       setRevision(value => value + 1)
     }}>
       <label><span><SlidersHorizontal size={14} aria-hidden="true" /> 시장</span><select value={market} onChange={event => setMarket(event.target.value as KrxMarket)}>
         <option>KOSPI</option><option>KOSDAQ</option>
       </select></label>
-      <label>종목명 또는 단축코드 <input type="search" placeholder="예: 삼성전자 또는 005930" value={input} maxLength={64} onChange={event => setInput(event.target.value)} /></label>
-      <button type="submit" className="button" disabled={!input.trim()}>검색</button>
+      <label>종목명 또는 단축코드 <input {...inputEvents} type="search" placeholder="예: 삼성전자 또는 005930" value={input} maxLength={64} onChange={event => setInput(event.target.value)} /></label>
+      <SearchButton pending={pending} disabled={!input.trim() || pending && input.trim() === query} />
       {(input || query) && <button type="button" className="button" onClick={() => {
         setInput('')
         setQuery('')
         setMarket('KOSPI')
       }}><X size={16} aria-hidden="true" /> 초기화</button>}
     </form>}
-    {!symbol && !query ? <p className="state">KOSPI 또는 KOSDAQ을 선택하고 종목명이나 코드를 입력하세요.</p> : !current ? <LoadingSkeleton message="국내 종목을 불러오는 중입니다." shape="rows" /> : current.data === null
-      ? <p className="state" role="status">{current.message}</p>
-      : current.data.map(dataset => {
+    {!symbol && !query ? <p className="state">KOSPI 또는 KOSDAQ을 선택하고 종목명이나 코드를 입력하세요.</p> : !retained ? <LoadingSkeleton message="국내 종목을 불러오는 중입니다." shape="rows" /> : retained.data === null
+      ? <p className="state" role="status">{retained.message}</p>
+      : retained.data.map(dataset => {
         const details = [...new Set([dataset.listings.reason, dataset.trades.reason].filter(reason => reason !== null && reason !== 'before-collection' && reason !== 'weekend'))]
         return <div key={dataset.market}>
           <p className="state">{dataset.market}
@@ -76,8 +83,8 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
               {dataset.trades.usingPreviousClose ? '이전 정상 종가 사용' : krxStateLabels[details[0]]}
             </span></>}
           </p>
-          {dataset.items.length ? <ul className="stock-list">
-            {dataset.items.map(item => {
+          {dataset.items.length ? <ClientPages key={dataset.market + ':' + query} items={dataset.items} label={dataset.market + ' 종목 목록 페이지'}>{visible =>
+            <ul className="stock-list">{visible.map(item => {
               const listing = { market: 'KR', exchange: 'XKRX', symbol: item.symbol } as const
               const saved = selected.some(entry => marketSymbolKey(entry) === marketSymbolKey(listing))
               const quote = item.quote
@@ -93,13 +100,15 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
                       <Change market="KR" quote={{ change: quote.change, percent: quote.changePercent }} />}
                     <small className="watch-trading-date"><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가</small>
                     <small>거래량 {quote.volume === null ? '미확인' : number.format(quote.volume)}</small>
+                    {quote.turnover != null && <small>거래대금 {formatWon(quote.turnover)}</small>}
+                    {quote.marketCap != null && <small>시가총액 {formatWon(quote.marketCap)}</small>}
                   </> : <small>유효한 시세 없음</small>}
                 </div>
                 <button type="button" className="favorite-button" disabled={blocked} aria-pressed={saved} aria-label={item.name + ' 관심종목'}
                   onClick={() => onToggle(listing)}><Star size={19} fill={saved ? 'currentColor' : 'none'} aria-hidden="true" /></button>
               </li>
             })}
-          </ul> : <p className="state">{dataset.listings.status === 'unavailable' ? '종목 목록 미확인' : '검색 결과 없음'}</p>}
+          </ul>}</ClientPages> : <p className="state">{dataset.listings.status === 'unavailable' ? '종목 목록 미확인' : '검색 결과 없음'}</p>}
         </div>
       })}
   </section>

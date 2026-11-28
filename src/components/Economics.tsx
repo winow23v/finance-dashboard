@@ -1,3 +1,4 @@
+import { ClientPages } from './ClientPages'
 import { LoadingSkeleton } from "./LoadingSkeleton"
 import { useEffect, useState } from 'react'
 import { ChartNoAxesCombined } from 'lucide-react'
@@ -61,8 +62,9 @@ export function Economics({ api, demo, detailed, revision, onRefreshReady, onRef
     </div>}
     {api && live === null && <p className="state data-message" data-state="unavailable" role="status">FRED 실데이터 연동이 꺼져 있습니다.</p>}
     {(!api && !rows?.length) && <p className="state data-message" data-state="empty" role="status">표시할 경제지표가 없습니다.</p>}
-    {!!rows?.length && <ul className={detailed ? 'indicator-list indicator-detail' : 'indicator-list'}>
-      {rows.map(item => <li key={item.id}>
+    {!!rows?.length && <ClientPages<Indicator | EconomyIndicators['indicators'][number]> items={rows} label="경제지표 페이지" pageSize={6} sizes={[6]}>{visible =>
+      <ul className="indicator-list indicator-detail economic-readings">
+      {visible.map(item => <li key={item.id}>
         <div>
           <h3>{item.name}</h3>
           <small>{'frequency' in item && item.frequency && <>{frequencyLabels[item.frequency]} · </>}{item.observationDate ? <><time dateTime={item.observationDate}>{item.observationDate}</time> 관측 기준</> : '관측일 미확인'}
@@ -74,17 +76,24 @@ export function Economics({ api, demo, detailed, revision, onRefreshReady, onRef
             ? '전년 동월 관측값 없음' : '미발표 / 관측값 없음') : item.unit === 'index'
           ? `${indexValue.format(item.value)} (1982–84=100)` : `${percent.format(item.value)}%`}</strong>
 
-        {(detailed || 'source' in item) && <dl>
+        <dl className="economic-change">
           {'change' in item && item.change != null && item.previousObservationDate && <div>
             <dt>{item.frequency === 'monthly' ? '전월 대비' : '직전 관측 대비'}</dt>
             <dd>{pointChange.format(item.change)}{item.unit === '%' ? '%p' : 'pt'} ({item.previousObservationDate})</dd>
           </div>}
           {'comparisonPeriod' in item && item.comparisonPeriod && <div><dt>전년 동월 기준</dt>
             <dd><time dateTime={item.comparisonPeriod}>{item.comparisonPeriod.slice(0, 7)}</time></dd></div>}
-          <div><dt>발표일</dt><dd>{item.releaseDate ?? '미확인'}</dd></div>
-        </dl>}
+        </dl>
+        {(detailed || 'source' in item) && <details className="indicator-observation">
+          <summary>관측 정보</summary>
+          <dl>
+            <div><dt>관측일</dt><dd>{item.observationDate ?? '미확인'}</dd></div>
+            {item.releaseDate && <div><dt>발표일</dt><dd>{item.releaseDate}</dd></div>}
+            {'source' in item && item.source && <div><dt>출처</dt><dd><a className="text-link" href={item.source.url}>{item.source.name}</a></dd></div>}
+          </dl>
+        </details>}
       </li>)}
-    </ul>}
+    </ul>}</ClientPages>}
     {live && detailed && <div className="indicator-notice">
       <p>공식 발표일 확인에는 원 제공기관의 별도 발표 자료가 필요합니다.</p>
     </div>}
