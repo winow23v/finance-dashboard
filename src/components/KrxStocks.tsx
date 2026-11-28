@@ -104,10 +104,10 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
         const previousSymbols = retained.retainedSymbols[dataset.market] ?? []
         const details = [...new Set([dataset.listings.reason, dataset.trades.reason].filter(reason => reason !== null && reason !== 'before-collection' && reason !== 'weekend'))]
         return <div key={dataset.market}>
-          <p className="state">{dataset.market}{previousSymbols.length > 0 && previousSymbols.length < dataset.items.length && ' · 이번 조회 기준'}
-            {dataset.listingDate && ' · 종목 기준 ' + dataset.listingDate}
-            {dataset.trades.tradingDate && ' · 종가 기준 ' + dataset.trades.tradingDate}
-            {(dataset.trades.usingPreviousClose || details.length > 0) && <> <span className="muted-badge">
+          <p className="state">{dataset.market}
+            {!previousSymbols.length && dataset.listingDate && ' · 종목 기준 ' + dataset.listingDate}
+            {!previousSymbols.length && dataset.trades.tradingDate && ' · 종가 기준 ' + dataset.trades.tradingDate}
+            {!previousSymbols.length && (dataset.trades.usingPreviousClose || details.length > 0) && <> <span className="muted-badge">
               {dataset.trades.usingPreviousClose ? '이전 정상 종가 사용' : krxStateLabels[details[0]]}
             </span></>}
           </p>
