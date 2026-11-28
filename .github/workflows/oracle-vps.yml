@@ -101,7 +101,8 @@ jobs:
           )
           git ls-files -z -- "${release_files[@]}" |
             tar --null --transform='s|^vps-api/||' -cf "$ssh_dir/release.tar" -T -
-          { printf '%s\n' "$RELEASE_MODE"; cat "$ssh_dir/release.tar"; } |
+          # The installed receiver must support persistent DART cache provisioning.
+          { printf '%s-dart-cache-v1\n' "$RELEASE_MODE"; cat "$ssh_dir/release.tar"; } |
             ssh -F /dev/null -T -i "$ssh_dir/key" \
               -o BatchMode=yes -o IdentitiesOnly=yes -o IdentityAgent=none \
               -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$ssh_dir/known_hosts" \

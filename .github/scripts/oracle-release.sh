@@ -7,6 +7,51 @@ service=finance-dashboard-api.service
 deploy_user=finance-deploy
 health_url=http://127.0.0.1:3000/health
 
+dart_parent=/var/lib/finance-dart
+dart_cache=$dart_parent/financials
+dart_dropin_dir=/etc/systemd/system/$service.d
+dart_dropin=$dart_dropin_dir/90-dart-financial-cache.conf
+dart_user=rocky
+dart_group=rocky
+
+dart_settings() {
+  printf '[Service]\nEnvironment=DART_FINANCIAL_CACHE_DIR=%s\nReadWritePaths=%s\n' "$dart_cache" "$dart_cache"
+}
+
+check_dart_directory() {
+  local path=$1 owner=$2 mode=$3
+  [[ ! -L $path ]] || return 1
+  if [[ -e $path ]]; then
+    [[ -d $path && $(stat -c '%U:%G:%a' -- "$path") == "$owner:$mode" ]]
+  fi
+}
+
+prepare_dart_directory() {
+  if [[ ! -d $dart_parent ]]; then
+    install -d -o root -g root -m 0755 -- "$dart_parent"
+  fi
+  if [[ ! -d $dart_cache ]]; then
+    install -d -o "$dart_user" -g "$dart_group" -m 0700 -- "$dart_cache"
+    if command -v restorecon >/dev/null; then
+      restorecon -- "$dart_parent" "$dart_cache"
+    fi
+  fi
+}
+
+check_dart_service() {
+  local pid mounts writable_paths
+  writable_paths=$(systemctl show -p ReadWritePaths --value "$service") || return 1
+  [[ " $writable_paths " == *" $dart_cache "* ]] || return 1
+  pid=$(systemctl show -p MainPID --value "$service")
+  [[ $pid =~ ^[1-9][0-9]*$ ]] || return 1
+  grep -zFxq -- "DART_FINANCIAL_CACHE_DIR=$dart_cache" "/proc/$pid/environ" || return 1
+  if grep -zFxq -- 'FINANCE_STORAGE_SYNC=1' "/proc/$pid/environ"; then
+    return 1
+  fi
+  mounts=$(nsenter -t "$pid" -m -- findmnt -n -o VFS-OPTIONS -T "$dart_cache") || return 1
+  [[ ,$mounts, == *,rw,* ]]
+}
+
 check_health() {
   local attempt status
   for ((attempt = 1; attempt <= 15; attempt++)); do
@@ -27,6 +72,7 @@ fi
 IFS= read -r mode
 case "$mode" in
   validate|deploy) ;;
+  validate-dart-cache-v1|deploy-dart-cache-v1) mode=${mode%-dart-cache-v1} ;;
   *) echo 'Invalid release mode.' >&2; exit 1 ;;
 esac
 
@@ -37,12 +83,14 @@ work=$(mktemp -d /tmp/finance-api.XXXXXXXX)
 release=
 backup=
 restart_required=0
+dart_dropin_added=0
+dart_dropin_stage=
 
 finish() {
   local result=$?
   trap - EXIT
   trap '' HUP INT TERM
-  if (( result != 0 && restart_required )); then
+  if (( result != 0 && (restart_required || dart_dropin_added) )); then
     echo 'Release failed. Restoring the previous API.' >&2
     if [[ -n $backup && -d $backup ]]; then
       if ! systemctl stop "$service" ||
@@ -52,11 +100,22 @@ finish() {
         exit "$result"
       fi
     fi
-    if ! systemctl restart "$service" || ! check_health; then
-      echo 'Rollback could not verify the restored service. Check systemd and /health.' >&2
-      exit "$result"
+    if (( dart_dropin_added )); then
+      if ! rm -f -- "$dart_dropin" || ! systemctl daemon-reload; then
+        echo 'Rollback could not restore the DART systemd configuration.' >&2
+        exit "$result"
+      fi
+    fi
+    if (( restart_required )); then
+      if ! systemctl restart "$service" || ! check_health; then
+        echo 'Rollback could not verify the restored service. Check systemd and /health.' >&2
+        exit "$result"
+      fi
     fi
     echo 'Previous API restored and healthy.'
+  fi
+  if [[ -n $dart_dropin_stage ]]; then
+    rm -f -- "$dart_dropin_stage"
   fi
   rm -rf -- "$work"
   if [[ -n $release && ! -d $release/failed ]]; then
@@ -110,11 +169,67 @@ for file in "${runtime_files[@]}"; do
 done
 
 check_health || { echo 'Current production API is unhealthy.' >&2; exit 1; }
+[[ $(systemctl show -p User --value "$service") == "$dart_user" ]]
+[[ $(systemctl show -p ProtectSystem --value "$service") == strict ]]
+[[ $(systemctl show -p DynamicUser --value "$service") == no ]]
+service_group=$(systemctl show -p Group --value "$service")
+[[ ${service_group:-$(id -gn "$dart_user")} == "$dart_group" ]]
+check_dart_directory "$dart_parent" root:root 755 &&
+  check_dart_directory "$dart_cache" "$dart_user:$dart_group" 700 ||
+  { echo 'DART cache directory ownership, permissions or type is invalid.' >&2; exit 1; }
+[[ ! -L $dart_dropin_dir && ! -L $dart_dropin ]]
+dart_configured=0
+if [[ -e $dart_dropin ]]; then
+  if [[ ! -f $dart_dropin ]] || ! cmp -s -- "$dart_dropin" <(dart_settings); then
+    echo 'Existing DART systemd drop-in conflicts with the release configuration.' >&2
+    exit 1
+  fi
+  if [[ -d $dart_cache ]] && check_dart_service; then
+    dart_configured=1
+  fi
+fi
 if [[ $mode == validate ]]; then
+  if (( dart_configured )); then
+    echo 'Persistent DART cache path and active systemd configuration verified.'
+  elif [[ -e $dart_dropin ]]; then
+    echo 'Installed DART configuration is not effective in the running service.' >&2
+    exit 1
+  else
+    echo 'DART cache prerequisites verified. Deploy will prepare the cache and install its systemd drop-in.'
+  fi
   echo 'SSH, staged release and existing API health verified.'
   exit 0
 fi
 
+if (( dart_configured )) && [[ ! -e $api/sec-provider.mjs && ! -L $api/sec-provider.mjs ]] &&
+  diff -qr --no-dereference -- "$api/node_modules" "$release/api/node_modules" >/dev/null; then
+  unchanged=1
+  for file in "${runtime_files[@]}"; do
+    if ! cmp -s -- "$file" "$api/${file##*/}"; then
+      unchanged=0
+      break
+    fi
+  done
+  if (( unchanged )); then
+    echo 'Oracle API and persistent DART configuration are already current.'
+    exit 0
+  fi
+fi
+
+prepare_dart_directory
+if [[ ! -e $dart_dropin ]]; then
+  if [[ ! -d $dart_dropin_dir ]]; then
+    install -d -m 0755 -- "$dart_dropin_dir"
+  fi
+  dart_dropin_stage=$(mktemp "$dart_dropin_dir/.dart-financial-cache.XXXXXXXX")
+  dart_settings > "$dart_dropin_stage"
+  chmod 0644 -- "$dart_dropin_stage"
+  dart_dropin_added=1
+  mv -T -- "$dart_dropin_stage" "$dart_dropin"
+fi
+if (( ! dart_configured )); then
+  systemctl daemon-reload
+fi
 backup="${api}.backup.$(date -u +%Y%m%dT%H%M%SZ).${release##*.}"
 restart_required=1
 systemctl stop "$service"
@@ -123,5 +238,6 @@ echo "Rollback backup: $backup"
 mv -T -- "$release/api" "$api"
 systemctl start "$service"
 check_health || { echo 'Released API failed the health check.' >&2; exit 1; }
+check_dart_service || { echo 'Released API failed the DART cache configuration check.' >&2; exit 1; }
 restart_required=0
 echo 'Oracle API deployed and healthy.'

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdir, open, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, open, rename, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { dartFiscalDates, normalizeDartAccounts } from './dart-accounts-provider.mjs'
 import { isDay, ProviderError } from './public-provider.mjs'
@@ -33,45 +33,81 @@ function dayFromReceipt(receipt) {
   return isDay(date) ? date : null
 }
 
-async function readSnapshot(path, corpCode, year) {
-  let file
+async function readSnapshot(path, year, openFile) {
   try {
-    file = await open(path, 'r')
-    const bytes = Buffer.alloc(maxFileBytes + 1)
-    let length = 0
-    for (;;) {
-      const { bytesRead } = await file.read(bytes, length, bytes.length - length, null)
-      length += bytesRead
-      if (length > maxFileBytes) return null
-      if (!bytesRead) break
+    const file = await openFile(path, 'r')
+    try {
+      const bytes = Buffer.alloc(maxFileBytes + 1)
+      let length = 0
+      for (;;) {
+        const { bytesRead } = await file.read(bytes, length, bytes.length - length, null)
+        length += bytesRead
+        if (length > maxFileBytes) return null
+        if (!bytesRead) break
+      }
+      const saved = JSON.parse(bytes.toString('utf8', 0, length))
+      return saved?.version === version && (Array.isArray(year) ? year.includes(saved.year) : saved.year === year) &&
+        Number.isFinite(saved.savedAt) && ['available', 'not-provided'].includes(saved.statement?.status) &&
+        saved.statement.year === saved.year && Array.isArray(saved.statement.accounts) ? saved : null
+    } finally {
+      await file.close()
     }
-    const saved = JSON.parse(bytes.toString('utf8', 0, length))
-    return saved?.version === version && (corpCode === null || saved.corpCode === corpCode) && (Array.isArray(year) ? year.includes(saved.year) : saved.year === year) &&
-      Number.isFinite(saved.savedAt) && ['available', 'not-provided'].includes(saved.statement?.status) &&
-      saved.statement.year === saved.year && Array.isArray(saved.statement.accounts) ? saved : null
   } catch (error) {
     if (error.code === 'ENOENT' || error instanceof SyntaxError) return null
-    throw new ProviderError(503, 'DART_FINANCIAL_CACHE_UNAVAILABLE')
-  } finally {
-    await file?.close()
+    throw error
   }
 }
 
-async function saveSnapshot(path, snapshot) {
-  const bytes = JSON.stringify(snapshot)
-  if (Buffer.byteLength(bytes) > maxFileBytes) throw new ProviderError(502, 'DART_FINANCIAL_SNAPSHOT_TOO_LARGE')
-  const temporary = path + '.' + randomUUID() + '.tmp'
-  try {
-    await writeFile(temporary, bytes, { flag: 'wx', mode: 0o600, flush: true })
-    await rename(temporary, path)
-  } catch {
-    throw new ProviderError(503, 'DART_FINANCIAL_CACHE_UNAVAILABLE')
-  } finally {
-    await unlink(temporary).catch(() => {})
+export function createDartFinancialCollector({ root, issueFor, catalog, requestRows, clock, source,
+  cacheFs = { mkdir, open, rename, unlink },
+  logCacheError = entry => console.warn(JSON.stringify(entry)),
+}) {
+  async function cacheOperation(stage, operation) {
+    try {
+      return await operation()
+    } catch (error) {
+      const osCode = typeof error?.code === 'string' && /^E[A-Z0-9_]{1,31}$/.test(error.code) ? error.code : 'UNKNOWN'
+      logCacheError({ event: 'dart-financial-cache-error', stage, osCode })
+      throw new ProviderError(503, 'DART_FINANCIAL_CACHE_UNAVAILABLE')
+    }
   }
-}
 
-export function createDartFinancialCollector({ root, issueFor, catalog, requestRows, clock, source }) {
+  async function writeTemporary(path, bytes, destination) {
+    await cacheOperation('temporary-write', async () => {
+      // Track exclusive creation separately so a failed open cannot remove another file.
+      const file = await cacheFs.open(path, 'wx', 0o600)
+      try {
+        try {
+          await file.writeFile(bytes)
+          await file.sync()
+        } finally {
+          await file.close()
+        }
+      } catch (error) {
+        await cacheFs.unlink(path).catch(() => {})
+        throw error
+      }
+    })
+    if (!destination) {
+      await cacheOperation('temporary-cleanup', () => cacheFs.unlink(path))
+      return
+    }
+    try {
+      await cacheOperation('rename', () => cacheFs.rename(path, destination))
+    } catch (error) {
+      await cacheFs.unlink(path).catch(() => {})
+      throw error
+    }
+  }
+
+  async function saveSnapshot(path, snapshot) {
+    const bytes = JSON.stringify(snapshot)
+    if (Buffer.byteLength(bytes) > maxFileBytes) throw new ProviderError(502, 'DART_FINANCIAL_SNAPSHOT_TOO_LARGE')
+    await writeTemporary(path + '.' + randomUUID() + '.tmp', bytes, path)
+  }
+
+  const read = (path, year) => cacheOperation('read', () => readSnapshot(path, year, cacheFs.open))
+
   let running
   const requests = []
   async function request(path, params) {
@@ -120,20 +156,24 @@ export function createDartFinancialCollector({ root, issueFor, catalog, requestR
   }
 
   async function collect(symbol, years) {
+    const cached = new Map()
+    if (sample.has(symbol)) {
+      await cacheOperation('directory-prepare', () => cacheFs.mkdir(root, { recursive: true, mode: 0o700 }))
+      await writeTemporary(join(root, '.probe-' + randomUUID() + '.tmp'), '1')
+      for (const year of years) {
+        const path = join(root, symbol + '-' + (Number(year) % 3) + '.json')
+        cached.set(year, await read(path, year))
+      }
+    }
     const issue = await issueFor(symbol)
     const mapping = dartIssueMapping(issue, issue ? await catalog() : [], new Date(clock()).toISOString())
     if (!mapping.issuer || !sample.has(symbol)) return { mapping, years: [], progress: { status: 'identity-only' } }
     const { corpCode } = mapping.issuer
-    try {
-      await mkdir(root, { recursive: true, mode: 0o700 })
-    } catch {
-      throw new ProviderError(503, 'DART_FINANCIAL_CACHE_UNAVAILABLE')
-    }
     const results = []
     for (const year of years) {
       const path = join(root, symbol + '-' + (Number(year) % 3) + '.json')
-      const saved = await readSnapshot(path, corpCode, year)
-      if (saved && clock() >= saved.savedAt && clock() - saved.savedAt < dayMs &&
+      const saved = cached.get(year)
+      if (saved?.corpCode === corpCode && clock() >= saved.savedAt && clock() - saved.savedAt < dayMs &&
           (!saved.mapping || (saved.mapping.issue?.isin === issue.isin && saved.mapping.issue?.market === issue.market &&
           saved.mapping.issue?.shareClass === issue.shareClass))) {
         results.push({ ...saved.statement, cache: 'hit' })
@@ -172,7 +212,7 @@ export function createDartFinancialCollector({ root, issueFor, catalog, requestR
       const fileYear = Number(evaluationDate.slice(0, 4))
       const expected = [fileYear, fileYear - 1, fileYear - 2, fileYear - 3]
       // The rolling cache has three slots. Validate the envelope before using any contents.
-      const saved = await readSnapshot(path, null, expected.filter(year => year % 3 === slot).map(String))
+      const saved = await read(path, expected.filter(year => year % 3 === slot).map(String))
       if (saved) snapshots.push(saved)
     }
     const sameIssue = saved => saved.mapping?.status === 'exact-code' && saved.corpCode === saved.mapping.issuer?.corpCode &&

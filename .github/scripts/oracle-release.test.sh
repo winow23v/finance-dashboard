@@ -132,3 +132,98 @@ fi
 grep -Fq '"stopped":"KRX_BACKFILL_BUSY"' "$fixture/busy-err"
 [[ ! -e $cache/krx-missing-recovery.json ]]
 echo 'Oracle packaging, CLI installation and shared cache controls passed'
+
+# Run the receiver against an isolated filesystem and fake systemd. Keep its
+# actual cache preparation, validation, runtime swap and EXIT rollback logic.
+sandbox="$fixture/dart-release"
+mkdir -p "$sandbox/bin" "$sandbox/live/node_modules" "$sandbox/dropins"
+cp -- "$repo/vps-api/server.mjs" "$sandbox/live/server.mjs"
+cp -- "$repo/vps-api/market-cache.mjs" "$work/market-cache.mjs"
+printf 'candidate runtime\n' > "$work/server.mjs"
+tar -cf "$sandbox/incoming.tar" -C "$work" .
+cat > "$sandbox/bin/systemctl" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  'show -p User --value finance-dashboard-api.service') id -un ;;
+  'show -p Group --value finance-dashboard-api.service') id -gn ;;
+  'show -p ProtectSystem --value finance-dashboard-api.service') echo strict ;;
+  'show -p DynamicUser --value finance-dashboard-api.service') echo no ;;
+  'show -p ReadWritePaths --value finance-dashboard-api.service')
+    printf '%s\n' "/var/lib/finance-krx /var/lib/finance-us-market $TEST_SANDBOX/state/financials" ;;
+  'show -p MainPID --value finance-dashboard-api.service')
+    if [[ -n ${FAIL_DART_CONFIGURATION:-} ]]; then echo 0; else echo "$TEST_PID"; fi ;;
+  is-active*) exit 0 ;;
+  *) printf '%s\n' "$1" >> "$TEST_SANDBOX/service-actions" ;;
+esac
+SH
+cat > "$sandbox/bin/runuser" <<'SH'
+#!/usr/bin/env bash
+shift 3
+exec "$@"
+SH
+cat > "$sandbox/bin/npm" <<'SH'
+#!/usr/bin/env bash
+mkdir -p node_modules
+SH
+cat > "$sandbox/bin/findmnt" <<'SH'
+#!/usr/bin/env bash
+echo rw,nosuid,nodev
+SH
+cat > "$sandbox/bin/nsenter" <<'SH'
+#!/usr/bin/env bash
+shift 4
+exec "$@"
+SH
+printf '#!/usr/bin/env bash\necho 200\n' > "$sandbox/bin/curl"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$sandbox/bin/restorecon"
+chmod +x "$sandbox/bin/"*
+sed -e 's|^api=.*|api=$TEST_SANDBOX/live|' \
+  -e 's|^dart_parent=.*|dart_parent=$TEST_SANDBOX/state|' \
+  -e 's|^dart_dropin_dir=.*|dart_dropin_dir=$TEST_SANDBOX/dropins|' \
+  -e 's|^deploy_user=.*|deploy_user=$(id -un)|' \
+  -e 's|^dart_user=.*|dart_user=$(id -un)|' \
+  -e 's|^dart_group=.*|dart_group=$(id -gn)|' \
+  -e 's/\$EUID != 0 || //' \
+  -e 's|-o root -g root|-o "$dart_user" -g "$dart_group"|' \
+  -e 's|"\$dart_parent" root:root 755|"$dart_parent" "$dart_user:$dart_group" 755|' \
+  "$script" > "$sandbox/receiver"
+export TEST_SANDBOX="$sandbox"
+DART_FINANCIAL_CACHE_DIR="$sandbox/state/financials" bash -euc '
+  export TEST_PID=$$ PATH="$TEST_SANDBOX/bin:$PATH"
+  sandbox=$TEST_SANDBOX
+  cache=$DART_FINANCIAL_CACHE_DIR
+  release() {
+    { printf "%s\\n" "$1"; cat "$sandbox/incoming.tar"; } | bash "$sandbox/receiver"
+  }
+  release validate-dart-cache-v1
+  [[ ! -e $cache && ! -e $sandbox/service-actions ]]
+  dropin="$sandbox/dropins/90-dart-financial-cache.conf"
+  if FAIL_DART_CONFIGURATION=1 release deploy-dart-cache-v1; then
+    echo "Expected first deployment to roll back" >&2
+    exit 1
+  fi
+  [[ ! -e $dropin && -d $cache ]]
+  release deploy-dart-cache-v1
+  [[ $(stat -c %a "$cache") == 700 ]]
+  diff -u <(printf "[Service]\\nEnvironment=DART_FINANCIAL_CACHE_DIR=%s\\nReadWritePaths=%s\\n" "$cache" "$cache") "$dropin"
+  printf snapshot > "$cache/005930-0.json"
+  chmod 0600 "$cache/005930-0.json"
+  snapshot=$(stat -c "%i:%a:%u:%g" "$cache/005930-0.json")
+  actions=$(cat "$sandbox/service-actions")
+  release validate-dart-cache-v1
+  release deploy-dart-cache-v1
+  [[ $(cat "$sandbox/service-actions") == "$actions" ]]
+  mkdir "$sandbox/next"
+  tar -xf "$sandbox/incoming.tar" -C "$sandbox/next"
+  printf "replacement runtime\n" > "$sandbox/next/server.mjs"
+  tar -cf "$sandbox/incoming.tar" -C "$sandbox/next" .
+  if FAIL_DART_CONFIGURATION=1 release deploy-dart-cache-v1; then
+    echo "Expected release to roll back after its configuration check failed" >&2
+    exit 1
+  fi
+  cmp -s "$sandbox/live/server.mjs" <(printf "candidate runtime\\n")
+  [[ $(stat -c "%i:%a:%u:%g" "$cache/005930-0.json") == "$snapshot" ]]
+  [[ $(cat "$cache/005930-0.json") == snapshot && -f $dropin ]]
+  tail -n 1 "$sandbox/service-actions" | grep -Fxq restart
+'
+echo 'Oracle persistent DART cache validation, redeploy and rollback passed'
