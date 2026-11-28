@@ -1,3 +1,4 @@
+import type { MarketCheck } from '../services/useMarketEntry'
 import { useSyncExternalStore } from 'react'
 import type { KrxOverview, MarketIndex } from '../types/finance'
 import { providerStatuses } from '../services/providerStatus'
@@ -7,14 +8,21 @@ const labels = {
   error: '조회 실패', unavailable: '공표값 없음', partial: '일부 자료 조회 불가',
 }
 
-export function DataStatus({ api, indices, krx }: {
-  api: boolean; indices?: MarketIndex[] | null; krx?: KrxOverview | null
+const checks = {
+  checking: '확인 중',
+  partial: '일부 자료 미확인',
+  failed: '조회 실패',
+  retained: '갱신 실패 · 이전 유효값 표시',
+} as const
+
+export function DataStatus({ api, indices, indexCheck, krx, krxCheck }: {
+  api: boolean; indices?: MarketIndex[] | null; indexCheck?: MarketCheck; krx?: KrxOverview | null; krxCheck?: MarketCheck
 }) {
   const statuses = useSyncExternalStore(providerStatuses.subscribe, providerStatuses.read)
-  const indexStatus = indices === null ? '조회 실패' : !indices?.length ? '확인되지 않음'
+  const indexStatus = indexCheck && indexCheck !== 'confirmed' ? checks[indexCheck] : indices === null ? '조회 실패' : !indices?.length ? '확인되지 않음'
     : indices.every(index => index.status === 'available') ? '공표값 확인'
       : indices.some(index => index.status !== 'unavailable') ? '이전 수집값 또는 일부 자료 미확인' : '유효한 관측값 미확인'
-  const heatmapStatus = krx === null ? '조회 실패' : !krx ? '확인되지 않음'
+  const heatmapStatus = krxCheck && krxCheck !== 'confirmed' ? checks[krxCheck] : krx === null ? '조회 실패' : !krx ? '확인되지 않음'
     : krx.tiles.length ? '종가·시가총액 확인' : '표시 가능한 자료 없음'
   return <div className="data-status">
     <h3>데이터 연결</h3>

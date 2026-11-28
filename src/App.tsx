@@ -19,7 +19,7 @@ import { UsAnalysis } from './components/UsAnalysis'
 import { marketListings, parseStockPage, stockHref } from './services/marketListings'
 import { StockDetail } from './components/StockDetail'
 import { KrxStocks, krxStateLabels } from './components/KrxStocks'
-import { KrxHeatmap, KrxMovers } from './components/KrxMarketOverview'
+import { KrxHeatmap, KrxMovers, krxOverviewReason } from './components/KrxMarketOverview'
 import { MarketHeatmap } from './components/MarketHeatmap'
 import { Watchlist } from './components/Watchlist'
 import { useWatchlist } from './storage/useWatchlist'
@@ -74,17 +74,21 @@ const indexUnavailable = {
 }
 
 function assessIndices(quotes: MarketIndex[]) {
+  const unsuccessful = quotes.filter(quote => quote.status === 'unavailable'
+    || quote.reason === 'provider-error' || quote.reason === 'rate-limited' || quote.reason === 'not-published')
   return {
     usable: quotes.some(quote => quote.status !== 'unavailable'),
-    failed: !quotes.length || quotes.some(quote => quote.status === 'unavailable'
-      || quote.reason === 'provider-error' || quote.reason === 'rate-limited' || quote.reason === 'not-published'),
+    failed: !quotes.length || unsuccessful.length > 0,
+    partial: unsuccessful.length > 0 && unsuccessful.length < quotes.length,
+    previous: unsuccessful.length === quotes.length && quotes.some(quote => quote.status === 'stale'),
   }
 }
 
 function assessKrx(data: KrxOverview) {
   return { usable: !!data.tradingDate, failed: !data.tradingDate
     || data.reason === 'provider-error' || data.reason === 'provider-not-configured'
-    || data.reason === 'not-published' || data.reason === 'same-date-data-unavailable' }
+    || data.reason === 'not-published' || data.reason === 'same-date-data-unavailable',
+    previous: data.usingPreviousClose, reason: krxOverviewReason(data.reason) ?? (!data.tradingDate ? 'KRX 자료 미확인' : undefined) }
 }
 
 function MarketIndexValue({ quote, message, market }: { quote?: MarketIndex; message?: string; market: 'KR' | 'US' }) {
@@ -213,7 +217,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
   const indices = useMarketEntry(isApi && overview ? tab : undefined, request,
     getMarketIndices, assessIndices, '시장지수 조회 실패', 'indices', onRefreshResult)
   const krx = useMarketEntry(isApi && showKrxOverview ? tab : undefined, request,
-    getKrxOverview, assessKrx, 'KRX 시장 데이터 조회 실패', 'krx', onRefreshResult)
+    getKrxOverview, assessKrx, 'KRX 조회 실패', 'krx', onRefreshResult)
   const marketQuotes = indices.entry?.data
   const krxOverview = krx.entry
   const quoteProps = (index: typeof marketIndices[number]) => ({
@@ -392,7 +396,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
         {information ? <>
           <SiteInformation page={information} />
           {information === 'sources' && <section className="panel provider-status-panel" aria-label="공급자별 데이터 상태">
-            <DataStatus api={isApi} indices={marketQuotes} krx={krxOverview?.data} />
+            <DataStatus api={isApi} indices={marketQuotes} indexCheck={indices.check} krx={krxOverview?.data} krxCheck={krx.check} />
           </section>}
         </> : stock ?
           <StockDetail revision={request} onRefreshResult={onRefreshResult} refreshing={refreshing} refreshLabel={refreshLabel} onRefresh={refresh} refreshDisabled={refreshDisabled} favoriteDisabled={blocked || !!member && !isWatchlistSymbol(stock)} listing={stock} saved={watchlist.some(item => favoriteKey(item) === favoriteKey(stock))}
@@ -438,7 +442,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
             <FxDashboard revision={economyRevision} detailed={economyPage} requestedPair={fxPair} onRefreshReady={setFxReady} onRefreshResult={onRefreshResult} showSettings={tab === 'economy/fx-settings'} />
           </Suspense>
         </div>}
-        {showKrxOverview && krxOverview?.data && krxOverview.message && <p className="heatmap-meta" role="status">{krxOverview.message}</p>}
+        {showKrxOverview && krxOverview?.valid && krxOverview.message && <p className="heatmap-meta" role="status">{krxOverview.message}</p>}
         {isMarket && <>
           {overview ? <>
             {!isApi && error && <p role="alert">데이터 갱신에 실패했습니다.</p>}

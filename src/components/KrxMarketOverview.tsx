@@ -10,10 +10,13 @@ import { krxStateLabels } from './KrxStocks'
 
 const link = (row: KrxMarketRow) => stockHref({ market: 'KR', exchange: 'XKRX', symbol: row.symbol })
 const rate = (row: KrxMarketRow) => row.changePercent === null ? '등락률 미확인' : financialPercent(row.changePercent, true)
+export function krxOverviewReason(reason: KrxOverview['reason']) {
+  return reason === 'same-date-data-unavailable' ? '동일 거래일 자료 미확인'
+    : reason ? krxStateLabels[reason] : undefined
+}
+
 const state = (data?: KrxOverview | null) => data === undefined ? 'KRX 시장 데이터를 불러오는 중입니다.'
-  : data === null ? 'KRX 시장 데이터를 조회하지 못했습니다.'
-    : data.reason && data.reason !== 'same-date-data-unavailable' ? krxStateLabels[data.reason]
-      : '두 시장의 동일 거래일 자료를 확인할 수 없습니다.'
+  : krxOverviewReason(data?.reason ?? null) ?? 'KRX 조회 실패'
 const mobileHeatmap = '(max-width: 780px)'
 function subscribeMobileHeatmap(onChange: () => void) {
   const query = matchMedia(mobileHeatmap)
