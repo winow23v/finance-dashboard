@@ -202,7 +202,26 @@ DART_FINANCIAL_CACHE_DIR="$sandbox/state/financials" bash -euc '
     echo "Validation accepted enabled storage sync" >&2
     exit 1
   fi
+  if DART_FINANCIAL_CACHE_DIR="$sandbox/alternate" bash -euc '"'"'
+    export TEST_PID=$$
+    { echo validate-dart-cache-v1; cat "$TEST_SANDBOX/incoming.tar"; } | bash "$TEST_SANDBOX/receiver"
+  '"'"'; then
+    echo "Validation accepted a conflicting cache override" >&2
+    exit 1
+  fi
+  mkdir "$sandbox/live/.dart-cache"
+  printf legacy > "$sandbox/live/.dart-cache/005930-0.json"
+  if release validate-dart-cache-v1; then
+    echo "Validation accepted an unmigrated legacy snapshot" >&2
+    exit 1
+  fi
   [[ ! -e $cache && ! -e $sandbox/service-actions ]]
+  mkdir -m 0755 "$sandbox/state"
+  mkdir -m 0700 "$cache"
+  install -m 0600 "$sandbox/live/.dart-cache/005930-0.json" "$cache/005930-0.json"
+  release validate-dart-cache-v1
+  mv "$sandbox/live/.dart-cache" "$sandbox/legacy-fixture"
+  mv "$sandbox/state" "$sandbox/migrated-fixture"
   dropin="$sandbox/dropins/90-dart-financial-cache.conf"
   if FAIL_DART_CONFIGURATION=1 release deploy-dart-cache-v1; then
     echo "Expected first deployment to roll back" >&2

@@ -51,6 +51,27 @@ check_storage_disabled() {
   [[ $result == 1 ]]
 }
 
+check_cache_override() {
+  local pid=$1 result=0
+  grep -zq -- '^DART_FINANCIAL_CACHE_DIR=' "/proc/$pid/environ" || result=$?
+  case $result in
+    0) grep -zFxq -- "DART_FINANCIAL_CACHE_DIR=$dart_cache" "/proc/$pid/environ" ;;
+    1) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+check_legacy_snapshots() {
+  local legacy destination
+  for legacy in "$api"/.dart-cache/??????-[012].json; do
+    [[ -e $legacy || -L $legacy ]] || continue
+    destination="$dart_cache/${legacy##*/}"
+    [[ -f $legacy && ! -L $legacy && -f $destination && ! -L $destination ]] &&
+      [[ $(stat -c '%U:%G:%a' -- "$destination") == "$dart_user:$dart_group:600" ]] &&
+      cmp -s -- "$legacy" "$destination" || return 1
+  done
+}
+
 check_dart_service() {
   local pid mounts writable_paths
   writable_paths=$(systemctl show -p ReadWritePaths --value "$service") || return 1
@@ -181,6 +202,8 @@ done
 check_health || { echo 'Current production API is unhealthy.' >&2; exit 1; }
 pid=$(service_pid) && check_storage_disabled "$pid" ||
   { echo 'The running API must have financial storage sync disabled.' >&2; exit 1; }
+check_cache_override "$pid" ||
+  { echo 'Reconcile the existing DART_FINANCIAL_CACHE_DIR setting before release.' >&2; exit 1; }
 [[ $(systemctl show -p User --value "$service") == "$dart_user" ]]
 [[ $(systemctl show -p ProtectSystem --value "$service") == strict ]]
 [[ $(systemctl show -p DynamicUser --value "$service") == no ]]
@@ -191,6 +214,10 @@ check_dart_directory "$dart_parent" root:root 755 &&
   { echo 'DART cache directory ownership, permissions or type is invalid.' >&2; exit 1; }
 [[ ! -L $dart_dropin_dir && ! -L $dart_dropin ]]
 dart_configured=0
+if [[ ! -e $dart_dropin ]] && ! check_legacy_snapshots; then
+  echo 'Migrate existing DART snapshots into the persistent cache with mode 0600 before release.' >&2
+  exit 1
+fi
 if [[ -e $dart_dropin ]]; then
   if [[ ! -f $dart_dropin ]] || ! cmp -s -- "$dart_dropin" <(dart_settings); then
     echo 'Existing DART systemd drop-in conflicts with the release configuration.' >&2
