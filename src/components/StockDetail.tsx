@@ -20,7 +20,7 @@ export function StockDetail({ listing, saved, onToggle, liveQuote, usQuote, favo
       <Star size={16} aria-hidden="true" fill={saved ? 'currentColor' : 'none'} /> {saved ? '관심종목 삭제' : '관심종목 추가'}
     </button>
     {(liveQuote || usQuote) && <button type="button" className="button" onClick={onRefresh} disabled={refreshDisabled} aria-label={refreshLabel} title={refreshLabel}>
-      <RefreshCw className={refreshing ? "refresh-spin" : undefined} size={16} aria-hidden="true" /> 갱신
+      <RefreshCw className={refreshing ? "refresh-spin" : undefined} size={16} aria-hidden="true" /> 새로고침
     </button>}
   </div>
   if (liveQuote) return <KrxAnalysis key={listing.symbol} symbol={listing.symbol} actions={actions} refresh={revision} onRefreshResult={onRefreshResult} />

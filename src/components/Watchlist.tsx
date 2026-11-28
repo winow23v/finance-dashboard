@@ -58,7 +58,7 @@ function StockList({ rows, saved, onToggle, label, blocked, showQuoteStatus, ana
       return <li className="watch-row" key={marketSymbolKey(listing)}>
         <a className="stock-detail-link watch-identity" href={stockHref(listing)} title={name}>
           <span className="watch-name">{name ?? (listing.market === 'KR' ? listing.symbol : '종목명 미확인')}</span>
-          <small className="watch-symbol"><span>{listing.symbol}</span><span> · {venue}</span></small>
+          <small className="watch-symbol"><span>{listing.symbol}</span><span>{venue}</span></small>
         </a>
         {(quote || showQuoteStatus) && <div className="watch-metrics">
           {quote ? <>

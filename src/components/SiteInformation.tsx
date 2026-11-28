@@ -26,7 +26,7 @@ function DataSources() {
         <h2>한국 경제지표 · 한국은행 ECOS</h2>
         <p><strong>정기 공표 통계</strong> · 한국은행 기준금리는 일별 관측값을, 국가데이터처 소비자물가지수와 실업률은 월별 관측값을 표시합니다. 기준금리 변경과 월별 통계 발표 일정은 각 기관을 따릅니다.</p>
         <p>차트는 공표 관측값을 표시합니다. CPI 전년 동월 대비는 비교할 관측값이 있을 때 표시합니다.</p>
-        <p><a href="https://ecos.bok.or.kr/">한국은행 ECOS</a> · <a href="https://www.bok.or.kr/portal/singl/baseRate/list.do?menuNo=200656">한국은행 기준금리</a> · <a href="https://kosis.kr/">국가통계포털 KOSIS</a></p>
+        <p><a href="https://ecos.bok.or.kr/">한국은행 ECOS</a>, <a href="https://www.bok.or.kr/portal/singl/baseRate/list.do?menuNo=200656">한국은행 기준금리</a>, <a href="https://kosis.kr/">국가통계포털 KOSIS</a></p>
       </section>
       <section>
         <h2>기업 공시·재무 · OPEN DART</h2>

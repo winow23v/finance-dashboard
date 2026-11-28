@@ -77,7 +77,7 @@ export function MarketHeatmap({ market, favorites, data, summary = false }: {
               const key = marketSymbolKey(item.listing)
               const background = heatmapColor(market, item.quote.percentChange)
               return <a key={key} className="heatmap-tile" href={stockHref(item.listing)}
-                aria-label={`${item.name} ${item.listing.symbol}, ${rate(item)}, ${price.format(item.quote.value)} ${item.quote.currency}`}
+                aria-label={`${item.listing.symbol} ${rate(item)} ${price.format(item.quote.value)} ${item.quote.currency}, ${item.name}`}
                 aria-describedby={active === key ? tooltipId : undefined}
                 onMouseEnter={() => setActive(key)} onMouseLeave={() => setActive(undefined)}
                 onFocus={() => setActive(key)} onBlur={() => setActive(undefined)}

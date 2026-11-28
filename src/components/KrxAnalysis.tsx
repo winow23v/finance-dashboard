@@ -102,7 +102,7 @@ export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: {
   const histogram = macd?.histogram
 
   return <section className="panel stock-detail krx-analysis terminal-detail" aria-label="종목 상세">
-    {!data && <header className="stock-identity"><h1>{symbol}</h1><small>국내시장 · XKRX · KRW</small>{actions}</header>}
+    {!data && <header className="stock-identity"><h1>{symbol}</h1><small>국내시장 (XKRX), KRW</small>{actions}</header>}
     {!result ? <LoadingSkeleton message="KRX 시세를 불러오는 중입니다." shape="detail" />
       : 'message' in result || !data ? <div className="detail-state"><p role="alert">{'message' in result ? result.message : '자료 없음'}</p>
         <p>최신 위험 상태 확인 불가</p>
@@ -112,7 +112,7 @@ export function KrxAnalysis({ symbol, actions, refresh = 0, onRefreshResult }: {
             <div className="stock-identity">
               <h1>{data.name}</h1>
               {data.fullName && data.fullName !== data.name && <small>{data.fullName}</small>}
-              <small>{data.symbol} · {data.market} (XKRX) · KRW{data.shareClass && ' · ' + data.shareClass}</small>
+              <small>{data.symbol}, {data.market} (XKRX), KRW{data.shareClass && ' / ' + data.shareClass}</small>
             </div>
             {quote ? <div className="analysis-price">
               <small>KRX 정규장 종가</small>
