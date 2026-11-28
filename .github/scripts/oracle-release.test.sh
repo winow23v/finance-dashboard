@@ -152,7 +152,14 @@ case "$*" in
     printf '%s\n' "/var/lib/finance-krx /var/lib/finance-us-market $TEST_SANDBOX/state/financials" ;;
   'show -p MainPID --value finance-dashboard-api.service') echo "$TEST_PID" ;;
   is-active*) exit 0 ;;
-  *) printf '%s\n' "$1" >> "$TEST_SANDBOX/service-actions" ;;
+  *)
+    printf '%s\n' "$1" >> "$TEST_SANDBOX/service-actions"
+    if [[ $1 == start && -n ${FAIL_DART_CONFIGURATION:-} ]]; then
+      touch "$TEST_SANDBOX/fail-mount"
+    elif [[ $1 == restart ]]; then
+      rm -f "$TEST_SANDBOX/fail-mount"
+    fi ;;
+
 esac
 SH
 cat > "$sandbox/bin/runuser" <<'SH'
@@ -166,7 +173,7 @@ mkdir -p node_modules
 SH
 cat > "$sandbox/bin/findmnt" <<'SH'
 #!/usr/bin/env bash
-if [[ -n ${FAIL_DART_CONFIGURATION:-} ]]; then echo ro,nosuid,nodev; else echo rw,nosuid,nodev; fi
+if [[ -e $TEST_SANDBOX/fail-mount ]]; then echo ro,nosuid,nodev; else echo rw,nosuid,nodev; fi
 SH
 cat > "$sandbox/bin/nsenter" <<'SH'
 #!/usr/bin/env bash
@@ -226,11 +233,16 @@ DART_FINANCIAL_CACHE_DIR="$sandbox/state/financials" bash -euc '
     echo "Deployment accepted unmigrated snapshots with a staged drop-in" >&2
     exit 1
   fi
-  rm -- "$dropin"
   [[ ! -e $cache && ! -e $sandbox/service-actions ]]
   mkdir -m 0755 "$sandbox/state"
   mkdir -m 0700 "$cache"
   install -m 0600 "$sandbox/live/.dart-cache/005930-0.json" "$cache/005930-0.json"
+  if env -u DART_FINANCIAL_CACHE_DIR fixture-release deploy-dart-cache-v1; then
+    echo "Deployment accepted a drop-in that was not active before release" >&2
+    exit 1
+  fi
+  [[ ! -e $sandbox/service-actions ]]
+  rm -- "$dropin"
   release validate-dart-cache-v1
   mv "$sandbox/live/.dart-cache" "$sandbox/legacy-fixture"
   mv "$sandbox/state" "$sandbox/migrated-fixture"

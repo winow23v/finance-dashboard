@@ -227,16 +227,15 @@ if [[ -e $dart_dropin ]]; then
     echo 'Existing DART systemd drop-in conflicts with the release configuration.' >&2
     exit 1
   fi
-  if [[ -d $dart_cache ]] && check_dart_service; then
-    dart_configured=1
+  if [[ ! -d $dart_cache ]] || ! check_dart_service; then
+    echo 'Installed DART configuration is not effective in the running service. Reconcile it before release.' >&2
+    exit 1
   fi
+  dart_configured=1
 fi
 if [[ $mode == validate ]]; then
   if (( dart_configured )); then
     echo 'Persistent DART cache path and active systemd configuration verified.'
-  elif [[ -e $dart_dropin ]]; then
-    echo 'Installed DART configuration is not effective in the running service.' >&2
-    exit 1
   else
     echo 'DART cache prerequisites verified. Deploy will prepare the cache and install its systemd drop-in.'
   fi
