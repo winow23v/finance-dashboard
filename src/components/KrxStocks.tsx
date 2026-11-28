@@ -11,6 +11,7 @@ import { marketSymbolKey, type MarketSymbol } from '../types/marketSymbol'
 import { Change } from './QuoteDisplay'
 
 const number = new Intl.NumberFormat('ko-KR')
+const marketResultLimit = 20
 
 export const krxStateLabels: Record<KrxReason, string> = {
   'provider-not-configured': 'KRX 공급자 미연결',
@@ -49,14 +50,24 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
       setResult(previous => {
         const sameLookup = previous?.market === market && previous.symbol === symbol && previous.query === query
         const previousData = sameLookup ? previous.data ?? [] : []
+        let showsPriorRows = false
         const visible = outcomes.flatMap((outcome, index) => {
           const prior = previousData.find(dataset => dataset.market === markets[index])
-          if (outcome.status === 'rejected') return prior?.items.length ? [prior] : []
+          if (outcome.status === 'rejected') {
+            if (!prior?.items.length) return []
+            showsPriorRows = true
+            return [prior]
+          }
           const { items, listings } = outcome.value
-          return [listings.status === 'unavailable' && !items.length && prior?.items.length ? prior : outcome.value]
+          if (listings.status !== 'unavailable' || !prior?.items.length || items.length >= marketResultLimit) return [outcome.value]
+          const freshSymbols = new Set(items.map(item => item.symbol))
+          const fallback = prior.items.filter(item => !freshSymbols.has(item.symbol)).slice(0, marketResultLimit - items.length)
+          if (!fallback.length) return [outcome.value]
+          showsPriorRows = true
+          return [{ ...outcome.value, items: [...items, ...fallback] }]
         })
-        const showsPriorRows = visible.some(dataset => !data.includes(dataset))
-        const notice = showsPriorRows ? (message ?? '종목 조회 실패') + ' 이전 조회 결과를 표시합니다.' : message
+        const fallbackNotice = data.some(dataset => dataset.items.length) ? ' 일부는 이전 조회 결과입니다.' : ' 이전 조회 결과를 표시합니다.'
+        const notice = showsPriorRows ? (message ?? '종목 조회 실패') + fallbackNotice : message
         return { market, symbol, query, revision, data: visible.length ? visible : null, message: notice }
       })
     })
@@ -99,7 +110,7 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
               {dataset.trades.usingPreviousClose ? '이전 정상 종가 사용' : krxStateLabels[details[0]]}
             </span></>}
           </p>
-          {dataset.items.length === 20 && <small>시장별 최대 20개를 표시합니다. 검색어를 좁혀 보세요.</small>}
+          {dataset.items.length >= marketResultLimit && <small>시장별 최대 {marketResultLimit}개를 표시합니다. 검색어를 좁혀 보세요.</small>}
           {dataset.items.length ? <ClientPages key={dataset.market + ':' + query} items={dataset.items} countLabel="조회된 종목" label={dataset.market + ' 종목 목록 페이지'}>{visible =>
             <ul className="stock-list">{visible.map(item => {
               const listing = { market: 'KR', exchange: 'XKRX', symbol: item.symbol } as const
