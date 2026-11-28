@@ -7,6 +7,134 @@ service=finance-dashboard-api.service
 deploy_user=finance-deploy
 health_url=http://127.0.0.1:3000/health
 
+dart_parent=/var/lib/finance-dart
+dart_cache=$dart_parent/financials
+dart_dropin_dir=/etc/systemd/system/$service.d
+dart_dropin=$dart_dropin_dir/90-dart-financial-cache.conf
+dart_user=rocky
+dart_group=rocky
+release_stamp=${api}.deploy-stamp
+
+dart_settings() {
+  printf '[Service]\nEnvironment=DART_FINANCIAL_CACHE_DIR=%s\nEnvironment=DART_FINANCIAL_CACHE_VERIFY=1\nReadWritePaths=%s\n' "$dart_cache" "$dart_cache"
+}
+
+check_dart_directory() {
+  local path=$1 owner=$2 mode=$3
+  [[ ! -L $path ]] || return 1
+  if [[ -e $path ]]; then
+    [[ -d $path && $(stat -c '%U:%G:%a' -- "$path") == "$owner:$mode" ]]
+  fi
+}
+
+prepare_dart_directory() {
+  if [[ ! -d $dart_parent ]]; then
+    install -d -o root -g root -m 0755 -- "$dart_parent"
+  fi
+  if [[ ! -d $dart_cache ]]; then
+    install -d -o "$dart_user" -g "$dart_group" -m 0700 -- "$dart_cache"
+    if command -v restorecon >/dev/null; then
+      restorecon -- "$dart_parent" "$dart_cache"
+    fi
+  fi
+}
+
+service_pid() {
+  local pid
+  pid=$(systemctl show -p MainPID --value "$service") || return 1
+  [[ $pid =~ ^[1-9][0-9]*$ ]] || return 1
+  printf '%s\n' "$pid"
+}
+
+check_storage_disabled() {
+  local pid=$1 result=0
+  grep -zFxq -- 'FINANCE_STORAGE_SYNC=1' "/proc/$pid/environ" || result=$?
+  [[ $result == 1 ]]
+}
+
+check_cache_override() {
+  local pid=$1 result=0
+  grep -zq -- '^DART_FINANCIAL_CACHE_DIR=' "/proc/$pid/environ" || result=$?
+  case $result in
+    0) grep -zFxq -- "DART_FINANCIAL_CACHE_DIR=$dart_cache" "/proc/$pid/environ" ;;
+    1) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# EnvironmentFile entries override Environment=. Check current file contents
+# before replacing a healthy process with one that would reject its environment.
+check_next_service_environment() {
+  local files entry file modifiers
+  local file_entry='^(/[[:alnum:]_./-]+) [(]ignore_errors=(yes|no)[)]$'
+  local managed='(^|[[:space:]"])(DART_FINANCIAL_CACHE_DIR|DART_FINANCIAL_CACHE_VERIFY|FINANCE_STORAGE_SYNC)(=|[[:space:]"]|$)'
+  [[ $(systemctl show -p NeedDaemonReload --value "$service") == no ]] || return 1
+  modifiers=$(systemctl show -p PassEnvironment -p UnsetEnvironment --value "$service") || return 1
+  [[ ! $modifiers =~ $managed ]] || return 1
+  {
+    systemctl show -p Environment --value "$service" || return 1
+    systemctl show-environment || return 1
+  } | awk -v cache="$dart_cache" '
+    {
+      for (i = 1; i <= NF; i++) {
+        value = $i
+        sub(/^"/, "", value)
+        sub(/"$/, "", value)
+        if (value ~ /^DART_FINANCIAL_CACHE_DIR=/ && value != "DART_FINANCIAL_CACHE_DIR=" cache) exit 1
+        if (value ~ /^DART_FINANCIAL_CACHE_VERIFY=/ && value != "DART_FINANCIAL_CACHE_VERIFY=1") exit 1
+        if (value ~ /^FINANCE_STORAGE_SYNC=/ && value !~ /^FINANCE_STORAGE_SYNC=(0)?$/) exit 1
+      }
+    }
+  ' || return 1
+  files=$(systemctl show -p EnvironmentFiles --value "$service") || return 1
+  while IFS= read -r entry; do
+    [[ -n $entry ]] || continue
+    # Production uses literal absolute paths. Fail closed on globs or escaped paths.
+    [[ $entry =~ $file_entry ]] || return 1
+    file=${BASH_REMATCH[1]}
+    if [[ ! -e $file && ${BASH_REMATCH[2]} == yes ]]; then
+      continue
+    fi
+    [[ -f $file && -r $file ]] || return 1
+    awk '
+      /^[[:space:]]*DART_FINANCIAL_CACHE_(DIR|VERIFY)[[:space:]]*=/ { exit 1 }
+      /^[[:space:]]*FINANCE_STORAGE_SYNC[[:space:]]*=/ {
+        sub(/^[^=]*=[[:space:]]*/, "")
+        sub(/[[:space:]]*$/, "")
+        if ($0 != "0" && $0 != "" && $0 !~ /^"0?"$/ && $0 !~ /^\0470?\047$/) exit 1
+      }
+    ' "$file" || return 1
+  done <<< "$files"
+}
+
+require_next_service_environment() {
+  check_next_service_environment ||
+    { echo 'Reconcile pending systemd settings and managed DART or storage-sync environment variables before release.' >&2; exit 1; }
+}
+
+check_legacy_snapshots() {
+  local legacy destination
+  for legacy in "$api"/.dart-cache/??????-[012].json; do
+    [[ -e $legacy || -L $legacy ]] || continue
+    destination="$dart_cache/${legacy##*/}"
+    [[ -f $legacy && ! -L $legacy && -f $destination && ! -L $destination ]] &&
+      [[ $(stat -c '%U:%G:%a' -- "$destination") == "$dart_user:$dart_group:600" ]] &&
+      cmp -s -- "$legacy" "$destination" || return 1
+  done
+}
+
+check_dart_service() {
+  local pid mounts writable_paths
+  writable_paths=$(systemctl show -p ReadWritePaths --value "$service") || return 1
+  [[ " $writable_paths " == *" $dart_cache "* ]] || return 1
+  pid=$(service_pid) || return 1
+  grep -zFxq -- "DART_FINANCIAL_CACHE_DIR=$dart_cache" "/proc/$pid/environ" || return 1
+  grep -zFxq -- 'DART_FINANCIAL_CACHE_VERIFY=1' "/proc/$pid/environ" || return 1
+  check_storage_disabled "$pid" || return 1
+  mounts=$(nsenter -t "$pid" -m -- findmnt -n -o VFS-OPTIONS -T "$dart_cache") || return 1
+  [[ ,$mounts, == *,rw,* ]]
+}
+
 check_health() {
   local attempt status
   for ((attempt = 1; attempt <= 15; attempt++)); do
@@ -25,8 +153,10 @@ if [[ $EUID != 0 || $# != 0 ]]; then
   exit 1
 fi
 IFS= read -r mode
+force_restart=0
 case "$mode" in
-  validate|deploy) ;;
+  validate-dart-cache-v1|deploy-dart-cache-v1) mode=${mode%-dart-cache-v1} ;;
+  redeploy-dart-cache-v1) mode=deploy; force_restart=1 ;;
   *) echo 'Invalid release mode.' >&2; exit 1 ;;
 esac
 
@@ -37,12 +167,15 @@ work=$(mktemp -d /tmp/finance-api.XXXXXXXX)
 release=
 backup=
 restart_required=0
+dart_dropin_added=0
+dart_dropin_stage=
+stamp_stage=
 
 finish() {
   local result=$?
   trap - EXIT
   trap '' HUP INT TERM
-  if (( result != 0 && restart_required )); then
+  if (( result != 0 && (restart_required || dart_dropin_added) )); then
     echo 'Release failed. Restoring the previous API.' >&2
     if [[ -n $backup && -d $backup ]]; then
       if ! systemctl stop "$service" ||
@@ -52,11 +185,25 @@ finish() {
         exit "$result"
       fi
     fi
-    if ! systemctl restart "$service" || ! check_health; then
-      echo 'Rollback could not verify the restored service. Check systemd and /health.' >&2
-      exit "$result"
+    if (( dart_dropin_added )); then
+      if ! rm -f -- "$dart_dropin" || ! systemctl daemon-reload; then
+        echo 'Rollback could not restore the DART systemd configuration.' >&2
+        exit "$result"
+      fi
+    fi
+    if (( restart_required )); then
+      if ! systemctl restart "$service" || ! check_health; then
+        echo 'Rollback could not verify the restored service. Check systemd and /health.' >&2
+        exit "$result"
+      fi
     fi
     echo 'Previous API restored and healthy.'
+  fi
+  if [[ -n $dart_dropin_stage ]]; then
+    rm -f -- "$dart_dropin_stage"
+  fi
+  if [[ -n $stamp_stage ]]; then
+    rm -f -- "$stamp_stage"
   fi
   rm -rf -- "$work"
   if [[ -n $release && ! -d $release/failed ]]; then
@@ -110,18 +257,107 @@ for file in "${runtime_files[@]}"; do
 done
 
 check_health || { echo 'Current production API is unhealthy.' >&2; exit 1; }
+pid=$(service_pid) && check_storage_disabled "$pid" ||
+  { echo 'The running API must have financial storage sync disabled.' >&2; exit 1; }
+check_cache_override "$pid" ||
+  { echo 'Reconcile the existing DART_FINANCIAL_CACHE_DIR setting before release.' >&2; exit 1; }
+require_next_service_environment
+[[ $(systemctl show -p User --value "$service") == "$dart_user" ]]
+[[ $(systemctl show -p ProtectSystem --value "$service") == strict ]]
+[[ $(systemctl show -p DynamicUser --value "$service") == no ]]
+service_group=$(systemctl show -p Group --value "$service")
+[[ ${service_group:-$(id -gn "$dart_user")} == "$dart_group" ]]
+check_dart_directory "$dart_parent" root:root 755 &&
+  check_dart_directory "$dart_cache" "$dart_user:$dart_group" 700 ||
+  { echo 'DART cache directory ownership, permissions or type is invalid.' >&2; exit 1; }
+[[ ! -L $dart_dropin_dir && ! -L $dart_dropin ]]
+dart_configured=0
+legacy_cache_active=0
+if ! grep -zFxq -- "DART_FINANCIAL_CACHE_DIR=$dart_cache" "/proc/$pid/environ"; then
+  legacy_cache_active=1
+  if ! check_legacy_snapshots; then
+    echo 'Migrate existing DART snapshots into the persistent cache with mode 0600 before release.' >&2
+    exit 1
+  fi
+fi
+if [[ -e $dart_dropin ]]; then
+  if [[ ! -f $dart_dropin ]] || ! cmp -s -- "$dart_dropin" <(dart_settings); then
+    echo 'Existing DART systemd drop-in conflicts with the release configuration.' >&2
+    exit 1
+  fi
+  if [[ ! -d $dart_cache ]] || ! check_dart_service; then
+    echo 'Installed DART configuration is not effective in the running service. Reconcile it before release.' >&2
+    exit 1
+  fi
+  dart_configured=1
+fi
 if [[ $mode == validate ]]; then
+  if (( dart_configured )); then
+    echo 'Persistent DART cache path and active systemd configuration verified.'
+  else
+    echo 'DART cache prerequisites verified. Deploy will prepare the cache and install its systemd drop-in.'
+  fi
   echo 'SSH, staged release and existing API health verified.'
   exit 0
 fi
 
+# Only skip a restart for a release this script successfully started and checked.
+candidate_digest=$(cd -- "$work" && sha256sum -- "${runtime_files[@]##*/}" | sha256sum)
+candidate_digest=${candidate_digest%% *}
+invocation=$(systemctl show -p InvocationID --value "$service")
+if (( dart_configured && ! force_restart )) && [[ $invocation =~ ^[0-9a-f]{32}$ && -f $release_stamp && ! -L $release_stamp ]] &&
+  grep -Fxq -- "$invocation $candidate_digest" "$release_stamp" &&
+  [[ ! -e $api/sec-provider.mjs && ! -L $api/sec-provider.mjs ]] &&
+  diff -qr --no-dereference -- "$api/node_modules" "$release/api/node_modules" >/dev/null; then
+  unchanged=1
+  for file in "${runtime_files[@]}"; do
+    if ! cmp -s -- "$file" "$api/${file##*/}"; then
+      unchanged=0
+      break
+    fi
+  done
+  if (( unchanged )); then
+    echo 'Oracle API and persistent DART configuration are already current.'
+    exit 0
+  fi
+fi
+
+prepare_dart_directory
+if [[ ! -e $dart_dropin ]]; then
+  if [[ ! -d $dart_dropin_dir ]]; then
+    install -d -m 0755 -- "$dart_dropin_dir"
+  fi
+  dart_dropin_stage=$(mktemp "$dart_dropin_dir/.dart-financial-cache.XXXXXXXX")
+  dart_settings > "$dart_dropin_stage"
+  chmod 0644 -- "$dart_dropin_stage"
+  dart_dropin_added=1
+  mv -T -- "$dart_dropin_stage" "$dart_dropin"
+fi
+if (( ! dart_configured )); then
+  systemctl daemon-reload
+fi
+require_next_service_environment
 backup="${api}.backup.$(date -u +%Y%m%dT%H%M%SZ).${release##*.}"
 restart_required=1
 systemctl stop "$service"
+if (( legacy_cache_active )) && ! check_legacy_snapshots; then
+  echo 'Legacy DART snapshots changed during staging. Reconcile the cache before retrying.' >&2
+  exit 1
+fi
 mv -T -- "$api" "$backup"
 echo "Rollback backup: $backup"
 mv -T -- "$release/api" "$api"
 systemctl start "$service"
 check_health || { echo 'Released API failed the health check.' >&2; exit 1; }
+check_dart_service || { echo 'Released API failed the DART cache configuration check.' >&2; exit 1; }
 restart_required=0
+if invocation=$(systemctl show -p InvocationID --value "$service") &&
+  [[ $invocation =~ ^[0-9a-f]{32}$ ]] &&
+  stamp_stage=$(mktemp "${release_stamp}.XXXXXXXX") &&
+  printf '%s %s\n' "$invocation" "$candidate_digest" > "$stamp_stage" &&
+  mv -T -- "$stamp_stage" "$release_stamp"; then
+  stamp_stage=
+else
+  echo 'Could not record the running release identity. The next deployment will restart the API.' >&2
+fi
 echo 'Oracle API deployed and healthy.'

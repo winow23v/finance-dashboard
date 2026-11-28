@@ -132,3 +132,256 @@ fi
 grep -Fq '"stopped":"KRX_BACKFILL_BUSY"' "$fixture/busy-err"
 [[ ! -e $cache/krx-missing-recovery.json ]]
 echo 'Oracle packaging, CLI installation and shared cache controls passed'
+
+# Run the receiver against an isolated filesystem and fake systemd. Keep its
+# actual cache preparation, validation, runtime swap and EXIT rollback logic.
+sandbox="$fixture/dart-release"
+mkdir -p "$sandbox/bin" "$sandbox/live/node_modules" "$sandbox/dropins"
+cp -- "$repo/vps-api/server.mjs" "$sandbox/live/server.mjs"
+cp -- "$repo/vps-api/market-cache.mjs" "$work/market-cache.mjs"
+printf 'candidate runtime\n' > "$work/server.mjs"
+tar -cf "$sandbox/incoming.tar" -C "$work" .
+cat > "$sandbox/bin/systemctl" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  'show -p User --value finance-dashboard-api.service') id -un ;;
+  'show -p Group --value finance-dashboard-api.service') id -gn ;;
+  'show -p ProtectSystem --value finance-dashboard-api.service') echo strict ;;
+  'show -p DynamicUser --value finance-dashboard-api.service') echo no ;;
+  'show -p NeedDaemonReload --value finance-dashboard-api.service')
+    if [[ -f $TEST_SANDBOX/pending-unit ]]; then echo yes; else echo no; fi ;;
+  'show -p Environment --value finance-dashboard-api.service')
+    if [[ -f $TEST_SANDBOX/inline-environment ]]; then cat "$TEST_SANDBOX/inline-environment"; fi ;;
+  'show -p PassEnvironment -p UnsetEnvironment --value finance-dashboard-api.service') ;;
+  show-environment)
+    if [[ -f $TEST_SANDBOX/manager-environment ]]; then cat "$TEST_SANDBOX/manager-environment"; fi ;;
+  'show -p EnvironmentFiles --value finance-dashboard-api.service')
+    printf '%s (ignore_errors=no)\n' "$TEST_SANDBOX/api.env" ;;
+  'show -p ReadWritePaths --value finance-dashboard-api.service')
+    printf '%s' '/var/lib/finance-krx /var/lib/finance-us-market'
+    if [[ -f $TEST_SANDBOX/loaded-dropin ]]; then
+      printf ' %s' "$TEST_SANDBOX/state/financials"
+    fi
+    printf '\n' ;;
+  'show -p MainPID --value finance-dashboard-api.service') echo 1 ;;
+  'show -p InvocationID --value finance-dashboard-api.service')
+    printf '%032d\n' "$(cat "$TEST_SANDBOX/invocation")" ;;
+  is-active*) exit 0 ;;
+  *)
+    printf '%s\n' "$1" >> "$TEST_SANDBOX/service-actions"
+    if [[ $1 == daemon-reload ]]; then
+      if [[ -f $TEST_SANDBOX/dropins/90-dart-financial-cache.conf ]]; then
+        touch "$TEST_SANDBOX/loaded-dropin"
+      else
+        rm -f "$TEST_SANDBOX/loaded-dropin"
+      fi
+    fi
+    if [[ $1 == start || $1 == restart ]]; then
+      wc -l < "$TEST_SANDBOX/service-actions" > "$TEST_SANDBOX/invocation"
+      : > "$TEST_SANDBOX/service-environ"
+      if [[ -f $TEST_SANDBOX/loaded-dropin ]]; then
+        printf '%s\0' "DART_FINANCIAL_CACHE_DIR=$TEST_SANDBOX/state/financials" DART_FINANCIAL_CACHE_VERIFY=1 \
+          > "$TEST_SANDBOX/service-environ"
+      fi
+    fi
+    if [[ $1 == start && -n ${FAIL_DART_CONFIGURATION:-} ]]; then
+      touch "$TEST_SANDBOX/fail-mount"
+    elif [[ $1 == restart ]]; then
+      rm -f "$TEST_SANDBOX/fail-mount"
+    fi ;;
+esac
+SH
+cat > "$sandbox/bin/runuser" <<'SH'
+#!/usr/bin/env bash
+shift 3
+exec "$@"
+SH
+cat > "$sandbox/bin/npm" <<'SH'
+#!/usr/bin/env bash
+[[ -z ${FAIL_STAGE:-} ]] || exit 1
+mkdir -p node_modules
+SH
+cat > "$sandbox/bin/findmnt" <<'SH'
+#!/usr/bin/env bash
+if [[ -e $TEST_SANDBOX/fail-mount ]]; then echo ro,nosuid,nodev; else echo rw,nosuid,nodev; fi
+SH
+cat > "$sandbox/bin/nsenter" <<'SH'
+#!/usr/bin/env bash
+shift 4
+exec "$@"
+SH
+printf '#!/usr/bin/env bash\necho 200\n' > "$sandbox/bin/curl"
+printf '#!/usr/bin/env bash\nexit 0\n' > "$sandbox/bin/restorecon"
+chmod +x "$sandbox/bin/"*
+sed -e 's|^api=.*|api=$TEST_SANDBOX/live|' \
+  -e 's|^dart_parent=.*|dart_parent=$TEST_SANDBOX/state|' \
+  -e 's|^dart_dropin_dir=.*|dart_dropin_dir=$TEST_SANDBOX/dropins|' \
+  -e 's|^deploy_user=.*|deploy_user=$(id -un)|' \
+  -e 's|^dart_user=.*|dart_user=$(id -un)|' \
+  -e 's|^dart_group=.*|dart_group=$(id -gn)|' \
+  -e 's/\$EUID != 0 || //' \
+  -e 's|-o root -g root|-o "$dart_user" -g "$dart_group"|' \
+  -e 's|"\$dart_parent" root:root 755|"$dart_parent" "$dart_user:$dart_group" 755|' \
+  -e 's|/proc/\$pid/environ|$TEST_SANDBOX/service-environ|g' \
+  "$script" > "$sandbox/receiver"
+export TEST_SANDBOX="$sandbox"
+bash -euc '
+  export PATH="$TEST_SANDBOX/bin:$PATH"
+  sandbox=$TEST_SANDBOX
+  cache=$sandbox/state/financials
+  dropin="$sandbox/dropins/90-dart-financial-cache.conf"
+  release() {
+    { printf "%s\n" "$1"; cat "$sandbox/incoming.tar"; } | bash "$sandbox/receiver"
+  }
+  : > "$sandbox/service-environ"
+  : > "$sandbox/api.env"
+  printf "1\n" > "$sandbox/invocation"
+  for legacy_mode in deploy validate; do
+    if printf "%s\n" "$legacy_mode" | bash "$sandbox/receiver" 2> "$sandbox/legacy-mode.log"; then
+      echo "Receiver accepted an unversioned legacy request before cutover" >&2
+      exit 1
+    fi
+    grep -Fxq "Invalid release mode." "$sandbox/legacy-mode.log"
+    [[ ! -e $sandbox/live.deploy.lock ]]
+  done
+  release validate-dart-cache-v1
+  if FAIL_STAGE=1 release deploy-dart-cache-v1; then
+    echo "Receiver accepted a failed dependency installation" >&2
+    exit 1
+  fi
+  [[ ! -e $cache && ! -e $dropin && ! -e $sandbox/service-actions ]]
+  printf "FINANCE_STORAGE_SYNC=1\n" > "$sandbox/api.env"
+  if release validate-dart-cache-v1 || release deploy-dart-cache-v1; then
+    echo "Receiver accepted pending storage sync with a healthy legacy process" >&2
+    exit 1
+  fi
+  printf "DART_FINANCIAL_CACHE_VERIFY=0\n" > "$sandbox/api.env"
+  if release deploy-dart-cache-v1; then
+    echo "Receiver accepted an EnvironmentFile override of managed verification" >&2
+    exit 1
+  fi
+  printf "DART_FINANCIAL_CACHE_DIR=%s\n" "$sandbox/alternate" > "$sandbox/inline-environment"
+  printf "FINANCE_STORAGE_SYNC=0\n" > "$sandbox/api.env"
+  if release validate-dart-cache-v1; then
+    echo "Receiver accepted a loaded systemd cache override" >&2
+    exit 1
+  fi
+  rm -- "$sandbox/inline-environment"
+  printf "FINANCE_STORAGE_SYNC=1\n" > "$sandbox/manager-environment"
+  if release deploy-dart-cache-v1; then
+    echo "Receiver accepted manager-level storage sync" >&2
+    exit 1
+  fi
+  rm -- "$sandbox/manager-environment"
+  printf "FINANCE_STORAGE_SYNC=\0420\042\n" > "$sandbox/api.env"
+  release validate-dart-cache-v1
+  printf "FINANCE_STORAGE_SYNC=\0470\047\n" > "$sandbox/api.env"
+  release validate-dart-cache-v1
+  touch "$sandbox/pending-unit"
+  if release deploy-dart-cache-v1; then
+    echo "Receiver accepted a unit with pending daemon reload" >&2
+    exit 1
+  fi
+  rm -- "$sandbox/pending-unit"
+  release validate-dart-cache-v1
+  printf "FINANCE_STORAGE_SYNC=1\0" > "$sandbox/service-environ"
+  if release validate-dart-cache-v1; then
+    echo "Validation accepted enabled storage sync" >&2
+    exit 1
+  fi
+  printf "DART_FINANCIAL_CACHE_DIR=%s\0" "$sandbox/alternate" > "$sandbox/service-environ"
+  if release validate-dart-cache-v1; then
+    echo "Validation accepted a conflicting cache override" >&2
+    exit 1
+  fi
+  [[ ! -e $cache && ! -e $sandbox/service-actions ]]
+  : > "$sandbox/service-environ"
+  if FAIL_DART_CONFIGURATION=1 release deploy-dart-cache-v1; then
+    echo "Expected first deployment to roll back" >&2
+    exit 1
+  fi
+  [[ ! -e $dropin && -d $cache && ! -s $sandbox/service-environ ]]
+  actions=$(cat "$sandbox/service-actions")
+  mkdir "$sandbox/live/.dart-cache"
+  printf legacy > "$sandbox/live/.dart-cache/005930-0.json"
+  if release validate-dart-cache-v1; then
+    echo "Validation accepted an unmigrated legacy snapshot" >&2
+    exit 1
+  fi
+  printf "[Service]\nEnvironment=DART_FINANCIAL_CACHE_DIR=%s\nEnvironment=DART_FINANCIAL_CACHE_VERIFY=1\nReadWritePaths=%s\n" "$cache" "$cache" > "$dropin"
+  if release deploy-dart-cache-v1; then
+    echo "Deployment accepted unmigrated snapshots with a staged drop-in" >&2
+    exit 1
+  fi
+  [[ ! -e $cache/005930-0.json && $(cat "$sandbox/service-actions") == "$actions" ]]
+  install -m 0600 "$sandbox/live/.dart-cache/005930-0.json" "$cache/005930-0.json"
+  if release deploy-dart-cache-v1; then
+    echo "Deployment accepted a drop-in that was not active before release" >&2
+    exit 1
+  fi
+  [[ $(cat "$sandbox/service-actions") == "$actions" ]]
+  rm -- "$dropin"
+  release validate-dart-cache-v1
+  snapshot=$(stat -c "%i:%a:%u:%g" "$cache/005930-0.json")
+  release deploy-dart-cache-v1
+  [[ $(stat -c "%i:%a:%u:%g" "$cache/005930-0.json") == "$snapshot" ]]
+  [[ $(cat "$cache/005930-0.json") == legacy ]]
+  [[ $(stat -c %a "$cache") == 700 ]]
+  diff -u <(printf "[Service]\\nEnvironment=DART_FINANCIAL_CACHE_DIR=%s\\nEnvironment=DART_FINANCIAL_CACHE_VERIFY=1\\nReadWritePaths=%s\\n" "$cache" "$cache") "$dropin"
+  actions=$(cat "$sandbox/service-actions")
+  printf "FINANCE_STORAGE_SYNC=1\n" > "$sandbox/api.env"
+  if release redeploy-dart-cache-v1; then
+    echo "Managed redeploy accepted pending storage sync" >&2
+    exit 1
+  fi
+  [[ $(cat "$sandbox/service-actions") == "$actions" ]]
+  printf "FINANCE_STORAGE_SYNC=0\n" > "$sandbox/api.env"
+  release validate-dart-cache-v1
+  release deploy-dart-cache-v1
+  [[ $(cat "$sandbox/service-actions") == "$actions" ]]
+  release redeploy-dart-cache-v1
+  [[ $(cat "$sandbox/service-actions") != "$actions" ]]
+  actions=$(cat "$sandbox/service-actions")
+  mkdir "$sandbox/next"
+  tar -xf "$sandbox/incoming.tar" -C "$sandbox/next"
+  printf "manually staged runtime\n" > "$sandbox/next/server.mjs"
+  tar -cf "$sandbox/incoming.tar" -C "$sandbox/next" .
+  cp -- "$sandbox/next/server.mjs" "$sandbox/live/server.mjs"
+  release deploy-dart-cache-v1
+  [[ $(cat "$sandbox/service-actions") != "$actions" ]]
+  printf "replacement runtime\n" > "$sandbox/next/server.mjs"
+  tar -cf "$sandbox/incoming.tar" -C "$sandbox/next" .
+  if FAIL_DART_CONFIGURATION=1 release deploy-dart-cache-v1; then
+    echo "Expected release to roll back after its configuration check failed" >&2
+    exit 1
+  fi
+  cmp -s "$sandbox/live/server.mjs" <(printf "manually staged runtime\\n")
+  [[ $(stat -c "%i:%a:%u:%g" "$cache/005930-0.json") == "$snapshot" ]]
+  [[ $(cat "$cache/005930-0.json") == legacy && -f $dropin ]]
+  tail -n 1 "$sandbox/service-actions" | grep -Fxq restart
+'
+echo 'Oracle persistent DART cache validation, redeploy and rollback passed'
+
+# The real entry point probes in the API process before starting other providers.
+touch "$sandbox/not-a-directory"
+if env -i DART_FINANCIAL_CACHE_VERIFY=1 DART_FINANCIAL_CACHE_DIR="$sandbox/not-a-directory/cache" FINANCE_LOCAL_INDEX_RESEARCH=1 \
+  "$(command -v node)" "$repo/vps-api/server.mjs" 2> "$sandbox/startup.log"; then
+  echo 'API started with an unusable DART cache' >&2
+  exit 1
+fi
+grep -Fqx '{"event":"dart-financial-cache-error","stage":"directory-prepare","osCode":"ENOTDIR"}' "$sandbox/startup.log"
+if grep -Fq "$sandbox" "$sandbox/startup.log"; then
+  echo 'API startup logged the private DART cache path' >&2
+  exit 1
+fi
+
+if env -i DART_FINANCIAL_CACHE_VERIFY=1 FINANCE_STORAGE_SYNC=1 DART_FINANCIAL_CACHE_DIR="$sandbox/not-a-directory/cache" \
+  "$(command -v node)" "$repo/vps-api/server.mjs" 2> "$sandbox/storage-startup.log"; then
+  echo 'API started with storage sync enabled in verified DART cache mode' >&2
+  exit 1
+fi
+grep -Fq 'Verified DART cache mode requires financial storage sync to be disabled' "$sandbox/storage-startup.log"
+if grep -Fq 'dart-financial-cache-error' "$sandbox/storage-startup.log"; then
+  echo 'API touched the DART cache before rejecting storage sync' >&2
+  exit 1
+fi

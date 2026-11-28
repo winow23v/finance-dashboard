@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, open, readdir, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Writable } from 'node:stream'
@@ -149,6 +149,90 @@ test('collects three annual slots sequentially, resumes after failure, and reuse
   await createDartFinancialCollector(options)('005930')
   assert.equal(calls.length, 0)
   await assert.rejects(collect('000660'), { code: 'DART_FINANCIAL_SAMPLE_NOT_FOUND' })
+})
+
+test('creates a private cache and saves private snapshots with no temporary files left', async t => {
+  const parent = await mkdtemp(join(tmpdir(), 'dart-financials-private-'))
+  t.after(() => rm(parent, { recursive: true, force: true }))
+  const root = join(parent, 'financials')
+  const collect = createDartFinancialCollector({ root, issueFor, catalog: async () => catalog,
+    requestRows: async () => [], clock: () => now })
+  assert.equal((await collect('005930')).progress.status, 'complete')
+  assert.equal((await stat(root)).mode & 0o777, 0o700)
+  const files = await readdir(root)
+  assert.equal(files.length, 3)
+  for (const name of files) {
+    assert.match(name, /^005930-[012]\.json$/)
+    assert.equal((await stat(join(root, name))).mode & 0o777, 0o600)
+  }
+})
+
+test('diagnoses cache failures without exposing paths or dispatching providers after a failed preflight', async t => {
+  const faults = [
+    ['directory-prepare', 'EROFS', 'mkdir', false],
+    ['directory-prepare', 'EACCES', 'mkdir', false],
+    ['temporary-write', 'EPERM', 'probe-open', false],
+    ['temporary-write', 'ENOSPC', 'probe-write', false],
+    ['read', 'EACCES', 'read', false],
+    ['temporary-write', 'ENOSPC', 'snapshot-write', true],
+    ['rename', 'EPERM', 'rename', true],
+  ]
+  for (const [stage, code, fault, expectProviders] of faults) {
+    await t.test(fault + ' ' + code, async t => {
+      const root = await mkdtemp(join(tmpdir(), 'dart-financials-fault-'))
+      t.after(() => rm(root, { recursive: true, force: true }))
+      const failure = Object.assign(new Error('private path ' + root), { code, path: root })
+      const events = []
+      const calls = []
+      const cacheFs = {
+        mkdir: fault === 'mkdir' ? async () => { throw failure } : mkdir,
+        unlink,
+        rename: fault === 'rename' ? async () => { throw failure } : rename,
+        async open(path, flags, mode) {
+          const probe = path.includes('.probe-')
+          if ((probe && fault === 'probe-open') || (flags === 'r' && fault === 'read')) throw failure
+          const file = await open(path, flags, mode)
+          if ((probe && fault === 'probe-write') || (flags === 'wx' && !probe && fault === 'snapshot-write')) {
+            file.writeFile = async () => { throw failure }
+          }
+          return file
+        },
+      }
+      const collect = createDartFinancialCollector({ root, cacheFs, logCacheError: entry => events.push(entry),
+        issueFor: symbol => { calls.push('krx'); return issueFor(symbol) },
+        catalog: async () => { calls.push('catalog'); return catalog },
+        requestRows: async () => { calls.push('rows'); return [] }, clock: () => now })
+      await assert.rejects(collect('005930'), error => {
+        assert.equal(error.code, 'DART_FINANCIAL_CACHE_UNAVAILABLE')
+        assert.equal(error.statusCode, 503)
+        assert.ok(!JSON.stringify(error).includes(root))
+        assert.ok(!error.message.includes(root))
+        return true
+      })
+      assert.deepEqual(events, [{ event: 'dart-financial-cache-error', stage, osCode: code }])
+      assert.deepEqual(calls, expectProviders ? ['krx', 'catalog', 'rows', 'rows'] : [])
+      assert.deepEqual(await readdir(root), [])
+    })
+  }
+})
+
+test('returns the compatible admin HTTP cache error before any upstream request', async t => {
+  const parent = await mkdtemp(join(tmpdir(), 'dart-financials-http-'))
+  t.after(() => rm(parent, { recursive: true, force: true }))
+  const file = join(parent, 'file')
+  await writeFile(file, '')
+  const key = 'private-fixture-key'
+  const dart = createDartProvider({ key, financialRoot: join(file, 'cache'),
+    issueFor: () => assert.fail('unexpected KRX call'), fetchImpl: () => assert.fail('unexpected DART call') })
+  const app = await buildApp({ dart, logger: false, membership: {
+    verify: () => ({ id: 'fixture' }), read: () => ({ status: 'approved' }), isAdmin: () => true,
+  } })
+  t.after(() => app.close())
+  const response = await app.inject({ method: 'POST', url: '/api/v1/financials/kr/005930/collect',
+    headers: { authorization: 'Bearer x.y.z' } })
+  assert.equal(response.statusCode, 503)
+  assert.equal(response.json().code, 'DART_FINANCIAL_CACHE_UNAVAILABLE')
+  assert.ok(!response.body.includes(parent) && !response.body.includes(key))
 })
 
 test('only retries transient upstream failures once and reserves the remaining shared capacity', async t => {
