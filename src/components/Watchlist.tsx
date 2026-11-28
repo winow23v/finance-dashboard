@@ -191,20 +191,17 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
       const message = failures.length === results.length
         ? timedOut ? '응답 시간 초과' : 'KRX 종목을 조회할 수 없습니다.'
         : failures.length ? timedOut ? '일부 KRX 시장의 응답 시간 초과' : '일부 KRX 종목 정보를 확인할 수 없습니다.' : undefined
+      const freshSymbols = new Set(results.flatMap(result => result.status === 'fulfilled'
+        ? result.value.items.map(item => item.symbol) : []))
       setSearch(previous => {
         const retained = previous?.query === term ? previous.markets : {}
-        const marketItems: Partial<Record<KrxMarket, KrxStock[]>> = { ...retained }
+        const marketItems: Partial<Record<KrxMarket, KrxStock[]>> = {}
         results.forEach((result, index) => {
-          if (result.status !== 'fulfilled') return
-          const { items, listings } = result.value
           const market = markets[index]
-          if (listings.status !== 'unavailable') {
-            marketItems[market] = items
-          } else if (items.length) {
-            const usable = new Map((marketItems[market] ?? []).map(item => [item.symbol, item]))
-            for (const item of items) usable.set(item.symbol, item)
-            marketItems[market] = [...usable.values()]
-          }
+          const items = result.status === 'fulfilled' ? result.value.items : []
+          const incomplete = result.status === 'rejected' || result.value.listings.status === 'unavailable'
+          const fallback = incomplete ? (retained[market] ?? []).filter(item => !freshSymbols.has(item.symbol)) : []
+          marketItems[market] = [...items, ...fallback]
         })
         const items = Object.values(marketItems).flat().filter(item => !filters.symbol || item.symbol === filters.symbol)
         const counts = new Map<string, number>()
