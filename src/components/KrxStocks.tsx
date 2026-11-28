@@ -51,13 +51,13 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
         const previousData = sameLookup ? previous.data ?? [] : []
         const visible = outcomes.flatMap((outcome, index) => {
           const prior = previousData.find(dataset => dataset.market === markets[index])
-          if (outcome.status === 'rejected') return prior ? [prior] : []
-          if (outcome.value.listings.status !== 'unavailable' || !prior || !prior.items.length) return [outcome.value]
-          const items = new Map(prior.items.map(item => [item.symbol, item]))
-          for (const item of outcome.value.items) items.set(item.symbol, item)
-          return [{ ...outcome.value, items: [...items.values()] }]
+          if (outcome.status === 'rejected') return prior?.items.length ? [prior] : []
+          const { items, listings } = outcome.value
+          return [listings.status === 'unavailable' && !items.length && prior?.items.length ? prior : outcome.value]
         })
-        return { market, symbol, query, revision, data: visible.length ? visible : null, message }
+        const showsPriorRows = visible.some(dataset => !data.includes(dataset))
+        const notice = showsPriorRows ? (message ?? '종목 조회 실패') + ' 이전 조회 결과를 표시합니다.' : message
+        return { market, symbol, query, revision, data: visible.length ? visible : null, message: notice }
       })
     })
     return () => controller.abort()
