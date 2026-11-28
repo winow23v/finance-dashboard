@@ -56,6 +56,7 @@ create table public.finance_fundamental_snapshots (
   issue_as_of date not null,
   evaluation_date date not null check (evaluation_date >= issue_as_of),
   source_observed_at timestamptz not null,
+  calculated_at timestamptz not null,
   formula_version text not null check (length(formula_version) > 0),
   coverage text not null check (coverage in ('partial-coverage', 'complete')),
   sector text,
@@ -68,12 +69,18 @@ create table public.finance_fundamental_snapshots (
   fcf numeric generated always as ((metrics #>> '{fcf,searchValue}')::numeric) stored,
   revenue_growth numeric generated always as ((metrics #>> '{revenueGrowth,searchValue}')::numeric) stored,
   stored_at timestamptz not null default clock_timestamp(),
+  publication_state text not null default 'staged'
+    check (publication_state in ('staged', 'published', 'superseded', 'invalidated')),
   published_at timestamptz,
+  invalidated_at timestamptz,
+  invalidation_reason text,
+  check (publication_state not in ('published', 'superseded') or published_at is not null),
+  check ((publication_state = 'invalidated') = (invalidated_at is not null and invalidation_reason is not null)),
   foreign key (market, symbol, issue_as_of) references public.finance_instruments
 );
 
--- Resolve one eligible version per issuer. Trend and filter indexes can be evaluated
--- against the final E-3 query shapes before adding write amplification.
+create unique index finance_fundamental_published_idx
+  on public.finance_fundamental_snapshots (corp_code) where publication_state = 'published';
 create index finance_fundamental_latest_idx on public.finance_fundamental_snapshots
   (corp_code, evaluation_date desc, source_observed_at desc, stored_at desc, snapshot_id desc);
 
@@ -85,14 +92,26 @@ alter table public.finance_fundamental_snapshots enable row level security;
 
 revoke all on public.finance_issuers, public.finance_instruments, public.finance_annual_filings,
   public.finance_annual_accounts, public.finance_fundamental_snapshots from public, anon, authenticated, service_role;
-grant select, insert on public.finance_issuers, public.finance_instruments, public.finance_annual_filings,
+grant select on public.finance_issuers, public.finance_instruments, public.finance_annual_filings,
   public.finance_annual_accounts, public.finance_fundamental_snapshots to service_role;
-grant update (published_at) on public.finance_fundamental_snapshots to service_role;
+
+-- The source table retains all receipts. Check the latest receipt for each
+-- fiscal year referenced by an evaluation, including a scope change.
+create function public.finance_has_newer_filing(issuer text, refs jsonb)
+returns boolean language sql stable security invoker set search_path = ''
+as $$
+  select exists (
+    select 1 from jsonb_to_recordset(refs) as r(year integer, "filedAt" date, "receiptId" text)
+    join public.finance_annual_filings f on f.corp_code = issuer and f.business_year = r.year
+      and (f.filed_at, f.receipt_id) > (r."filedAt", r."receiptId")
+  );
+$$;
+revoke all on function public.finance_has_newer_filing(text, jsonb) from public, anon, authenticated, service_role;
 
 -- The service stages one issuer in a single transaction. A repeat digest performs no
 -- writes. A conflicting historical instrument identity aborts the entire transaction.
 create function public.finance_stage_fundamentals(payload jsonb)
-returns jsonb language plpgsql security invoker set search_path = ''
+returns jsonb language plpgsql security definer set search_path = ''
 as $$
 declare
   header public.finance_fundamental_snapshots;
@@ -106,6 +125,9 @@ begin
   if payload->>'mode' is distinct from 'observed' or header.corp_code is null
     or header.corp_code is distinct from instrument.corp_code or header.market is distinct from instrument.market
     or header.symbol is distinct from instrument.symbol or header.issue_as_of is distinct from instrument.as_of
+    or header.evaluation_date > (statement_timestamp() at time zone 'Asia/Seoul')::date
+    or (header.calculated_at at time zone 'Asia/Seoul')::date is distinct from header.evaluation_date
+    or header.source_observed_at > header.calculated_at
     or jsonb_typeof(payload->'reports') is distinct from 'array'
     or jsonb_array_length(payload->'reports') not between 1 and 3 then
     raise exception 'invalid financial storage envelope' using errcode = '22023';
@@ -124,12 +146,17 @@ begin
   for report in select value from jsonb_array_elements(payload->'reports') loop
     filing := jsonb_populate_record(null::public.finance_annual_filings, report);
     if filing.corp_code is distinct from header.corp_code
+      or filing.filed_at is null or filing.filed_at > header.evaluation_date
+      or filing.collected_at > header.calculated_at
+      or to_char(filing.filed_at, 'YYYYMMDD') is distinct from left(filing.receipt_id, 8)
+      or exists (select 1 from jsonb_array_elements(refs) as ref
+        where (ref->>'year')::integer = filing.business_year)
       or jsonb_typeof(report->'accounts') is distinct from 'array'
       or jsonb_array_length(report->'accounts') not between 1 and 100 then
       raise exception 'invalid financial report envelope' using errcode = '22023';
     end if;
     refs := refs || jsonb_build_object('year', filing.business_year, 'scope', filing.scope,
-      'receiptId', filing.receipt_id, 'sourceHash', filing.source_hash);
+      'receiptId', filing.receipt_id, 'filedAt', filing.filed_at, 'sourceHash', filing.source_hash);
     insert into public.finance_annual_filings select filing.* on conflict do nothing;
     if found then
       insert into public.finance_annual_accounts
@@ -139,12 +166,29 @@ begin
         previous_amount numeric, currency text, unit text, evidence jsonb);
     end if;
   end loop;
+  if exists (
+    select 1 from jsonb_each(header.metrics) as m(id, metric)
+    where m.metric->>'formulaVersion' is distinct from header.formula_version
+      or (m.metric->'reportRef' <> 'null'::jsonb and not exists (
+        select 1 from jsonb_array_elements(refs) as ref
+        where ref - 'filedAt' = m.metric->'reportRef'
+      ))
+      or (m.metric #>> '{receipt,id}' is distinct from m.metric #>> '{reportRef,receiptId}')
+  ) then
+    raise exception 'financial metric has inconsistent provenance' using errcode = '22023';
+  end if;
   insert into public.finance_fundamental_snapshots
-    (snapshot_id, corp_code, issuer_name, market, symbol, issue_as_of, evaluation_date, source_observed_at,
+    (snapshot_id, corp_code, issuer_name, market, symbol, issue_as_of, evaluation_date, source_observed_at, calculated_at,
      formula_version, coverage, sector, report_versions, metrics, issuer_market_cap)
   values (header.snapshot_id, header.corp_code, header.issuer_name, header.market, header.symbol, header.issue_as_of,
-    header.evaluation_date, header.source_observed_at, header.formula_version, header.coverage,
+    header.evaluation_date, header.source_observed_at, header.calculated_at, header.formula_version, header.coverage,
     header.sector, refs, header.metrics, header.issuer_market_cap);
+  -- A newer receipt for a referenced fiscal year invalidates dependent versions,
+  -- even if the amendment lacks inputs required by the calculation.
+  update public.finance_fundamental_snapshots s
+    set publication_state = 'invalidated', invalidated_at = clock_timestamp(), invalidation_reason = 'superseding-filing'
+    where s.corp_code = header.corp_code and s.publication_state in ('staged', 'published')
+      and public.finance_has_newer_filing(s.corp_code, s.report_versions);
   return jsonb_build_object('snapshotId', header.snapshot_id, 'status', 'staged');
 end;
 $$;
@@ -152,21 +196,66 @@ $$;
 revoke all on function public.finance_stage_fundamentals(jsonb) from public, anon, authenticated, service_role;
 grant execute on function public.finance_stage_fundamentals(jsonb) to service_role;
 
+create function public.finance_review_fundamentals(target_id text, decision text, reason text default null)
+returns text language plpgsql security definer set search_path = ''
+as $$
+declare
+  target public.finance_fundamental_snapshots;
+begin
+  select * into strict target from public.finance_fundamental_snapshots where snapshot_id = target_id;
+  perform pg_advisory_xact_lock(hashtextextended(target.corp_code, 0));
+  select * into strict target from public.finance_fundamental_snapshots where snapshot_id = target_id;
+
+  if decision = 'invalidate' and length(btrim(reason)) between 1 and 200 then
+    if target.publication_state <> 'invalidated' then
+      update public.finance_fundamental_snapshots
+        set publication_state = 'invalidated', invalidated_at = clock_timestamp(), invalidation_reason = reason
+        where snapshot_id = target_id;
+    end if;
+    return 'invalidated';
+  end if;
+
+  if decision is distinct from 'publish' or reason is not null then
+    raise exception 'invalid financial publication decision' using errcode = '22023';
+  end if;
+  if target.publication_state = 'published' then return 'published'; end if;
+  if target.publication_state <> 'staged'
+    or public.finance_has_newer_filing(target.corp_code, target.report_versions)
+    or exists (select 1 from public.finance_fundamental_snapshots s where s.corp_code = target.corp_code
+      and s.published_at is not null
+      and (s.evaluation_date, s.source_observed_at, s.stored_at, s.snapshot_id)
+        > (target.evaluation_date, target.source_observed_at, target.stored_at, target.snapshot_id)) then
+    raise exception 'financial snapshot is not eligible for publication' using errcode = '22023';
+  end if;
+
+  update public.finance_fundamental_snapshots set publication_state = 'superseded'
+    where corp_code = target.corp_code and publication_state = 'published';
+  update public.finance_fundamental_snapshots set publication_state = 'published', published_at = clock_timestamp()
+    where snapshot_id = target_id;
+  return 'published';
+end;
+$$;
+revoke all on function public.finance_review_fundamentals(text, text, text) from public, anon, authenticated, service_role;
+grant execute on function public.finance_review_fundamentals(text, text, text) to service_role;
+
 -- The view owner can inspect membership and staging tables. Neither base table
 -- is readable by authenticated clients. Eligibility is evaluated for every read.
 create view public.finance_published_fundamentals with (security_barrier = true) as
 select s.snapshot_id, s.corp_code, s.issuer_name, s.market, s.symbol, s.issue_as_of,
   s.evaluation_date, s.formula_version, s.coverage, s.sector, s.issuer_market_cap::text as issuer_market_cap,
-  s.metrics, s.published_at
+  s.metrics, s.calculated_at, s.published_at
 from public.finance_fundamental_snapshots s
-where s.published_at is not null
-  and s.published_at <= now()
+where s.publication_state = 'published'
+  and s.published_at <= statement_timestamp()
+  and auth.jwt()->>'role' = 'authenticated'
   and auth.jwt()->>'is_anonymous' is distinct from 'true'
   and auth.jwt() #>> '{app_metadata,provider}' = 'google'
-  and exists (select 1 from public.finance_members m where m.user_id = auth.uid() and m.status = 'approved')
-  and not exists (select 1 from public.finance_fundamental_snapshots newer where newer.corp_code = s.corp_code
-    and (newer.evaluation_date, newer.source_observed_at, newer.stored_at, newer.snapshot_id)
-      > (s.evaluation_date, s.source_observed_at, s.stored_at, s.snapshot_id));
+  and exists (
+    select 1 from public.finance_members m join auth.users u on u.id = m.user_id
+    where m.user_id = auth.uid() and m.status = 'approved'
+      and u.is_anonymous = false and u.email_confirmed_at is not null
+      and coalesce(u.email, '') <> '' and u.raw_app_meta_data->>'provider' = 'google'
+  );
 
 revoke all on public.finance_published_fundamentals from public, anon, authenticated, service_role;
 grant select on public.finance_published_fundamentals to authenticated;

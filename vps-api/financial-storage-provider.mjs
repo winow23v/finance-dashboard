@@ -23,16 +23,36 @@ function storedReport(report, corpCode) {
   return { ...content, collected_at: collectedAt, source_hash: sha256(content) }
 }
 
-function storedMetrics(metrics) {
-  return Object.fromEntries(metrics.map(({ id, calculatedAt, sources, value, ...metric }) => [id, {
-    ...metric, value, searchValue: metric.status === 'success' ? value : null,
-  }]))
+function storedMetrics(metrics, reports) {
+  return Object.fromEntries(metrics.map(({ id, calculatedAt, sources, ...metric }) => {
+    const report = metric.receipt && reports.find(row =>
+      row.receipt_id === metric.receipt.id && row.scope === metric.scope && row.fiscal_end === metric.fiscalEnd)
+    if (metric.receipt && !report) throw new ProviderError(409, 'FINANCIAL_STORAGE_METRIC_SOURCE_UNVERIFIED')
+    return [id, {
+      ...metric, sources,
+      reportRef: report ? { year: report.business_year, scope: report.scope, receiptId: report.receipt_id,
+        sourceHash: report.source_hash } : null,
+      searchValue: metric.status === 'success' ? metric.value : null,
+    }]
+  }))
+}
+
+export function storageSnapshotId({ instrument, snapshot, versions, market }) {
+  // Preserve the valuation date and market basis. Collection and calculation
+  // timestamps describe the first stored copy but cannot produce a new identity.
+  const { snapshot_id, source_observed_at, calculated_at, metrics, ...evaluation } = snapshot
+  const identityMetrics = Object.fromEntries(Object.entries(metrics).map(([id, { sources, ...metric }]) => {
+    const { financialCollectedAt, ...sourceNames } = sources
+    return [id, { ...metric, sources: sourceNames }]
+  }))
+  return sha256({ instrument, evaluation, metrics: identityMetrics, versions, market })
 }
 
 export function createFinancialStorage({ readFinancials, readMarket, stage, clock = Date.now }) {
   let running
   async function sync(symbol) {
-    const evaluationDate = new Date(clock() + 9 * 3_600_000).toISOString().slice(0, 10)
+    const calculatedAt = clock()
+    const evaluationDate = new Date(calculatedAt + 9 * 3_600_000).toISOString().slice(0, 10)
     const financials = await readFinancials(symbol, evaluationDate)
     if (financials.mode != null && financials.mode !== 'observed') {
       throw new ProviderError(409, 'FINANCIAL_STORAGE_SOURCE_UNVERIFIED')
@@ -44,26 +64,27 @@ export function createFinancialStorage({ readFinancials, readMarket, stage, cloc
       throw new ProviderError(409, 'FINANCIAL_STORAGE_IDENTITY_UNVERIFIED')
     }
     const reports = years.filter(report => report.status === 'available' && report.period === 'annual' &&
+      report.reportCode === '11011' && ['CFS', 'OFS'].includes(report.scope) &&
       report.issuerCorpCode === issuer.corpCode && /^\d{14}$/.test(report.receipt?.id ?? '')
       && isDay(report.receipt.filedAt) && report.receipt.filedAt <= evaluationDate
-      && Number.isSafeInteger(report.sourceVersion) && Number.isFinite(Date.parse(report.collectedAt)))
+      && Number.isSafeInteger(report.sourceVersion) && Date.parse(report.collectedAt) <= calculatedAt)
       .map(report => storedReport(report, issuer.corpCode))
       .sort((a, b) => a.business_year - b.business_year || a.receipt_id.localeCompare(b.receipt_id))
-    if (!reports.length) throw new ProviderError(409, 'FINANCIAL_STORAGE_NO_VERIFIED_FILINGS')
+    if (!reports.length || new Set(reports.map(report => report.business_year)).size !== reports.length) throw new ProviderError(409, 'FINANCIAL_STORAGE_NO_VERIFIED_FILINGS')
     const market = await readMarket(symbol)
-    const result = calculateFundamentals({ evaluationDate, financials, market }, clock)
+    const result = calculateFundamentals({ evaluationDate, financials, market }, () => calculatedAt)
     const instrument = { market: issue.market, symbol, isin: issue.isin, share_class: issue.shareClass,
       as_of: issueAsOf, corp_code: issuer.corpCode }
     const snapshot = {
       corp_code: issuer.corpCode, issuer_name: issuer.name, market: issue.market, symbol, issue_as_of: issueAsOf,
-      evaluation_date: evaluationDate, formula_version: result.version,
+      evaluation_date: evaluationDate, formula_version: result.version, calculated_at: result.calculatedAt,
       coverage: 'partial-coverage', sector: mapping.sector,
       issuer_market_cap: result.market.issuer.status === 'success' ? result.market.issuer.value : null,
-      metrics: storedMetrics(result.metrics),
+      metrics: storedMetrics(result.metrics, reports),
     }
     const versions = reports.map(report => report.source_hash)
     const newestReport = reports.map(report => new Date(report.collected_at).toISOString()).sort().at(-1)
-    const snapshotId = sha256({ instrument, snapshot, versions, market })
+    const snapshotId = storageSnapshotId({ instrument, snapshot, versions, market })
     const payload = { mode: result.mode, instrument, reports,
       snapshot: { ...snapshot, snapshot_id: snapshotId, source_observed_at: newestReport } }
     const saved = await stage(payload)
