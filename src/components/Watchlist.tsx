@@ -206,8 +206,11 @@ export function Watchlist({ selected, onToggle, market, blocked, loading, live, 
         const rows = items.filter(item => counts.get(item.symbol) === 1).map(item => ({
           listing: { market: 'KR', exchange: 'XKRX', symbol: item.symbol } as const, observation: krxObservation(item),
         }))
-        const message = failures.length === results.length && (timedOut || !rows.length)
-          ? timedOut ? '응답 시간 초과' : 'KRX 종목을 조회할 수 없습니다.'
+        const hasFreshRows = rows.some(row => freshSymbols.has(row.listing.symbol))
+        const failed = failures.length === results.length && !hasFreshRows
+        const message = failed
+          ? (timedOut ? '응답 시간 초과' : 'KRX 종목을 조회할 수 없습니다.')
+            + (rows.length ? ' 이전 조회 결과를 표시합니다.' : '')
           : failures.length ? timedOut ? '일부 KRX 시장의 응답 시간 초과' : '일부 KRX 종목 정보를 확인할 수 없습니다.' : undefined
         return { query: term, attempt: searchAttempt, markets: marketItems, rows, message }
       })

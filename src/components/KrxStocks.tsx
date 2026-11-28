@@ -43,8 +43,22 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
       if (controller.signal.aborted) return
       const data = outcomes.flatMap(outcome => outcome.status === 'fulfilled' ? [outcome.value] : [])
       const failure = outcomes.find(outcome => outcome.status === 'rejected')
-      setResult({ market, symbol, query, revision, data: data.length ? data : null,
-        message: failure ? marketRequestMessage(failure.reason, data.length ? '일부 시장의 종목 조회 실패' : '국내 종목 조회 실패') : undefined })
+      const listingUnavailable = data.some(dataset => dataset.listings.status === 'unavailable')
+      const message = failure ? marketRequestMessage(failure.reason, data.length ? '일부 시장의 종목 조회 실패' : '국내 종목 조회 실패')
+        : listingUnavailable ? 'KRX 종목 목록 조회 불가' : undefined
+      setResult(previous => {
+        const sameLookup = previous?.market === market && previous.symbol === symbol && previous.query === query
+        const previousData = sameLookup ? previous.data ?? [] : []
+        const visible = outcomes.flatMap((outcome, index) => {
+          const prior = previousData.find(dataset => dataset.market === markets[index])
+          if (outcome.status === 'rejected') return prior ? [prior] : []
+          if (outcome.value.listings.status !== 'unavailable' || !prior || !prior.items.length) return [outcome.value]
+          const items = new Map(prior.items.map(item => [item.symbol, item]))
+          for (const item of outcome.value.items) items.set(item.symbol, item)
+          return [{ ...outcome.value, items: [...items.values()] }]
+        })
+        return { market, symbol, query, revision, data: visible.length ? visible : null, message }
+      })
     })
     return () => controller.abort()
   }, [market, query, revision, symbol])
