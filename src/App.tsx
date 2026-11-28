@@ -1,3 +1,4 @@
+import { CompactMarketQuote } from './components/CompactMarketQuote'
 import { LoadingSkeleton } from "./components/LoadingSkeleton"
 import { CommandSearch } from "./components/CommandSearch"
 import { IndexCarousel } from "./components/IndexCarousel"
@@ -78,21 +79,23 @@ function MarketIndexValue({ quote, message, market }: { quote?: MarketIndex; mes
   if (quote.status === 'unavailable') return <small>{indexUnavailable[quote.reason]}</small>
   return <>
     <strong>{indexPrice.format(quote.price)}</strong>
-    {quote.change !== null && quote.changePercent !== null && <Change market={market} quote={{ change: quote.change, percent: quote.changePercent }} detailed />}
+    {quote.change !== null && quote.changePercent !== null
+      ? <Change market={market} quote={{ change: quote.change, percent: quote.changePercent }} detailed />
+      : <small>{quote.change !== null ? '등락폭 ' + indexPrice.format(quote.change)
+        : quote.changePercent !== null ? '등락률 ' + indexPrice.format(quote.changePercent) + '%' : '등락 비교 불가'}</small>}
     <small className="index-source"><time dateTime={quote.tradingDate}>{quote.tradingDate}</time> 종가</small>
-    {(quote.reason !== 'before-collection' && quote.reason !== 'weekend' && (quote.reason || quote.status === 'stale')) && <small className="muted-badge" data-stale={quote.status === 'stale'}>
-      {quote.reason === 'provider-error' ? '마지막 유효값' : quote.reason ? indexUnavailable[quote.reason] : '갱신 지연'}
+    {(quote.status === 'stale' || (quote.reason && quote.reason !== 'before-collection' && quote.reason !== 'weekend')) && <small className="muted-badge" data-stale={quote.status === 'stale'}>
+      {quote.reason === 'provider-error' ? '마지막 유효값' : quote.reason && quote.reason !== 'weekend' && quote.reason !== 'before-collection' ? indexUnavailable[quote.reason] : '갱신 지연'}
     </small>}
   </>
 }
 function MarketQuote({ index, quote, message, missing }: {
   index: typeof marketIndices[number]; quote?: MarketIndex; message?: string; missing: boolean
 }) {
-  return <article className="panel quote-card">
-    <div className="quote-label"><h3><a className="stock-detail-link" href={'#index/' + index.id}>{index.name}</a></h3><span>{marketNames[index.market]}</span></div>
+  return <CompactMarketQuote market={index.market} title={<a className="stock-detail-link" href={'#index/' + index.id}>{index.name}</a>}>
     {missing ? <small>지수 응답 없음</small> : isApi ? <MarketIndexValue quote={quote} message={message} market={index.market} />
       : <small>지수 시세 공급자 미연결</small>}
-  </article>
+  </CompactMarketQuote>
 }
 
 function hashPage(defaultMarket: SettingsState['market']): Page | undefined {
@@ -419,11 +422,9 @@ export function App({ member, signOut, accountBusy, accountError }: {
         {isMarket && <>
           <section className="market-index-section" aria-label="핵심 시장지수">
             <div className="section-heading"><h2>핵심 시장지수</h2></div>
-            {overview ? <IndexCarousel slides={marketIndices.map(index => ({
+            <IndexCarousel slides={marketIndices.filter(index => overview || index.market === market).map(index => ({
               label: index.name, content: <MarketQuote {...quoteProps(index)} />,
-            }))} /> : <div className={'quote-grid market-index-quotes terminal-quotes ' + (market === 'US' ? 'overseas-quotes' : 'domestic-quotes')}>
-              {marketIndices.filter(index => index.market === market).map(index => <MarketQuote key={index.id} {...quoteProps(index)} />)}
-            </div>}
+            }))} />
           </section>
           {overview ? <>
             {!isApi && error && <p role="alert">데이터 갱신에 실패했습니다.</p>}

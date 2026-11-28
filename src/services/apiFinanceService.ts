@@ -181,7 +181,9 @@ export class FinanceApiError extends Error {
 }
 
 export function marketRequestMessage(error: unknown, fallback: string): string {
+  if (error instanceof DOMException && error.name === 'TimeoutError') return '응답 시간 초과'
   if (!(error instanceof FinanceApiError)) return fallback
+  if (error.code === 'PROVIDER_TIMEOUT') return '응답 시간 초과'
   if (error.status === 401) return '로그인이 필요합니다. 세션이 만료됐다면 다시 로그인해 주세요.'
   if (error.status === 403) return '시장 데이터 조회에는 승인된 회원 권한이 필요합니다.'
   if (error.code === 'KRX_LOCAL_PROVIDER_DISABLED' || error.code === 'KRX_NOT_CONFIGURED') return 'KRX 공급자 미연결'

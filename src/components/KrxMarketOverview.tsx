@@ -1,3 +1,5 @@
+import { ClientPages } from './ClientPages'
+import { formatWon } from '../services/formatWon'
 import { SegmentTabs } from "./SegmentTabs"
 import { useId, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { heatmapColor, heatmapTextColor, layoutHeatmap } from '../services/marketHeatmap'
@@ -36,7 +38,7 @@ const rankings = [
   { key: 'declines', label: '하락률 상위', format: rate },
   { key: 'volume', label: '거래량 상위', format: (row: KrxMarketRow) => number.format(row.volume) + '주' },
   { key: 'turnover', label: '거래대금 상위', format: (row: KrxMarketRow) =>
-    row.turnover == null ? '거래대금 미확인' : number.format(row.turnover) + '원' },
+    formatWon(row.turnover) },
 ] as const
 
 export function KrxMovers({ data, message, summary }: { data?: KrxOverview | null; message?: string; summary?: boolean }) {
@@ -66,10 +68,17 @@ export function KrxMovers({ data, message, summary }: { data?: KrxOverview | nul
 
 export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | null; message?: string; summary?: boolean }) {
   const [filter, setFilter] = useState<KrxMarket | ''>('')
+  const [order, setOrder] = useState<'cap' | 'price' | 'change'>('cap')
   const [active, setActive] = useState<{ key: string; pinned: boolean }>()
   const touch = useRef(false)
   const tooltip = useId()
   const mobile = useSyncExternalStore(subscribeMobileHeatmap, isMobileHeatmap, desktopHeatmap)
+  const listRows = useMemo(() => {
+    const rows = (filter ? data?.marketTiles[filter] : data?.tiles) ?? []
+    if (order === 'cap') return rows
+    const value = (row: KrxMarketRow) => (order === 'price' ? row.price : row.changePercent) ?? -Infinity
+    return [...rows].sort((a, b) => value(b) - value(a) || a.symbol.localeCompare(b.symbol))
+  }, [data, filter, order])
   const selected = useMemo(() => {
     const rows = filter ? data?.marketTiles[filter] : data?.tiles
     return rows?.slice(0, summary ? 12 : mobile ? 20 : 60)
@@ -132,12 +141,18 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
         </div>
         <details className="krx-heatmap-list">
           <summary>{summary ? '시가총액 상위 5종목' : '종가·등락률을 종목 목록으로 보기'}</summary>
-          <ul className="stock-list">
-            {(summary ? selected?.slice(0, 5) ?? [] : groups.flatMap(group => group.tiles.map(tile => tile.row))).map(row => <li key={key(row)}>
+          {!summary && <p className="heatmap-meta">{filter || 'KOSPI·KOSDAQ'} 시가총액 상위 {listRows.length}종목을 정렬합니다.</p>}
+          {!summary && <label className="market-list-order">정렬 <select value={order}
+            onChange={event => setOrder(event.target.value as typeof order)}>
+            <option value="cap">시가총액</option><option value="price">종가</option><option value="change">등락률</option>
+          </select></label>}
+          <ClientPages key={filter + ':' + order} items={summary ? selected?.slice(0, 5) ?? [] : listRows}
+            label="종가·등락률 목록 페이지" sizes={summary ? [10] : undefined}>{visible => <ul className="stock-list">
+            {visible.map(row => <li key={key(row)}>
               <a className="stock-detail-link" href={link(row)} title={row.shortName}><span className="krx-stock-name">{row.shortName}</span><small>{row.market} · {row.symbol}</small></a>
               <span>{!summary && <strong className="heatmap-list-price">{number.format(row.price)}원</strong>}<span className={movementClass(row.changePercent)}>{rate(row)}</span></span>
             </li>)}
-          </ul>
+          </ul>}</ClientPages>
         </details>
         {(!summary || focused) && <aside className="panel krx-heatmap-detail" aria-label="히트맵 종목 정보">
           {focused ? <>
@@ -157,6 +172,6 @@ function KrxTileInfo({ row }: { row: KrxMarketRow }) {
   return <>
     <strong>{row.shortName} · {row.symbol}</strong>
     <small>{row.market} · 종가 {number.format(row.price)}원 · {rate(row)}</small>
-    <small>시가총액 {row.marketCap === null ? '미확인' : number.format(row.marketCap) + '원'}</small>
+    <small>시가총액 {formatWon(row.marketCap)}</small>
   </>
 }

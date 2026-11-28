@@ -1,3 +1,5 @@
+import { CompactMarketQuote } from './CompactMarketQuote'
+import { IndexCarousel } from './IndexCarousel'
 import { LoadingSkeleton } from "./LoadingSkeleton"
 import { useEffect, useRef, useId, useState } from 'react'
 import { Info, X } from 'lucide-react'
@@ -28,6 +30,7 @@ function loadPreferences() {
   const defaults: Currency[] = ['USD', 'JPY', 'EUR']
   return { reference, selected: selected.length ? selected : defaults.filter(code => code !== reference), yen100: value.yen100 !== false }
 }
+const fxPercent = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2, signDisplay: 'exceptZero' })
 const periods = { '1W': '7일', '1M': '1개월', '3M': '3개월', '1Y': '1년' }
 const format = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 4 })
 const wonFormat = new Intl.NumberFormat('ko-KR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -188,8 +191,8 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
       <p className="heatmap-meta">설정은 이 브라우저에 자동 저장됩니다. 통화쌍을 바꾸면 해당 이력을 조회하며 별도 갱신은 필요하지 않습니다.</p>
       </div>
     </details>
-    <div className="quote-grid fx-rates">
-      {(detailed ? selected : selected.slice(0, 3)).map(code => {
+    <div className="compact-fx-rates">
+      <IndexCarousel label="환율" slides={(detailed ? selected : selected.slice(0, 3)).map(code => {
         const name = `${code}/${reference}`
         const row = latestRate(latest, code, reference)
         const multiplier = code === 'JPY' && yen100 ? 100 : 1
@@ -199,18 +202,16 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
         const status = latest?.refreshError ? (rate != null ? '갱신 실패 · 이전 공표값' : '갱신 실패 · ' + latest.refreshError)
           : latestResult?.refreshFailed && latestResult.revision === revision ? '갱신 실패 · 이전 값'
           : rate != null && row?.status === 'previous_publication' ? '이전 공표값' : refreshError(latestResult?.errorCode)
-        return <article className="panel quote-card fx-quote" key={name}>
-          <div className="fx-quote-heading">
-            <h3>{name}<small>{basisLabel(code, multiplier)}</small></h3>
-            <button type="button" className="fx-info-button" popoverTarget={details} aria-controls={details}
-              aria-label={name + ' 환율 정보'}><Info size={17} aria-hidden="true" /></button>
-          </div>
-          <strong className="economic-value" data-state={rate != null ? undefined : latest === undefined ? 'loading' : latest === null ? 'error' : 'unpublished'}>
-            {rate != null ? <>{displayRate(rate * multiplier, reference)} <span>{unit}</span></>
-              : latest === undefined ? <LoadingSkeleton message="환율을 불러오는 중입니다." shape="value" /> : latest === null ? '조회 불가' : '공표 관측값 없음'}</strong>
-          {rate != null && row?.observationDate && <small><time dateTime={row.observationDate}>{row.observationDate.replaceAll('-', '.')}</time> 기준</small>}
-          {rate != null && row?.calculated && <small>교차환율</small>}
-          {(status || rate != null) && <small className="fx-quote-state" data-state={latestResult?.errorCode === 'PROVIDER_RATE_LIMITED' ? 'rate-limited' : status && (rate != null ? 'stale' : 'error')}>{status ?? '최근 공표값'}</small>}
+        // Compare only the same pair in the existing chart feed, after matching
+        // its latest observation and unscaled value to the reference card.
+        const observationDate = row?.observationDate
+        const previous = name === pair && rate != null && observationDate && !chartResult?.refreshFailed
+          && !chartResult?.data?.refreshError && chart?.some(point => point.observationDate === observationDate && Math.abs(point.rate / rate - 1) < 1e-8)
+          ? chart.filter(point => point.observationDate < observationDate).sort((a, b) => b.observationDate.localeCompare(a.observationDate))[0] : undefined
+        return { label: name, content: <CompactMarketQuote market="FX" title={<>{name} <small>{basisLabel(code, multiplier)}</small></>}
+          action={<button type="button" className="fx-info-button" popoverTarget={details} aria-controls={details}
+            aria-label={name + ' 환율 정보'}><Info size={17} aria-hidden="true" /></button>}
+          footer={<>
           {detailed && <button className="text-link fx-chart-link" aria-pressed={pair === name} type="button" onClick={() => setPair(name)}>이 통화쌍 추이</button>}
           <div className="panel fx-info-popover" id={details} popover="auto" role="group" aria-labelledby={details + '-title'}>
             <div className="section-heading">
@@ -227,8 +228,21 @@ export default function FxDashboard({ revision, detailed, showSettings, onRefres
                 {multiplier === 100 && <><br />100 {code} = {detailFormat.format(rate * multiplier)} {unit}</>}</dd></div>}
             </dl>
           </div>
-        </article>
-      })}
+          </>}>
+          <strong className="economic-value">
+            {rate != null ? <>{displayRate(rate * multiplier, reference)} <span>{unit}</span></>
+              : latest === undefined ? <LoadingSkeleton message="환율을 불러오는 중입니다." shape="value" /> : latest === null ? '조회 불가' : '공표 관측값 없음'}
+          </strong>
+          {rate != null && (previous ? <small className="change">{rate > previous.rate ? '+' : ''}{displayRate((rate - previous.rate) * multiplier, reference)} {unit}
+              {' ('}{fxPercent.format((rate / previous.rate - 1) * 100)}%)</small>
+            : <small>{!detailed ? '상세 화면에서 등락 확인' : name === pair ? '등락 비교 불가' : '추이 선택 시 등락 확인'}</small>)}
+          {rate != null && row?.observationDate && <small className="index-source"><time dateTime={row.observationDate}>{row.observationDate}</time> 관측</small>}
+          {(status || rate != null) && <small className="fx-quote-state"
+            data-state={latestResult?.errorCode === 'PROVIDER_RATE_LIMITED' ? 'rate-limited' : status?.startsWith('갱신 실패') ? 'error' : undefined}>
+            {status ?? '최근 공표값'}{row?.calculated && rate != null ? ' / 교차환율' : ''}
+          </small>}
+        </CompactMarketQuote> }
+      })} />
     </div>
     {detailed && <div className="panel chart-panel">
       <div className="panel-heading">

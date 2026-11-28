@@ -1,3 +1,6 @@
+import { formatWon } from '../services/formatWon'
+import { SearchButton, useSearchComposition } from './SearchButton'
+import { LoadingSkeleton } from './LoadingSkeleton'
 import { useEffect, useId, useRef, useState } from 'react'
 import { isNumber, isRecord } from '../services/apiFinanceService'
 import { createRequestCache } from '../services/requestCache'
@@ -116,19 +119,6 @@ function Pager({ label, page, totalPages, controls, onChange }: {
   </nav>
 }
 
-function compactWon(value: string | number) {
-  if (typeof value === 'number' && !Number.isInteger(value)) return number.format(value) + '원'
-  const amount = BigInt(value)
-  const magnitude = amount < 0n ? -amount : amount
-  if (magnitude < 100_000_000n) return number.format(amount) + '원'
-  const trillions = magnitude / 1_000_000_000_000n
-  const billions = magnitude / 100_000_000n % 10_000n
-  return (amount < 0n ? '−' : '') + [
-    trillions && number.format(trillions) + '조',
-    billions && number.format(billions) + '억',
-  ].filter(Boolean).join(' ') + ' 원'
-}
-
 export function Disclosures({ revision, visible = true, onRefreshReady, onRefreshResult }: {
   revision: number; visible?: boolean; onRefreshReady?: (ready: boolean) => void; onRefreshResult?: (key: string, failed: boolean) => void
 }) {
@@ -145,7 +135,7 @@ export function Disclosures({ revision, visible = true, onRefreshReady, onRefres
   const [recent, setRecent] = useState<Company[]>(restored?.recent ?? [])
   const [statement, setStatement] = useState('all')
   const input = useRef<HTMLInputElement>(null)
-  const [fullAmounts, setFullAmounts] = useState(false)
+  const { composing, inputEvents } = useSearchComposition()
   const filingsId = useId()
   const companyHeading = useRef<HTMLHeadingElement>(null)
   const resultsId = useId()
@@ -202,10 +192,10 @@ export function Disclosures({ revision, visible = true, onRefreshReady, onRefres
     <section className="panel disclosures-panel company-search">
     <div className="section-heading"><h2>국내 기업 검색</h2>
       </div>
-    <form className="disclosure-controls" onSubmit={event => {
+    <form className="disclosure-controls quote-search-controls" onSubmit={event => {
       event.preventDefault()
       const query = term.trim()
-      if (!query || (searchPath && searchResult === undefined)) return
+      if (composing.current || !query || (query === search && searchPath && searchResult === undefined)) return
       setShowDetail(false)
       setSearchEnabled(true)
       if (query === search) {
@@ -216,9 +206,9 @@ export function Disclosures({ revision, visible = true, onRefreshReady, onRefres
       setSearchPage(1)
       setSearch(query)
     }}>
-      <label>기업명·종목코드 <input ref={input} value={term} onChange={event => setTerm(event.target.value)} maxLength={64} required
+      <label>기업명·종목코드 <input {...inputEvents} ref={input} value={term} onChange={event => setTerm(event.target.value)} maxLength={64} required
         placeholder="기업명 또는 종목코드" /></label>
-      <button className="button" type="submit" disabled={!!searchPath && searchResult === undefined}>검색</button>
+      <SearchButton pending={!!searchPath && searchResult === undefined} disabled={!term.trim() || term.trim() === search && !!searchPath && searchResult === undefined} />
     </form>
     {recent.length > 0 && <div className="recent-companies" aria-label="최근 조회 기업">
       <small>최근 조회</small>
@@ -227,7 +217,9 @@ export function Disclosures({ revision, visible = true, onRefreshReady, onRefres
     {search && <div>
       <div id={resultsId} aria-live="polite" aria-busy={!!searchPath && searchResult === undefined}>
         {!searchEnabled ? <p className="state">검색을 선택해 마지막 검색 결과를 불러올 수 있습니다.</p>
-          : !visibleCompanies?.length ? <p className="state">{searchResult === undefined ? '조회 중' : searchResult.data === null ? '조회 불가' : '검색 결과 없음'}</p>
+          : searchResult === undefined ? <LoadingSkeleton message="기업을 검색하는 중입니다." shape="rows" />
+          : !visibleCompanies?.length ? <p className="state">{searchResult.data === null
+            ? searchResult.errorCode === 'PROVIDER_TIMEOUT' ? '응답 시간 초과' : '조회 불가' : '검색 결과 없음'}</p>
           : <ul className="disclosure-list company-results">
             {visibleCompanies.map(item => <li key={`${item.id}/${item.ticker}`}><button type="button" className="company-result" aria-current={item.id === selected?.id || undefined} onClick={() => openCompany(item)}>
               <span>{item.name}</span><span className="company-code">{item.ticker ?? '종목코드 없음'}</span>
@@ -270,9 +262,6 @@ export function Disclosures({ revision, visible = true, onRefreshReady, onRefres
             {Object.entries(statements).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
           </select>
         </label>}
-        {detail.financials.some(row => row.unit === 'KRW') && <label className="amount-display">
-          <input type="checkbox" checked={fullAmounts} onChange={event => setFullAmounts(event.target.checked)} /> 원 단위 전체 금액
-        </label>}
         {!!financials.length && <div className="disclosure-table" tabIndex={0} role="region" aria-label="재무정보 표"><table>
           <thead><tr><th scope="col">항목</th><th scope="col">구분</th><th scope="col">보고기간</th><th scope="col">금액</th></tr></thead>
           <tbody>{financials.map(row => {
@@ -283,7 +272,7 @@ export function Disclosures({ revision, visible = true, onRefreshReady, onRefres
             return <tr key={`${row.filingId}/${row.statement}/${row.metric}`}>
               <td>{metricNames[row.metric]}</td><td>{statements[row.statement]}</td>
               <td>{reportUrl ? <a href={reportUrl}>{label}</a> : label}{row.end && ` · 기간 종료일 ${row.end}`}{report?.amended && ' · 정정'}</td>
-              <td>{row.unit === 'KRW' ? (fullAmounts ? number.format(typeof row.value === 'string' ? BigInt(row.value) : row.value) + '원' : compactWon(row.value)) : number.format(typeof row.value === 'string' ? BigInt(row.value) : row.value) + ' ' + row.unit}</td>
+              <td className="financial-amount">{row.unit === 'KRW' ? formatWon(row.value) : number.format(typeof row.value === 'string' ? BigInt(row.value) : row.value) + ' ' + row.unit}</td>
             </tr>
           })}</tbody>
         </table></div>}
