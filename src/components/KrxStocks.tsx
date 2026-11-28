@@ -102,6 +102,7 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
         {!pending && retained.message && <p className="state" role="status">{retained.message}</p>}
         {retained.data.map(dataset => {
         const previousSymbols = retained.retainedSymbols[dataset.market] ?? []
+        const mixedResults = previousSymbols.length > 0 && previousSymbols.length < dataset.items.length
         const details = [...new Set([dataset.listings.reason, dataset.trades.reason].filter(reason => reason !== null && reason !== 'before-collection' && reason !== 'weekend'))]
         return <div key={dataset.market}>
           <p className="state">{dataset.market}
@@ -109,6 +110,9 @@ export function KrxStocks({ selected, onToggle, symbol, blocked }: {
             {!previousSymbols.length && dataset.trades.tradingDate && ' · 종가 기준 ' + dataset.trades.tradingDate}
             {!previousSymbols.length && (dataset.trades.usingPreviousClose || details.length > 0) && <> <span className="muted-badge">
               {dataset.trades.usingPreviousClose ? '이전 정상 종가 사용' : krxStateLabels[details[0]]}
+            </span></>}
+            {mixedResults && dataset.trades.usingPreviousClose && <> <span className="muted-badge">
+              이번 조회의 시세는 이전 정상 종가 기준
             </span></>}
           </p>
           {dataset.items.length >= marketResultLimit && <small>시장별 최대 {marketResultLimit}개를 표시합니다. 검색어를 좁혀 보세요.</small>}
