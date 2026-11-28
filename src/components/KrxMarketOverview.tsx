@@ -107,7 +107,7 @@ export function KrxHeatmap({ data, message, summary }: { data?: KrxOverview | nu
               if (item.changePercent === null) return null
               const background = heatmapColor('KR', item.changePercent)
               const itemKey = key(item)
-              const label = item.shortName + ' · ' + item.symbol + ' · ' + rate(item)
+              const label = item.shortName + ' ' + rate(item) + ' (' + item.symbol + ')'
               return <a key={itemKey} href={link(item)} className="heatmap-tile" aria-label={label}
                 aria-describedby={active?.key === itemKey ? tooltip : undefined}
                 onPointerEnter={event => { if (event.pointerType === 'mouse') setActive({ key: itemKey, pinned: false }) }}

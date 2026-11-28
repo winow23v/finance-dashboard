@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { useEffect, useRef, useState } from 'react'
-import { LogOut, X } from 'lucide-react'
+import { BarChart3, Globe2, LockKeyhole, LogOut, X } from 'lucide-react'
 import { App } from '../App'
 import { dataMode } from '../services/financeService'
 import { invalidateMemberData, setMemberSession } from '../services/memberTransport'
@@ -155,17 +155,13 @@ function MemberGate() {
   return <main className="member-gate">
     <div className="member-brand"><img src={import.meta.env.BASE_URL + 'favicon.svg?v=19k'} alt="" width={30} height={30} /> Finance Dashboard</div>
     <div className="member-layout">
-      <section className="member-preview" aria-labelledby="member-preview-title">
+      <section className="member-intro" aria-labelledby="member-preview-title">
         <h1 id="member-preview-title">국내외 시장을 한 화면에서</h1>
         <p>시장지수, 환율, 종목별 일봉을 확인하고 관심종목을 관리하세요.</p>
-        <div className="member-preview-grid" aria-label="대시보드 미리보기">
-          {['KOSPI', 'S&P 500', 'USD/KRW'].map(label => <article className="panel" key={label}>
-            <h2>{label}</h2><div className="member-preview-value" aria-hidden="true" /><small>승인 후 확인</small>
-          </article>)}
-        </div>
       </section>
-      <section className="panel member-panel">
-        <h2>회원 전용 대시보드</h2>
+      <section className="panel member-panel" aria-labelledby="member-access-title">
+        <LockKeyhole className="member-access-icon" size={22} aria-hidden="true" />
+        <h2 id="member-access-title">회원 전용 대시보드</h2>
         {authClient === null ? <p role="status">Google 로그인 설정을 확인할 수 없습니다.</p>
           : (!authClient || identity === undefined && !error) ? <p role="status">로그인 상태 확인 중</p>
             : identity ? <>
@@ -185,6 +181,23 @@ function MemberGate() {
               <button className="button google-login" disabled={busy} onClick={signIn}><GoogleMark /> Google로 로그인</button>
             </>}
         {error && <p className="notice" role="alert">{error}</p>}
+      </section>
+      <section className="member-preview" aria-labelledby="member-markets-title">
+        <div className="member-preview-heading">
+          <h2 id="member-markets-title">대시보드 미리보기</h2>
+          <span><LockKeyhole size={13} aria-hidden="true" /> 승인 후 확인</span>
+        </div>
+        <ul className="member-market-list">
+          {[
+            { label: 'KOSPI', description: '국내 시장지수', icon: BarChart3 },
+            { label: 'S&P 500', description: '미국 시장지수', icon: BarChart3 },
+            { label: 'USD/KRW', description: '원·달러 환율', icon: Globe2 },
+          ].map(({ label, description, icon: Icon }) => <li key={label}>
+            <Icon size={18} strokeWidth={1.7} aria-hidden="true" />
+            <h3>{label}</h3>
+            <small>{description}</small>
+          </li>)}
+        </ul>
       </section>
     </div>
     <dialog ref={informationDialog} className="panel member-information" aria-labelledby="member-information-title"

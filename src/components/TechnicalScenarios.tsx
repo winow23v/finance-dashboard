@@ -106,16 +106,16 @@ export function TechnicalScenarios({ plan, tradingDate, display, stale }: {
         {(entry.support || entry.breakoutZone) && <dl className="scenario-conditions">
           {entry.support && <div><dt>눌림 확인</dt><dd><strong>{zone(entry.support)}</strong><small>지지 반응 뒤 확정 종가가 구간 상단을 회복</small></dd></div>}
           {entry.breakoutZone && <div><dt>돌파 확인</dt><dd><strong>{zone(entry.breakoutZone)}</strong>
-            <small>종가 상단 돌파 · 거래량 직전 20봉 평균의 {format(entry.volumeThreshold)}배 이상</small>
-            {entry.breakoutPassed && <small>기준일 충족 · 후속 유지 확인</small>}</dd></div>}
+            <small>종가 상단 돌파, 거래량 직전 20봉 평균의 {format(entry.volumeThreshold)}배 이상</small>
+            {entry.breakoutPassed && <small>기준일 충족, 후속 유지 확인</small>}</dd></div>}
         </dl>}
         {entry.candidate && <>
           <p className="heatmap-meta">{pricePolicy(display)} · 주문 및 체결 가격은 거래 화면에서 확인하세요.</p>
           <dl className="stock-detail-fields scenario-price-cards">
             <div><dt>진입 후보</dt><dd>{zone(entry.candidate)}
               <small>{entry.mode === 'breakout' ? '돌파 후 재시험' : '눌림 확인'} · 손익비 기준가 {formatAnalysisPrice(shown.entry, unit)}</small></dd></div>
-            <div><dt>손절 · 가설 무효화 후보</dt><dd>{formatAnalysisPrice(shown.stop, unit)}
-              {shown.stop !== null && <small>구간 하단 − {stopAtrBuffer} ATR · 확정 종가 기준</small>}</dd></div>
+            <div><dt>손절 및 가설 무효화 후보</dt><dd>{formatAnalysisPrice(shown.stop, unit)}
+              {shown.stop !== null && <small>구간 하단 − {stopAtrBuffer} ATR, 확정 종가 기준</small>}</dd></div>
             <div><dt>목표가 후보</dt><dd>{entry.targetZone ? formatAnalysisPrice(shown.target, unit) : '상위 저항 미확인'}
               {shown.target !== null && <small>상위 저항 구간의 하단 기준</small>}</dd></div>
             <div><dt>예상 손익비</dt><dd>{rewardRisk ? `${format(rewardRisk.ratio)}:1` : '계산 불가'}

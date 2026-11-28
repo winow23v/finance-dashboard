@@ -22,10 +22,10 @@ function ZoneList({ zones, label, display, condition }: {
       {zones.map((zone, i) => <li key={zone.low}>
         <details>
           <summary><span>{i + 1}차 {label}</span><strong>{formatZone(zone, display)}</strong></summary>
-          <small>{strengthLabel[zone.strength]} · 확정 피벗 {zone.reactions}회{zone.volumeReactions > 0 && ` · 거래량 급증 ${zone.volumeReactions}회`}</small>
-          <small>{zone.evidence.join(' · ')} · 근거일 <time dateTime={zone.date}>{zone.date}</time></small>
+          <small>{strengthLabel[zone.strength]}, 확정 피벗 {zone.reactions}회{zone.volumeReactions > 0 && `, 거래량 급증 ${zone.volumeReactions}회`}</small>
+          <small>{zone.evidence.join(', ')}, 근거일 <time dateTime={zone.date}>{zone.date}</time></small>
           {zone.pivots.map(pivot => <small key={pivot.date + pivot.confirmedDate}>
-            피벗 {pivot.date} · 확인 {pivot.confirmedDate}
+            피벗 {pivot.date}, 확인 {pivot.confirmedDate}
           </small>)}
           <small>{condition}</small>
         </details>
@@ -117,14 +117,14 @@ export function TechnicalSummary({ analysis, history, index, tick, chart }: {
         <summary>추세선 후보 및 산출 근거 <ChevronDown size={16} aria-hidden="true" /></summary>
         {priceStructure.channel && <p>채널 후보 · {formatAnalysisPrice(priceStructure.channel.lower, display.unit)} ~ {formatAnalysisPrice(priceStructure.channel.upper, display.unit)}</p>}
         {([['고점 추세선', priceStructure.upper], ['저점 추세선', priceStructure.lower]] as const).map(([label, line]) => line && line.latest > 0 &&
-          <p key={label}>{label} · {formatAnalysisPrice(line.latest, display.unit)} <small>확정 스윙 {line.from.date} · {line.to.date} · 확인 {line.to.confirmedDate} · 접촉 {line.touches}회 · 봉당 기울기 {format(line.slope)} · 최대 이탈 {format(line.deviation)}</small></p>)}
+          <p key={label}>{label} · {formatAnalysisPrice(line.latest, display.unit)} <small>확정 스윙 {line.from.date} ~ {line.to.date}, 확인 {line.to.confirmedDate}, 접촉 {line.touches}회, 봉당 기울기 {format(line.slope)}, 최대 이탈 {format(line.deviation)}</small></p>)}
         <p className="heatmap-meta">좌우 2봉으로 확정된 스윙, 직전 20·60·120거래일 극값과 이동평균을 직전 ATR로 묶습니다. 화면 범위는 하단을 내리고 상단을 올려 표시합니다. 돌파와 이탈 판정에는 이전 봉까지 확정된 원시 계산 구간을 사용합니다.</p>
       </details>
     </section>
     <details className="technical-risk-checks">
       <summary>RSI·MACD 다이버전스 <ChevronDown size={16} aria-hidden="true" /></summary>
       {divergence.value?.length ? <ul>{divergence.value.slice(-5).reverse().map(event =>
-        <li key={event.indicator + event.type + event.to}>{event.indicator} {event.type === 'bullish' ? '상승' : '하락'} 후보 · {event.from} → {event.to} · 확인 {event.confirmedDate}</li>
+        <li key={event.indicator + event.type + event.to}>{event.indicator} {event.type === 'bullish' ? '상승' : '하락'} 후보: {event.from} → {event.to}, 확인 {event.confirmedDate}</li>
       )}</ul> : <p>{divergence.value ? '확정된 후보 없음' : '확정 피벗을 비교할 자료 부족'}</p>}
     </details>
     {!index && <TechnicalScenarios plan={plan} tradingDate={tradingDate} display={display} stale={stale} />}

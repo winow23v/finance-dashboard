@@ -346,9 +346,12 @@ export function App({ member, signOut, accountBusy, accountError }: {
       document.getElementById('main-content')?.focus()
     }}>본문으로 이동</a>
     <header className="topbar">
-      <a className="brand" href="#overview" aria-label="Finance Dashboard">
+      <a className="brand" href="#overview" aria-label={isApi ? "Finance Dashboard" : "Finance Dashboard (DEMO 모드)"}>
         <img className="brand-icon" src={import.meta.env.BASE_URL + 'favicon.svg?v=19k'} alt="" width={30} height={30} />
-        <span className="brand-name">Finance Dashboard{!isApi && <small>DEMO 모드</small>}</span>
+        <span className="brand-copy">
+          <span className="brand-name">Finance Dashboard</span>
+          {!isApi && <small className="brand-demo">DEMO 모드</small>}
+        </span>
       </a>
       <span className="breadcrumb">{stock ? (stock.market === 'KR' ? '국내시장' : '해외시장')
         : <>워크스페이스 <span aria-hidden="true">/</span> <strong>{pageLabel}</strong></>}</span>
@@ -414,7 +417,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
         {!overview && error && (!isApi || !economyPage) && <div className="panel state"><p role="alert">{isApi ? 'API 데이터를 불러오지 못했습니다.' : '데이터 갱신에 실패했습니다.'}</p><button className="button" onClick={refresh} disabled={!!refreshUntil}>다시 시도</button></div>}
         <Suspense fallback={<LoadingSkeleton message="차트를 준비하는 중입니다." shape="chart" />}>
         {isMarket && <>
-          <section aria-label="핵심 시장지수">
+          <section className="market-index-section" aria-label="핵심 시장지수">
             <div className="section-heading"><h2>핵심 시장지수</h2></div>
             {overview ? <IndexCarousel slides={marketIndices.map(index => ({
               label: index.name, content: <MarketQuote {...quoteProps(index)} />,
@@ -424,10 +427,12 @@ export function App({ member, signOut, accountBusy, accountError }: {
           </section>
           {overview ? <>
             {!isApi && error && <p role="alert">데이터 갱신에 실패했습니다.</p>}
-            <KrxMovers data={isApi ? krxOverview?.data : null}
-              message={isApi ? krxOverview?.message : 'KRX 공급자 미연결'} summary />
-            {isApi ? <KrxHeatmap data={krxOverview?.data} message={krxOverview?.message} summary />
-              : <MarketHeatmap market="KR" favorites={watchlist} summary />}
+            <div className="overview-market-grid">
+              <KrxMovers data={isApi ? krxOverview?.data : null}
+                message={isApi ? krxOverview?.message : 'KRX 공급자 미연결'} summary />
+              {isApi ? <KrxHeatmap data={krxOverview?.data} message={krxOverview?.message} summary />
+                : <MarketHeatmap market="KR" favorites={watchlist} summary />}
+            </div>
             <section className="panel overview-market-note" aria-label="해외시장 데이터 상태">
               <h2>해외시장</h2><p>해외 히트맵 공급자 미연결</p><a className="text-link" href="#global">해외시장 보기</a>
             </section>
@@ -516,7 +521,7 @@ export function App({ member, signOut, accountBusy, accountError }: {
           </nav>
         </div>
         <p>금융 데이터는 공급자에 따라 지연될 수 있으며 정확성과 완전성을 보장하지 않습니다. 투자 참고용 정보이며 투자 권유가 아닙니다.</p>
-        <p>데이터 출처 · KRX · Yahoo Finance · 한국은행 ECOS · FRED · ECB/Frankfurter · OPEN DART <a href="#sources">이용안내</a></p>
+        <p>데이터 출처: KRX, Yahoo Finance, 한국은행 ECOS, FRED, ECB/Frankfurter, OPEN DART <a href="#sources">이용안내</a></p>
         <small>© Finance Dashboard</small>
       </footer>
     </div>
