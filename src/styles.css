@@ -1261,7 +1261,7 @@ span.chart-body { display: block; }
 .compact-quote-data { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px var(--space-control); min-width: 0; }
 .overview-quotes .compact-quote-data > strong { font-size: 1.125rem; line-height: 1.25; }
 .compact-quote-data .index-source { flex: 1 0 100%; margin: 0; }
-.compact-quote-data .change { white-space: nowrap; }
+.compact-quote-data .change { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .compact-quote-data :is(small, strong) { overflow-wrap: anywhere; }
 .compact-fx-rates .change { color: var(--muted); }
 .compact-fx-rates .fx-chart-link { justify-self: start; min-height: 44px; }
@@ -1312,6 +1312,7 @@ span.chart-body { display: block; }
   }
   .index-carousel .overview-quotes::after { flex-basis: calc(15% - 1px); }
   .economic-readings.indicator-list, .quote-grid.ecos-indicators { grid-template-columns: minmax(0, 1fr); }
+  .compact-quote-heading .stock-detail-link { display: inline-flex; min-height: 44px; align-items: center; }
   .index-carousel-dots { flex-wrap: wrap; }
   .quote-search-controls label:has(input) { flex-basis: 100%; }
 }
